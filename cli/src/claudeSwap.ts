@@ -78,8 +78,7 @@ export function runClaudeSwap(args: readonly string[], opts: RunOptions = {}): R
   try {
     proc = Bun.spawnSync({
       cmd: [CLAUDE_SWAP_BIN, ...args],
-      stdin:
-        opts.stdin !== undefined ? Buffer.from(opts.stdin, 'utf8') : 'ignore',
+      stdin: opts.stdin !== undefined ? Buffer.from(opts.stdin, 'utf8') : 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',
       timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -154,13 +153,7 @@ export interface ClaudeSwapEnvelope {
  * oauthAccount in backup".
  */
 export function exportAccount(slotOrEmail: string | number): ClaudeSwapEnvelope {
-  const { stdout } = runClaudeSwap([
-    '--export',
-    '-',
-    '--account',
-    String(slotOrEmail),
-    '--full',
-  ])
+  const { stdout } = runClaudeSwap(['--export', '-', '--account', String(slotOrEmail), '--full'])
   try {
     return JSON.parse(stdout) as ClaudeSwapEnvelope
   } catch (err) {
@@ -248,10 +241,6 @@ export async function addAccountInteractive(): Promise<void> {
   }
   const exitCode = await proc.exited
   if (exitCode !== 0) {
-    throw new ClaudeSwapError(
-      `claude-swap --add-account exited ${String(exitCode)}`,
-      exitCode,
-      ''
-    )
+    throw new ClaudeSwapError(`claude-swap --add-account exited ${String(exitCode)}`, exitCode, '')
   }
 }

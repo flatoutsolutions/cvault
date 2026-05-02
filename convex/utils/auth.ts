@@ -48,17 +48,12 @@ import { action, mutation, query } from '../_generated/server'
  * plain `query`/`mutation`/`action`.
  */
 export function getIdentity(
-  ctx:
-    | GenericQueryCtx<DataModel>
-    | GenericMutationCtx<DataModel>
-    | GenericActionCtx<DataModel>
+  ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel> | GenericActionCtx<DataModel>
 ): UserIdentity {
   const augmented = ctx as { identity?: unknown }
   const id = augmented.identity
   if (!id || typeof id !== 'object') {
-    throw new Error(
-      'getIdentity called on a non-authenticated ctx. Use authenticatedQuery/Mutation/Action.'
-    )
+    throw new Error('getIdentity called on a non-authenticated ctx. Use authenticatedQuery/Mutation/Action.')
   }
   // We trust the wrapper attached the same shape Convex returned from
   // ctx.auth.getUserIdentity(). The `subject`/`issuer`/`tokenIdentifier`

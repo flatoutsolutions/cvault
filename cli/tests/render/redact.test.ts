@@ -26,8 +26,7 @@ describe('redactTokens', () => {
   })
 
   it('redacts every match in a multi-token string', () => {
-    const input =
-      'access=sk-ant-oat01-AAAAAAAAAAAAAAAAAAAA refresh=sk-ant-ort01-BBBBBBBBBBBBBBBBBBBB done'
+    const input = 'access=sk-ant-oat01-AAAAAAAAAAAAAAAAAAAA refresh=sk-ant-ort01-BBBBBBBBBBBBBBBBBBBB done'
     expect(redactTokens(input)).toBe('access=<redacted> refresh=<redacted> done')
   })
 

@@ -16,9 +16,12 @@
  * the existing route-level tests use (see
  * frontend/src/__tests__/routes/dashboard.test.tsx).
  */
-import { getFunctionName } from 'convex/server'
 import { fireEvent, render, screen } from '@testing-library/react'
+import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// eslint-disable-next-line import/first
+import { SubsPage } from '../../src/routes/dashboard/index'
 
 const useQueryMock = vi.fn()
 const renameMock = vi.fn().mockResolvedValue(null)
@@ -52,9 +55,6 @@ vi.mock('convex/react', () => ({
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
 }))
-
-// eslint-disable-next-line import/first
-import { SubsPage } from '../../src/routes/dashboard/index'
 
 // Use Date.now() at fixture-creation time so the test is robust to small
 // clock skew in CI.
@@ -107,9 +107,7 @@ describe('scenario / relogin badge', () => {
 
   it('does NOT render the badge when refreshExpiresAt is in the future', () => {
     const now = Date.now()
-    useQueryMock.mockReturnValue([
-      makeReloginRequiredSub({ refreshExpiresAt: now + 7 * 24 * 60 * 60 * 1000 }),
-    ])
+    useQueryMock.mockReturnValue([makeReloginRequiredSub({ refreshExpiresAt: now + 7 * 24 * 60 * 60 * 1000 })])
 
     render(<SubsPage />)
 
@@ -152,9 +150,7 @@ describe('scenario / relogin badge', () => {
   // Once that UX lands, replace this with a real assertion (look for the
   // instruction text after a card click). Until then, the badge alone is
   // the signal.
-  it.todo(
-    'clicking the relogin badge surfaces "run `cvault add` to re-authorize" instructions'
-  )
+  it.todo('clicking the relogin badge surfaces "run `cvault add` to re-authorize" instructions')
 
   // Sanity check: the underlying SubscriptionCard semantics weren't broken
   // by adding the badge — the email + slot still render normally.

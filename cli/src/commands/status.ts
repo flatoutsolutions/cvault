@@ -11,9 +11,9 @@
  * message and skip the Convex round-trip. If Convex returns null (the
  * active local sub isn't in the vault), we print local info + a note.
  */
+import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
-import { api } from '@cvault/convex/api'
 import { status as csStatus } from '../claudeSwap'
 import { makeVaultClient } from '../convex/vaultClient'
 import { formatRelativeMs } from '../render/table'

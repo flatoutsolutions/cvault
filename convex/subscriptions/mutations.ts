@@ -357,12 +357,8 @@ export const commitRefreshedTokens = internalMutation({
 export const patchUsage = internalMutation({
   args: {
     subId: v.id('subscriptions'),
-    usage5h: v.optional(
-      v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })
-    ),
-    usage7d: v.optional(
-      v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })
-    ),
+    usage5h: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
+    usage7d: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
   },
   returns: v.null(),
   handler: async (ctx, args) => {

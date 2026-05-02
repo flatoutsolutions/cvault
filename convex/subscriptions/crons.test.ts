@@ -6,8 +6,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { api, internal } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
 import { __setAnthropicFetch } from './anthropic'
 
 const ORIGINAL_KEY = process.env.VAULT_AES_KEY
@@ -131,17 +131,14 @@ describe('subscriptions.crons.refreshExpiringTokens — fanout resilience', () =
         },
       })
       const { ciphertext, nonce } = encrypt(plaintext)
-      const r = await t.withIdentity(TEST_IDENTITY).mutation(
-        api.subscriptions.mutations.upsert,
-        {
-          email,
-          ciphertext,
-          nonce,
-          expiresAt,
-          subscriptionType: 'max',
-          rateLimitTier: 'tier1',
-        }
-      )
+      const r = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+        email,
+        ciphertext,
+        nonce,
+        expiresAt,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+      })
       return r.subId
     }
     const idA = await seedOne('a@example.com')
@@ -217,10 +214,10 @@ describe('subscriptions.crons.pollUsage', () => {
     const future = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString()
     const fetchStub = vi.fn(() =>
       Promise.resolve(
-        new Response(
-          JSON.stringify({ five_hour: { utilization: 12, resets_at: future } }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        )
+        new Response(JSON.stringify({ five_hour: { utilization: 12, resets_at: future } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
       )
     )
     __setAnthropicFetch(fetchStub)

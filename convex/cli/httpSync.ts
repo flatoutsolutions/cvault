@@ -26,10 +26,10 @@ const SYNC_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000 // 1 hour
 export const cliSyncHandler = httpAction(async (ctx, request) => {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) {
-    return new Response(
-      JSON.stringify({ error: 'unauthenticated' }),
-      { status: 401, headers: { 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'unauthenticated' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   // Resolve the user row up-front so the rate limiter and audit row both
@@ -39,10 +39,10 @@ export const cliSyncHandler = httpAction(async (ctx, request) => {
     externalId: identity.subject,
   })
   if (userId === null) {
-    return new Response(
-      JSON.stringify({ error: 'unauthenticated' }),
-      { status: 401, headers: { 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ error: 'unauthenticated' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   // Enforce the per-user rate limit BEFORE building the bundle (which

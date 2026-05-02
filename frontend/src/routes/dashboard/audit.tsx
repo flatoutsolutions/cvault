@@ -13,13 +13,14 @@
  *   - clerkSessionId (or "all")
  *   - outcome (success / failure / reloginRequired / activity / "all")
  */
-import { useQuery } from 'convex/react'
 import { createFileRoute } from '@tanstack/react-router'
+import { useQuery } from 'convex/react'
 import { useMemo, useState } from 'react'
 
 import type { AuditRowData } from '@/components/dashboard/AuditRow'
 import { AuditRow } from '@/components/dashboard/AuditRow'
 import { Skeleton } from '@/components/ui/skeleton'
+
 import { api } from '../../../../convex/_generated/api'
 
 export const Route = createFileRoute('/dashboard/audit')({
@@ -113,9 +114,7 @@ export function AuditPage() {
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Audit</h1>
-        <p className="text-muted-foreground text-sm">
-          Refresh attempts and CLI operations across all your machines.
-        </p>
+        <p className="text-muted-foreground text-sm">Refresh attempts and CLI operations across all your machines.</p>
       </div>
 
       <div className="border-border bg-card flex flex-wrap items-center gap-2 rounded-lg border p-3">
@@ -165,9 +164,7 @@ export function AuditPage() {
           <div>when</div>
         </div>
         {filtered.length === 0 ? (
-          <div className="text-muted-foreground p-8 text-center text-sm">
-            No audit rows match the current filters.
-          </div>
+          <div className="text-muted-foreground p-8 text-center text-sm">No audit rows match the current filters.</div>
         ) : (
           filtered.map((row) => <AuditRow key={`${row.kind}-${row.id}`} row={row} />)
         )}

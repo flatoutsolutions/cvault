@@ -6,6 +6,10 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import { status } from '../../src/claudeSwap'
+import { runList } from '../../src/commands/list'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+
 vi.mock('../../src/claudeSwap', () => ({
   status: vi.fn(),
 }))
@@ -14,10 +18,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { status } from '../../src/claudeSwap'
-import { runList } from '../../src/commands/list'
-import { makeVaultClient } from '../../src/convex/vaultClient'
 
 interface ConvexMeta {
   _id: string
@@ -56,10 +56,7 @@ function meta(overrides: Partial<ConvexMeta> = {}): ConvexMeta {
 describe('runList', () => {
   it('renders all subs from Convex with the locally-active one marked', async () => {
     const client = {
-      query: vi.fn().mockResolvedValueOnce([
-        meta({ slot: 1, email: 'a@b.com' }),
-        meta({ slot: 2, email: 'c@d.com' }),
-      ]),
+      query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'a@b.com' }), meta({ slot: 2, email: 'c@d.com' })]),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
     vi.mocked(status).mockReturnValueOnce('Active account: 2 (c@d.com)')
@@ -88,17 +85,13 @@ describe('runList', () => {
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     await runList()
-    expect(logSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/no subscriptions/i)
-    )
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/no subscriptions/i))
     logSpy.mockRestore()
   })
 
   it('handles missing usage data gracefully', async () => {
     const client = {
-      query: vi.fn().mockResolvedValueOnce([
-        meta({ usage5h: undefined, usage7d: undefined }),
-      ]),
+      query: vi.fn().mockResolvedValueOnce([meta({ usage5h: undefined, usage7d: undefined })]),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
     vi.mocked(status).mockReturnValueOnce('Active account: 1 (a@b.com)')

@@ -16,6 +16,12 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import { startCallbackServer } from '../../src/auth/callbackServer'
+import { exchangeTicketForSession } from '../../src/auth/clerkFapi'
+import { openBrowser } from '../../src/auth/openBrowser'
+import { writeSession } from '../../src/auth/session'
+import { runLogin } from '../../src/commands/login'
+
 vi.mock('../../src/auth/callbackServer', () => ({
   startCallbackServer: vi.fn(),
 }))
@@ -34,12 +40,6 @@ vi.mock('../../src/auth/session', () => ({
   writeSession: vi.fn().mockResolvedValue(undefined),
   NotLoggedInError: class extends Error {},
 }))
-
-import { startCallbackServer } from '../../src/auth/callbackServer'
-import { exchangeTicketForSession } from '../../src/auth/clerkFapi'
-import { openBrowser } from '../../src/auth/openBrowser'
-import { writeSession } from '../../src/auth/session'
-import { runLogin } from '../../src/commands/login'
 
 describe('runLogin', () => {
   it('opens the dashboard URL with redirect + state, then persists the exchanged session', async () => {
@@ -80,9 +80,7 @@ describe('runLogin', () => {
     expect((state ?? '').length).toBeGreaterThan(8)
 
     // The same state was passed to the callback server's expectedState.
-    expect(mockStart).toHaveBeenCalledWith(
-      expect.objectContaining({ expectedState: state })
-    )
+    expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({ expectedState: state }))
 
     // The captured signInToken was forwarded to the FAPI exchange.
     expect(mockExchange).toHaveBeenCalledWith(
@@ -110,9 +108,7 @@ describe('runLogin', () => {
       cancel,
     })
 
-    vi.mocked(exchangeTicketForSession).mockRejectedValueOnce(
-      new Error('Clerk FAPI sign_in failed: 400 bad ticket')
-    )
+    vi.mocked(exchangeTicketForSession).mockRejectedValueOnce(new Error('Clerk FAPI sign_in failed: 400 bad ticket'))
 
     await expect(
       runLogin({

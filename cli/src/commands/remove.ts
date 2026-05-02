@@ -15,11 +15,11 @@
  * The Convex mutation takes `email` not `slot`, so when the user passes a
  * number we resolve it to an email via `listForUser` first.
  */
+import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
-import { api } from '@cvault/convex/api'
 import { removeAccount } from '../claudeSwap'
-import { makeVaultClient, type VaultClient } from '../convex/vaultClient'
+import { type VaultClient, makeVaultClient } from '../convex/vaultClient'
 
 export interface RunRemoveOptions {
   slotOrEmail: string

@@ -22,6 +22,11 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { importEnvelope, switchTo } from '../../src/claudeSwap'
+import { runSwitch } from '../../src/commands/switch'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+import { ensureVaultDir, lastHashPath } from '../../src/paths'
+
 vi.mock('../../src/claudeSwap', () => ({
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
@@ -31,11 +36,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { importEnvelope, switchTo } from '../../src/claudeSwap'
-import { runSwitch } from '../../src/commands/switch'
-import { makeVaultClient } from '../../src/convex/vaultClient'
-import { lastHashPath, ensureVaultDir } from '../../src/paths'
 
 const SAMPLE_BLOB = JSON.stringify({
   claudeAiOauth: {
@@ -142,9 +142,7 @@ describe('runSwitch — offline degradation', () => {
 
   it('falls back to local switchTo when the Convex action call rejects with network error', async () => {
     const client = {
-      action: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('fetch failed: connection refused')),
+      action: vi.fn().mockRejectedValueOnce(new Error('fetch failed: connection refused')),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
 
@@ -155,9 +153,7 @@ describe('runSwitch — offline degradation', () => {
 
   it('does not swallow non-network errors from Convex', async () => {
     const client = {
-      action: vi.fn().mockRejectedValueOnce(
-        new Error('500 InternalError: VAULT_AES_KEY missing')
-      ),
+      action: vi.fn().mockRejectedValueOnce(new Error('500 InternalError: VAULT_AES_KEY missing')),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
 

@@ -12,11 +12,11 @@
 Per spec §11, every layer (Convex backend, TypeScript/Bun CLI, TanStack
 frontend) already has thorough unit + per-domain integration coverage:
 
-| Layer | Tests today |
-|---|---|
-| Convex backend | 70 tests across 13 files (mutations, queries, actions, crons, crypto, redact, http, cli auth) |
-| CLI | 14+ files covering each command, claude-swap subprocess wrapper, callback server, FAPI exchange, paths, render |
-| Frontend | 10 files covering each route + each dashboard component |
+| Layer          | Tests today                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------- |
+| Convex backend | 70 tests across 13 files (mutations, queries, actions, crons, crypto, redact, http, cli auth)                  |
+| CLI            | 14+ files covering each command, claude-swap subprocess wrapper, callback server, FAPI exchange, paths, render |
+| Frontend       | 10 files covering each route + each dashboard component                                                        |
 
 What's **not** tested today is the **end-to-end happy path stitched
 through all three layers**: a real user signing up via Clerk → CLI
@@ -31,11 +31,11 @@ in the user's task brief and to one or more user-facing flows in spec
 
 ### Distinction from existing tests
 
-| Test class | Suffix | Runner | Scope |
-|---|---|---|---|
-| Unit | `*.test.ts` | `yarn test` (default) | Single function/component, all deps mocked |
-| Integration | `*.integration.test.ts` | `yarn test:integration` | Convex pipeline (in-memory) |
-| **Scenario (this plan)** | `*.scenario.test.ts` | `yarn test:scenario` | Full flow across CLI + Convex + (optional) frontend |
+| Test class               | Suffix                  | Runner                  | Scope                                               |
+| ------------------------ | ----------------------- | ----------------------- | --------------------------------------------------- |
+| Unit                     | `*.test.ts`             | `yarn test` (default)   | Single function/component, all deps mocked          |
+| Integration              | `*.integration.test.ts` | `yarn test:integration` | Convex pipeline (in-memory)                         |
+| **Scenario (this plan)** | `*.scenario.test.ts`    | `yarn test:scenario`    | Full flow across CLI + Convex + (optional) frontend |
 
 Scenario tests live alongside the layer they're driven from
 (`convex/__scenarios__/`, `cli/tests/scenarios/`,
@@ -76,23 +76,23 @@ on `VAULT_TEST_REFRESH_TOKEN`) per spec §11.
 
 ## 2. Scenario index
 
-| # | Scenario | Primary layer | Framework | File |
-|---|---|---|---|---|
-| 1 | First-machine bootstrap | CLI (+ in-mem Convex) | Vitest (Bun runner) | `cli/tests/scenarios/firstMachineBootstrap.scenario.test.ts` |
-| 2 | Add account flow | CLI (+ in-mem Convex) | Vitest (Bun runner) | `cli/tests/scenarios/addAccount.scenario.test.ts` |
-| 3 | List with usage | CLI (+ in-mem Convex) | Vitest (Bun runner) | `cli/tests/scenarios/listWithUsage.scenario.test.ts` |
-| 4 | Switch on same machine | CLI (+ in-mem Convex) | Vitest (Bun runner) | `cli/tests/scenarios/switchSameMachine.scenario.test.ts` |
-| 5 | Switch on second machine (sync) | CLI (+ in-mem Convex) | Vitest (Bun runner) | `cli/tests/scenarios/switchSecondMachine.scenario.test.ts` |
-| 6 | Auto-refresh near expiry (cron) | Convex backend | Vitest (edge-runtime) | `convex/__scenarios__/refreshCycle.scenario.test.ts` |
-| 7 | Refresh race | Convex backend | Vitest (edge-runtime) | `convex/__scenarios__/refreshRace.scenario.test.ts` |
-| 8 | Refresh dead (relogin required) | Convex backend + frontend | Vitest (edge-runtime + jsdom) | `convex/__scenarios__/refreshReloginRequired.scenario.test.ts` + `frontend/src/__tests__/scenarios/reloginBadge.scenario.test.tsx` |
-| 9 | Force-refresh button | Frontend (+ in-mem Convex) | Vitest (jsdom) | `frontend/src/__tests__/scenarios/forceRefreshButton.scenario.test.tsx` |
-| 10 | Force remove | Frontend + CLI | Vitest (jsdom + Bun) | `frontend/src/__tests__/scenarios/forceRemove.scenario.test.tsx` + `cli/tests/scenarios/listAfterRemove.scenario.test.ts` |
-| 11 | Revoke machine | Frontend (+ in-mem Convex) | Vitest (jsdom) | `frontend/src/__tests__/scenarios/revokeMachine.scenario.test.tsx` |
-| 12 | Offline degradation on CLI | CLI | Vitest (Bun runner) | `cli/tests/scenarios/offlineDegradation.scenario.test.ts` |
-| 13 | Encryption integrity | Convex backend (+ CLI) | Vitest (node) | `convex/__scenarios__/encryptionIntegrity.scenario.test.ts` |
-| 14 | Token redaction in logs | Convex backend | Vitest (edge-runtime) | `convex/__scenarios__/tokenRedaction.scenario.test.ts` |
-| 15 *(deferred / live-only)* | Live Anthropic refresh roundtrip | Convex backend | Vitest (node) — gated on env | `convex/__scenarios__/liveAnthropicRefresh.scenario.test.ts` |
+| #                           | Scenario                         | Primary layer              | Framework                     | File                                                                                                                               |
+| --------------------------- | -------------------------------- | -------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1                           | First-machine bootstrap          | CLI (+ in-mem Convex)      | Vitest (Bun runner)           | `cli/tests/scenarios/firstMachineBootstrap.scenario.test.ts`                                                                       |
+| 2                           | Add account flow                 | CLI (+ in-mem Convex)      | Vitest (Bun runner)           | `cli/tests/scenarios/addAccount.scenario.test.ts`                                                                                  |
+| 3                           | List with usage                  | CLI (+ in-mem Convex)      | Vitest (Bun runner)           | `cli/tests/scenarios/listWithUsage.scenario.test.ts`                                                                               |
+| 4                           | Switch on same machine           | CLI (+ in-mem Convex)      | Vitest (Bun runner)           | `cli/tests/scenarios/switchSameMachine.scenario.test.ts`                                                                           |
+| 5                           | Switch on second machine (sync)  | CLI (+ in-mem Convex)      | Vitest (Bun runner)           | `cli/tests/scenarios/switchSecondMachine.scenario.test.ts`                                                                         |
+| 6                           | Auto-refresh near expiry (cron)  | Convex backend             | Vitest (edge-runtime)         | `convex/__scenarios__/refreshCycle.scenario.test.ts`                                                                               |
+| 7                           | Refresh race                     | Convex backend             | Vitest (edge-runtime)         | `convex/__scenarios__/refreshRace.scenario.test.ts`                                                                                |
+| 8                           | Refresh dead (relogin required)  | Convex backend + frontend  | Vitest (edge-runtime + jsdom) | `convex/__scenarios__/refreshReloginRequired.scenario.test.ts` + `frontend/src/__tests__/scenarios/reloginBadge.scenario.test.tsx` |
+| 9                           | Force-refresh button             | Frontend (+ in-mem Convex) | Vitest (jsdom)                | `frontend/src/__tests__/scenarios/forceRefreshButton.scenario.test.tsx`                                                            |
+| 10                          | Force remove                     | Frontend + CLI             | Vitest (jsdom + Bun)          | `frontend/src/__tests__/scenarios/forceRemove.scenario.test.tsx` + `cli/tests/scenarios/listAfterRemove.scenario.test.ts`          |
+| 11                          | Revoke machine                   | Frontend (+ in-mem Convex) | Vitest (jsdom)                | `frontend/src/__tests__/scenarios/revokeMachine.scenario.test.tsx`                                                                 |
+| 12                          | Offline degradation on CLI       | CLI                        | Vitest (Bun runner)           | `cli/tests/scenarios/offlineDegradation.scenario.test.ts`                                                                          |
+| 13                          | Encryption integrity             | Convex backend (+ CLI)     | Vitest (node)                 | `convex/__scenarios__/encryptionIntegrity.scenario.test.ts`                                                                        |
+| 14                          | Token redaction in logs          | Convex backend             | Vitest (edge-runtime)         | `convex/__scenarios__/tokenRedaction.scenario.test.ts`                                                                             |
+| 15 _(deferred / live-only)_ | Live Anthropic refresh roundtrip | Convex backend             | Vitest (node) — gated on env  | `convex/__scenarios__/liveAnthropicRefresh.scenario.test.ts`                                                                       |
 
 **Total scenario files:** 14 + 1 deferred (live-only) = **15 files**.
 **Total scenarios:** the 14 numbered items, several of which span 2
@@ -100,13 +100,13 @@ files where they cross layers (8, 10).
 
 Frameworks count:
 
-| Framework | Files |
-|---|---|
-| Vitest, edge-runtime project | 4 (`refreshCycle`, `refreshRace`, `refreshReloginRequired`, `tokenRedaction`) |
-| Vitest, node project | 2 (`encryptionIntegrity`, `liveAnthropicRefresh`) |
-| Vitest, jsdom project (frontend) | 4 (`reloginBadge`, `forceRefreshButton`, `forceRemove`, `revokeMachine`) |
-| Vitest, Bun runner (CLI) | 7 (the seven CLI-driven scenarios) |
-| Playwright | 0 — see §6 |
+| Framework                        | Files                                                                         |
+| -------------------------------- | ----------------------------------------------------------------------------- |
+| Vitest, edge-runtime project     | 4 (`refreshCycle`, `refreshRace`, `refreshReloginRequired`, `tokenRedaction`) |
+| Vitest, node project             | 2 (`encryptionIntegrity`, `liveAnthropicRefresh`)                             |
+| Vitest, jsdom project (frontend) | 4 (`reloginBadge`, `forceRefreshButton`, `forceRemove`, `revokeMachine`)      |
+| Vitest, Bun runner (CLI)         | 7 (the seven CLI-driven scenarios)                                            |
+| Playwright                       | 0 — see §6                                                                    |
 
 ---
 
@@ -117,20 +117,25 @@ introduces three thin helpers. They are **new** files, not edits to
 existing tests:
 
 ### `convex/__scenarios__/scenarioHarness.ts`
+
 Re-exports `vault()`, `seedUser()`, `TEST_IDENTITY`, `SECOND_IDENTITY`
 from `convex/__tests__/helpers.ts`, plus a couple of scenario-only
 sugar helpers:
+
 - `seedSubscription({ t, identity, email, expiresAt, refreshExpiresAt?, label?, oauthBlob? })` — wraps the existing pattern of "encrypt blob → call public `upsert` mutation"; returns `{ subId, slot, blob }`.
 - `mockAnthropicRefreshOnce({ status, body? })` — installs a one-shot stub via `__setAnthropicFetch`, auto-resets on `afterEach` (uses the same teardown shape as `convex/subscriptions/refresh.test.ts`).
 - `mockClerkOnce({ url, status, body })` — same idea for `__setClerkFetch`.
 
 ### `cli/tests/scenarios/scenarioHarness.ts`
+
 Owns the cross-cutting CLI scenario boilerplate:
+
 - `withTempHome(fn)` — `mkdtempSync` / `vi.stubEnv('HOME', tmp)` / cleanup. The pattern that's already inlined in `cli/tests/commands/switch.test.ts`.
 - `mockClaudeSwap({ statusOutput, exportEnvelope, importedEnvelopes })` — installs the `claudeSwap` `vi.mock` block used by every CLI command test, but keeps a reference to the captured `importEnvelope` calls so a scenario can assert "this exact blob was passed to claude-swap".
 - `inMemoryVaultClient(t)` — adapts the `convex-test` `t` instance into the `VaultClient` shape the CLI commands expect (`{ query, action }`). Wires `t.withIdentity(TEST_IDENTITY).query/action` underneath. This is the load-bearing piece — it lets a CLI command run end-to-end against the in-memory Convex without ever opening a real socket.
 
 ### `frontend/src/__tests__/scenarios/scenarioHarness.tsx`
+
 - `renderWithConvex({ subs, refreshLog?, machineActivity?, mutations? })` — a `convex/react` mock harness that returns the supplied data from `useQuery` and routes `useMutation` / `useAction` calls to spies the test can inspect. Same shape as `frontend/src/__tests__/routes/dashboard.test.tsx`'s `useQueryMock` + `mutationsByName` map, just hoisted into a reusable factory.
 
 Each shared harness file is itself trivial enough to skip a unit test
@@ -154,6 +159,7 @@ top-level `'**/*.scenario.test.ts'` exclude glob in
 `vitest.config.ts`. Runs via `yarn test:scenario`.
 
 **Setup**
+
 - Use `withTempHome()` from `scenarioHarness` so `~/.vault/` lands in a
   per-test tmpdir.
 - Mock `auth/callbackServer.startCallbackServer` to return a stable
@@ -172,9 +178,11 @@ top-level `'**/*.scenario.test.ts'` exclude glob in
   needs the side-effect (a `users` row).
 
 **Run**
+
 - Call `runLogin(opts)` with the mocked dashboard URLs.
 
 **Assertions**
+
 - `~/.vault/session.json` exists.
 - Stat the file: `mode & 0o777 === 0o600`.
 - Stat the dir: `mode & 0o777 === 0o700`.
@@ -206,6 +214,7 @@ None — this scenario uses no live dependencies.
 Vitest (Bun runner). Same project as #1.
 
 **Setup**
+
 - `withTempHome()`.
 - `mockClaudeSwap({ statusOutput: 'Active account: 1 (work@example.com)\n', exportEnvelope: singleAccountEnvelope({ number: 1, email: 'work@example.com' }) })`.
 - In-memory `vault()` instance, `seedUser()` against `TEST_IDENTITY`,
@@ -214,9 +223,11 @@ Vitest (Bun runner). Same project as #1.
   var; real prod sets via `npx convex env set`.)
 
 **Run**
+
 - `runAdd({ label: 'work-mac' })` against the in-memory client.
 
 **Assertions**
+
 - Exactly one row in `subscriptions` table.
 - Row has `userId === seededUser._id`, `email === 'work@example.com'`,
   `slot === 1`, `label === 'work-mac'`.
@@ -252,6 +263,7 @@ None.
 Vitest (Bun runner).
 
 **Setup**
+
 - `withTempHome()`.
 - In-memory Convex with one seeded sub via `seedSubscription({ slot: 1, email: 'a@b.com' })`.
 - Stub the Anthropic usage endpoint via `__setAnthropicFetch` to return
@@ -263,16 +275,18 @@ Vitest (Bun runner).
 - Capture `console.log` so the rendered table is inspectable.
 
 **Run**
+
 - `runList()` against the in-memory client.
 
 **Assertions**
+
 - Console output contains "a@b.com".
 - Console output contains a usage5h figure consistent with `23.5%`
   (the renderer rounds — current `cli/src/render/table.ts` uses
   `Math.round(pct)` per the unit tests; assert the rendered string
   matches that).
 - Console output contains a usage7d figure consistent with `47%`.
-- Active marker is on slot 1 (e.g. a "•" or "*" in the row, per
+- Active marker is on slot 1 (e.g. a "•" or "\*" in the row, per
   `render/table.ts`).
 - Direct DB read: `subscriptions[0].usage5h.pct === 23.5` and
   `usage7d.pct === 47.0` — proves the cron actually wrote the cache.
@@ -299,6 +313,7 @@ implementation uses 'pull', not 'switch' — see §7 of this plan
 Vitest (Bun runner).
 
 **Setup**
+
 - `withTempHome()`.
 - In-memory Convex with one seeded sub. Important: bootstrap the local
   cache so the hash matches:
@@ -313,9 +328,11 @@ Vitest (Bun runner).
 - Wire `inMemoryVaultClient(t)` so `runSwitch` uses Convex.
 
 **Run**
+
 - `runSwitch({ slotOrEmail: '1' })`.
 
 **Assertions**
+
 - `importEnvelope` was **not** called (hash-match short-circuit).
 - `switchTo` was called with `1`.
 - A `machineActivity` row exists for the user with
@@ -344,6 +361,7 @@ runs; subsequent switch lands. Two distinct machines each leave a
 Vitest (Bun runner).
 
 **Setup**
+
 - Two distinct `tempHome` dirs created back-to-back. Use a helper
   `withTwoTempHomes()` that yields `(home1, home2)`.
 - One in-memory Convex `vault()` instance shared across both phases
@@ -351,17 +369,19 @@ Vitest (Bun runner).
 - Phase A (machine 1): seed a user + sub via the harness; this stands
   in for the first machine having previously run `cvault add`.
 - Phase B (machine 2): switch HOME to `home2` (no `~/.vault/last-hash-*`
-  exists), inject a *different* Clerk session id into the JWT
+  exists), inject a _different_ Clerk session id into the JWT
   (`sid` claim) so the `machineActivity.clerkSessionId` will differ
   per phase. Use a second `withIdentity({ ...TEST_IDENTITY, sid: 'sess_machine2' })`
   pattern — this requires augmenting `TEST_IDENTITY` in the harness with
   a custom `sid`.
 
 **Run**
+
 - Phase B step 1: `runSync()` — pulls every sub, imports each.
 - Phase B step 2: `runSwitch({ slotOrEmail: 'a@b.com' })`.
 
 **Assertions**
+
 - After `runSync`: `~/.vault/last-hash-a@b.com.txt` (after `paths.lastHashPath` sanitization) exists in `home2` with mode 0600. `importEnvelope` was called once during sync.
 - After `runSwitch`: `importEnvelope` was **not** called again
   (post-sync the local hash matches).
@@ -394,18 +414,21 @@ with the `.scenario.test.ts` suffix so it's only picked up by
 `yarn test:scenario`.
 
 **Setup**
+
 - `vault()`, seed one user + one sub with `expiresAt = Date.now() + 5 * 60 * 1000` (within the 15-min window).
 - Stub Anthropic refresh via `__setAnthropicFetch` to return a 200 with
   `{ access_token: <new>, refresh_token: <new>, expires_in: 28800 }`.
 - Snapshot the existing ciphertext + `contentHash` (decrypt → sha256).
 
 **Run**
+
 - Phase 1 (backend): `t.action(internal.subscriptions.crons.refreshExpiringTokens, {})`.
 - Phase 2 (CLI side, simulated): re-pull via
-  `pullForSwitch({ slotOrEmail: 'a@b.com' })` against the *same* user
+  `pullForSwitch({ slotOrEmail: 'a@b.com' })` against the _same_ user
   and inspect the returned `contentHash`.
 
 **Assertions**
+
 - Sub row's `expiresAt` advanced beyond `now + 60min`.
 - Sub row's ciphertext changed (hex-compare bytes).
 - One row in `refreshLog` with `triggeredBy === 'cron'`,
@@ -434,28 +457,31 @@ refresh token.
 Vitest (`convex-edge` project).
 
 **Setup**
+
 - `vault()`, seed one user + one expiring sub.
 - Stub Anthropic to count calls. Return 200 with a fresh tuple, but
   the stub's body uses a per-invocation counter so the second
-  (losing) call would, if it happened, return *different* tokens —
+  (losing) call would, if it happened, return _different_ tokens —
   used as evidence later that the loser did not call.
 - Drive concurrency with `Promise.all([refreshA, refreshB])` where each
   is a separate `t.action(internal.subscriptions.actions.refreshOAuthToken, ...)`.
 
 **Run**
+
 - `await Promise.all([
-    t.action(internal.subscriptions.actions.refreshOAuthToken, { subId, triggeredBy: 'manual' }),
-    t.action(internal.subscriptions.actions.refreshOAuthToken, { subId, triggeredBy: 'manual' }),
-  ])`
+  t.action(internal.subscriptions.actions.refreshOAuthToken, { subId, triggeredBy: 'manual' }),
+  t.action(internal.subscriptions.actions.refreshOAuthToken, { subId, triggeredBy: 'manual' }),
+])`
 
 **Assertions**
+
 - `__setAnthropicFetch`'s stub was called **exactly once** (the loser
   saw a held lease, slept 1s, re-checked, found fresh tokens, aborted
   silently).
 - `refreshLog` table has **exactly one** row with
   `outcome === 'success'`.
 - Final sub row has the winner's tokens (decrypt + JSON.parse →
-  matches the *first* counter value the stub generated).
+  matches the _first_ counter value the stub generated).
 - Sub's `refreshLeaseHolder === undefined` (lease cleanly released).
 
 **Skip conditions**
@@ -467,7 +493,7 @@ None.
 **Notes**
 The 1s sleep in `refreshOAuthToken` is real `setTimeout`. The scenario
 runs against wall-clock time (no fake timers) because the lease's
-real-world property *is* "loser waits 1s, retries". Faking timers
+real-world property _is_ "loser waits 1s, retries". Faking timers
 would defeat the purpose. Hence the slightly long runtime.
 
 ---
@@ -475,6 +501,7 @@ would defeat the purpose. Hence the slightly long runtime.
 ### 4.8 Refresh dead (relogin required) (scenario #8)
 
 **Files:**
+
 1. `convex/__scenarios__/refreshReloginRequired.scenario.test.ts` (backend half)
 2. `frontend/src/__tests__/scenarios/reloginBadge.scenario.test.tsx` (frontend half)
 
@@ -485,17 +512,21 @@ badge based on the resulting state.
 
 **Test framework**
 Two scenarios because the layers are independent:
+
 - Backend half: Vitest (`convex-edge` project).
 - Frontend half: Vitest (`frontend` jsdom project).
 
 **Setup (backend)**
+
 - `vault()`, seed one expiring sub.
 - Stub Anthropic 401 with body `{ error: 'invalid_grant', error_description: 'refresh token expired' }`.
 
 **Run (backend)**
+
 - `t.action(internal.subscriptions.actions.refreshOAuthToken, { subId, triggeredBy: 'manual' })`.
 
 **Assertions (backend)**
+
 - Sub row: `refreshExpiresAt <= Date.now()` (clamped to now).
 - Sub row: lease holder cleared.
 - `refreshLog`: one row, `outcome === 'reloginRequired'`.
@@ -505,12 +536,14 @@ Two scenarios because the layers are independent:
   error to catch regressions).
 
 **Setup (frontend)**
+
 - Render `<SubscriptionCard sub={subWithReloginRequired} />` directly
   via `frontend/src/__tests__/scenarios/scenarioHarness.tsx`'s
   `renderWithConvex` helper, passing a sub fixture where
   `refreshExpiresAt < Date.now()`.
 
 **Assertions (frontend)**
+
 - The `ReloginBadge` component renders (look up via
   `data-slot="relogin-badge"` or `screen.getByText(/relogin/i)`).
 - The card is visually de-emphasized per the existing
@@ -552,6 +585,7 @@ follow-up. Plan calls for this scenario to be **written but skipped via
 `it.skip`** until the wiring lands; see §7 of this plan.
 
 **Setup**
+
 - `renderWithConvex({ subs: [subFixtureNearExpiry], mutations: { /* spies */ }, actions: { 'subscriptions.actions.requestRefresh': spy } })`.
 - (Optional, more thorough variant) — Run the page against an actual
   in-memory `vault()` via a custom `ConvexProvider` that routes to the
@@ -559,9 +593,11 @@ follow-up. Plan calls for this scenario to be **written but skipped via
   behavior. Mock-based variant is sufficient.
 
 **Run**
+
 - `fireEvent.click(screen.getByRole('button', { name: /force refresh/i }))`.
 
 **Assertions**
+
 - The `requestRefresh` action spy was called with `{ subId: subFixture._id }`.
 - The button enters a "loading" state (`disabled` while the action is
   pending) — assert via `toBeDisabled()` immediately after click.
@@ -573,6 +609,7 @@ follow-up. Plan calls for this scenario to be **written but skipped via
   `SubscriptionCard.test.tsx` reactivity test.
 
 **Skip conditions**
+
 - `it.skip` until the frontend's placeholder is replaced by the real
   `useAction` call. Track via
   `IMPLEMENTATION_NOTES.md → frontend → "Force Refresh wiring"`.
@@ -585,6 +622,7 @@ follow-up. Plan calls for this scenario to be **written but skipped via
 ### 4.10 Force remove (scenario #10)
 
 **Files:**
+
 1. `frontend/src/__tests__/scenarios/forceRemove.scenario.test.tsx` (frontend half — click → softRemove)
 2. `cli/tests/scenarios/listAfterRemove.scenario.test.ts` (CLI half — `cvault list` no longer shows it)
 
@@ -594,16 +632,20 @@ list filters out → CLI agrees.
 
 **Test framework**
 Vitest, two projects:
+
 - jsdom for the frontend half.
 - Bun-runner CLI project for the CLI half.
 
 **Setup (frontend half)**
+
 - `renderWithConvex({ subs: [subFixture], mutations: { 'subscriptions.mutations.softRemove': spy } })`.
 
 **Run (frontend half)**
+
 - `fireEvent.click(screen.getByRole('button', { name: /remove/i }))`.
 
 **Assertions (frontend half)**
+
 - Spy called with `{ email: subFixture.email }`.
 - The row optimistically disappears from the rendered list (or shows a
   pending-removal state, depending on how `routes/dashboard/index.tsx`
@@ -611,14 +653,17 @@ Vitest, two projects:
   button is disabled during the in-flight call).
 
 **Setup (CLI half)**
+
 - `vault()`, seed user + sub. Issue
   `t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, { email: 'a@b.com' })`.
 - `mockClaudeSwap({ statusOutput: 'No active account\n' })`.
 
 **Run (CLI half)**
+
 - `runList()` against the in-memory client.
 
 **Assertions (CLI half)**
+
 - Console output does **not** contain `a@b.com`.
 - Console output is the empty-state rendering from `render/table.ts`.
 
@@ -651,15 +696,18 @@ half is exercised via a unit-level assertion against
 `cli/src/auth/clerkFapi.mintConvexJwt` with a mocked 401 response.
 
 **Setup (frontend)**
+
 - `renderWithConvex({ machines: [{ clerkSessionId: 'sess_target', lastSeenAt: now, lastIpHash: 'a1b2c3d4' }], actions: { 'cli.actions.revokeSession': spy } })`.
 - Stub `__setClerkFetch` so when `revokeSession` action runs against
   the in-memory backend, it sees a 200 from Clerk's side. We do **not**
   call Clerk for real.
 
 **Run (frontend)**
+
 - `fireEvent.click(screen.getByRole('button', { name: /revoke/i }))`.
 
 **Assertions (frontend)**
+
 - Spy called with `{ clerkSessionId: 'sess_target' }`.
 - The row's status changes to "revoked" (or disappears, depending on
   the page; today `routes/dashboard/machines.tsx` re-queries on
@@ -667,15 +715,18 @@ half is exercised via a unit-level assertion against
   re-renders).
 
 **Setup (CLI half)**
+
 - Build a `SessionState` fixture with the long-lived Clerk session
   token of the now-revoked machine.
 - Mock `global.fetch` for `${frontendApiUrl}/v1/client/sessions/<id>/tokens/convex`
   to return 401.
 
 **Run (CLI half)**
+
 - `mintConvexJwt(sessionFixture)`.
 
 **Assertions (CLI half)**
+
 - Throws `ClerkSessionExpiredError`. (Already covered by
   `cli/tests/auth/clerkFapi.test.ts`; the scenario re-asserts to make
   the cross-layer story explicit.)
@@ -699,21 +750,24 @@ None.
 Vitest (Bun runner).
 
 **Setup**
+
 - `withTempHome()`.
 - `mockClaudeSwap({ ...switchTo: vi.fn() })`.
 - Mock `makeVaultClient` to throw a network-shaped error (e.g.
   `'fetch failed: getaddrinfo ENOTFOUND ...convex.cloud'`).
 
 **Run**
+
 - `runSwitch({ slotOrEmail: '2' })`.
 - Capture `console.warn`.
 
 **Assertions**
+
 - `console.warn` was called with a message matching `/offline|local cache/i`.
 - `claudeSwap.switchTo` was called with `'2'` directly — i.e. CLI did
   fall back instead of throwing.
 - `claudeSwap.importEnvelope` was **not** called.
-- A second flavor: when the action call rejects with a *non-network*
+- A second flavor: when the action call rejects with a _non-network_
   error (e.g. `'500 InternalError: VAULT_AES_KEY missing'`), the CLI
   re-throws (not a fallback — this is already covered in
   `cli/tests/commands/switch.test.ts` "does not swallow non-network
@@ -739,18 +793,21 @@ None.
 Vitest (`convex-node` project — needs `node:crypto`).
 
 **Setup**
+
 - `vault()`, seed user + sub.
 - Tamper one byte in the row's ciphertext via `t.run(ctx => ctx.db.patch('subscriptions', subId, { ciphertext: tampered }))`.
   Use the same `tampered.fill()`+XOR pattern from the existing
   `crypto.node.test.ts` "tampered ciphertext throws" test.
 
 **Run**
+
 - `t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.pullForSwitch, { slotOrEmail: 'a@b.com' })`.
 - (Optionally also drive via the CLI path:
   `runSwitch({ slotOrEmail: 'a@b.com' })` against the in-memory
   client and assert the rendered error.)
 
 **Assertions**
+
 - The action **throws**.
 - The thrown error's stringified `.message` does **not** contain any
   fragment that looks like plaintext (`/sk-ant-/`, `/accessToken/`,
@@ -781,15 +838,18 @@ token-shaped string → `refreshLog.error` has the token replaced by
 Vitest (`convex-edge` project).
 
 **Setup**
+
 - `vault()`, seed expiring sub.
 - `__setAnthropicFetch` returns a 500 with a response body containing
   a token-shaped substring like
   `Internal error processing sk-ant-ort01-XXXXXXXXXXXXXXXXXXXXXXXX`.
 
 **Run**
+
 - `t.action(internal.subscriptions.actions.refreshOAuthToken, { subId, triggeredBy: 'manual' })`.
 
 **Assertions**
+
 - `refreshLog`: one row, `outcome === 'failure'`.
 - `refreshLog[0].error` contains `<redacted>`.
 - `refreshLog[0].error` does **not** contain `sk-ant-ort01` or
@@ -819,6 +879,7 @@ Vitest (`convex-node` project, which has real `node:crypto` and real
 `fetch`).
 
 **Setup**
+
 - Skip block at the top:
   ```ts
   const liveToken = process.env.VAULT_TEST_REFRESH_TOKEN
@@ -829,9 +890,11 @@ Vitest (`convex-node` project, which has real `node:crypto` and real
 - Do **not** call `__setAnthropicFetch` — we want the real network call.
 
 **Run**
+
 - `t.action(internal.subscriptions.actions.refreshOAuthToken, { subId, triggeredBy: 'manual' })`.
 
 **Assertions**
+
 - Sub row's `expiresAt` advanced past `Date.now() + 60min` (Anthropic
   typically returns 8h).
 - Decrypt the new ciphertext → `refreshToken` differs from the seed
@@ -839,9 +902,10 @@ Vitest (`convex-node` project, which has real `node:crypto` and real
 - One `refreshLog` row, `outcome === 'success'`.
 
 **Skip conditions**
+
 - Default: skipped (env not set).
 - Run with `VAULT_TEST_REFRESH_TOKEN=<real-token> yarn test:scenario`.
-- **Important:** running this scenario *consumes* the token. The user
+- **Important:** running this scenario _consumes_ the token. The user
   needs to capture a fresh token from a real Claude Code login each
   time they want to run this scenario — there is no other way around
   that, OAuth refresh tokens are single-use.
@@ -853,25 +917,25 @@ Vitest (`convex-node` project, which has real `node:crypto` and real
 
 ## 5. Framework matrix
 
-| Scenario | Vitest project | Real network? | Real DOM? |
-|---|---|---|---|
-| 1 First-machine bootstrap | cli (Bun) | No | No |
-| 2 Add account flow | cli (Bun) | No | No |
-| 3 List with usage | cli (Bun) | No | No |
-| 4 Switch on same machine | cli (Bun) | No | No |
-| 5 Switch on second machine | cli (Bun) | No | No |
-| 6 Auto-refresh near expiry | convex-edge | No | No |
-| 7 Refresh race | convex-edge | No | No |
-| 8a Refresh dead (backend) | convex-edge | No | No |
-| 8b Refresh dead (frontend badge) | frontend (jsdom) | No | Yes |
-| 9 Force-refresh button | frontend (jsdom) | No | Yes |
-| 10a Force remove (frontend) | frontend (jsdom) | No | Yes |
-| 10b Force remove (CLI list) | cli (Bun) | No | No |
-| 11 Revoke machine | frontend (jsdom) | No | Yes |
-| 12 Offline degradation | cli (Bun) | No | No |
-| 13 Encryption integrity | convex-node | No | No |
-| 14 Token redaction | convex-edge | No | No |
-| **15 (deferred) Live refresh** | convex-node | **Yes** | No |
+| Scenario                         | Vitest project   | Real network? | Real DOM? |
+| -------------------------------- | ---------------- | ------------- | --------- |
+| 1 First-machine bootstrap        | cli (Bun)        | No            | No        |
+| 2 Add account flow               | cli (Bun)        | No            | No        |
+| 3 List with usage                | cli (Bun)        | No            | No        |
+| 4 Switch on same machine         | cli (Bun)        | No            | No        |
+| 5 Switch on second machine       | cli (Bun)        | No            | No        |
+| 6 Auto-refresh near expiry       | convex-edge      | No            | No        |
+| 7 Refresh race                   | convex-edge      | No            | No        |
+| 8a Refresh dead (backend)        | convex-edge      | No            | No        |
+| 8b Refresh dead (frontend badge) | frontend (jsdom) | No            | Yes       |
+| 9 Force-refresh button           | frontend (jsdom) | No            | Yes       |
+| 10a Force remove (frontend)      | frontend (jsdom) | No            | Yes       |
+| 10b Force remove (CLI list)      | cli (Bun)        | No            | No        |
+| 11 Revoke machine                | frontend (jsdom) | No            | Yes       |
+| 12 Offline degradation           | cli (Bun)        | No            | No        |
+| 13 Encryption integrity          | convex-node      | No            | No        |
+| 14 Token redaction               | convex-edge      | No            | No        |
+| **15 (deferred) Live refresh**   | convex-node      | **Yes**       | No        |
 
 Playwright is intentionally **not** introduced. Justification:
 
@@ -883,7 +947,7 @@ Playwright is intentionally **not** introduced. Justification:
   we can already make in jsdom. Per spec §11, frontend coverage is
   Vitest + Testing Library, and the existing route tests prove that
   approach works.
-- The two scenarios that *might* justify a real browser (#9 force
+- The two scenarios that _might_ justify a real browser (#9 force
   refresh, #11 revoke) both reduce to "click a button → the right
   Convex call fires → the live query refetches". jsdom + the
   `convex/react` mock pattern exercise both halves.
@@ -894,12 +958,12 @@ Playwright is intentionally **not** introduced. Justification:
 
 ## 6. Env var requirements
 
-| Var | Scope | Why | Used by scenarios |
-|---|---|---|---|
-| `VAULT_AES_KEY` | always | Required by `subscriptions/crypto.encrypt/decrypt`. Set per-test in `beforeEach` to `Buffer.alloc(32, N).toString('base64')`. | All scenarios involving encryption (2, 4, 5, 6, 7, 8, 13, 14, 15) |
-| `CLERK_SECRET_KEY` | when scenario hits `cli.actions.startLink` or `revokeSession` | Required by `cli/clerk.ts`. Tests inject a dummy `'sk_test_dummy_for_unit_tests'` plus a `__setClerkFetch` stub. | 1 (login flow), 11 |
-| `VAULT_TEST_REFRESH_TOKEN` | live-only | Real refresh token to exercise scenario 15. | 15 |
-| `HOME` | CLI scenarios | Stubbed via `vi.stubEnv('HOME', tmpdir)` to keep `~/.vault/` in test temp space. | 1, 2, 3, 4, 5, 10b, 12 |
+| Var                        | Scope                                                         | Why                                                                                                                           | Used by scenarios                                                 |
+| -------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `VAULT_AES_KEY`            | always                                                        | Required by `subscriptions/crypto.encrypt/decrypt`. Set per-test in `beforeEach` to `Buffer.alloc(32, N).toString('base64')`. | All scenarios involving encryption (2, 4, 5, 6, 7, 8, 13, 14, 15) |
+| `CLERK_SECRET_KEY`         | when scenario hits `cli.actions.startLink` or `revokeSession` | Required by `cli/clerk.ts`. Tests inject a dummy `'sk_test_dummy_for_unit_tests'` plus a `__setClerkFetch` stub.              | 1 (login flow), 11                                                |
+| `VAULT_TEST_REFRESH_TOKEN` | live-only                                                     | Real refresh token to exercise scenario 15.                                                                                   | 15                                                                |
+| `HOME`                     | CLI scenarios                                                 | Stubbed via `vi.stubEnv('HOME', tmpdir)` to keep `~/.vault/` in test temp space.                                              | 1, 2, 3, 4, 5, 10b, 12                                            |
 
 No real Convex deploy URL, no real Anthropic / Clerk endpoints (except
 scenario 15). All scenarios are hermetic by default.
@@ -908,13 +972,14 @@ scenario 15). All scenarios are hermetic by default.
 
 ## 7. Recommended CI matrix
 
-| Job | Command | When |
-|---|---|---|
-| Default test suite | `yarn test` | Every PR + push to main. Excludes `*.scenario.test.ts` via the existing exclude glob. |
-| Scenario suite (hermetic) | `yarn test:scenario` | Every PR + push to main. Runs scenarios 1-14. No env vars needed beyond `VAULT_AES_KEY` (set deterministically inside each test). |
-| Live refresh | `yarn test:scenario --testNamePattern='live Anthropic refresh'` | Manually-dispatched workflow. Triggered with a one-off `VAULT_TEST_REFRESH_TOKEN` from the GitHub Actions workflow input. Skipped on PRs (the token is single-use; we don't want it consumed by every PR). |
+| Job                       | Command                                                         | When                                                                                                                                                                                                       |
+| ------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default test suite        | `yarn test`                                                     | Every PR + push to main. Excludes `*.scenario.test.ts` via the existing exclude glob.                                                                                                                      |
+| Scenario suite (hermetic) | `yarn test:scenario`                                            | Every PR + push to main. Runs scenarios 1-14. No env vars needed beyond `VAULT_AES_KEY` (set deterministically inside each test).                                                                          |
+| Live refresh              | `yarn test:scenario --testNamePattern='live Anthropic refresh'` | Manually-dispatched workflow. Triggered with a one-off `VAULT_TEST_REFRESH_TOKEN` from the GitHub Actions workflow input. Skipped on PRs (the token is single-use; we don't want it consumed by every PR). |
 
 Estimated total runtime for the hermetic scenario suite (1-14):
+
 - Sum of "estimated runtime" rows above ≈ **5 seconds** in serial.
 - Vitest runs files in parallel by default, so the wall-clock should be
   closer to 1.5 seconds (limited by scenario #7's mandatory 1s sleep).
@@ -946,13 +1011,13 @@ assert against reality, not the brief:
    scenario #4 says `action='switch'`. Either:
    - Treat the brief as the spec and update the impl to insert
      `action: 'switch'` from `pullForSwitch` (this matches `cvault
-     switch` semantics from the user's perspective and matches spec
+switch` semantics from the user's perspective and matches spec
      §5's `machineActivity.action` enum which has both `'switch'`
      and `'pull'`).
    - Or treat the impl as the spec and update the brief.
-   The plan's scenario asserts `action === 'pull'` to match shipped
-   code, with a `// TODO` comment recommending the impl change. **This
-   is a real spec/impl disagreement that needs a Stefan call.**
+     The plan's scenario asserts `action === 'pull'` to match shipped
+     code, with a `// TODO` comment recommending the impl change. **This
+     is a real spec/impl disagreement that needs a Stefan call.**
 
 3. **The "Force Refresh" button is currently a `console.warn`
    placeholder** (`frontend/src/routes/dashboard/index.tsx:60-77`).
@@ -1013,4 +1078,3 @@ Per the user brief and spec §2 + §14:
 The plan adds zero new runtime dependencies, zero new CI jobs (reuses
 the existing `yarn test:scenario` script and `vitest.scenario.config.ts`),
 and zero new test conventions — it composes harnesses already in tree.
-

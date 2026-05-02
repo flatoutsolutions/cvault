@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { api } from '../_generated/api'
 import { SECOND_IDENTITY, TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api } from '../_generated/api'
 
 /**
  * Spec: §4 (schema) + §5 (queries) + §11 (testing) + §12 (security).
@@ -29,7 +29,7 @@ describe('subscriptions.queries.listForUser', () => {
     expect(result).toEqual([])
   })
 
-  it('returns only the caller\'s subscriptions, not other users\'', async () => {
+  it("returns only the caller's subscriptions, not other users'", async () => {
     const t = vault()
     const aliceId = await seedUser(t, TEST_IDENTITY)
     const bobId = await seedUser(t, SECOND_IDENTITY)

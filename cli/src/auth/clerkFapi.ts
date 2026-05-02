@@ -67,17 +67,13 @@ export function decodeJwtExp(jwt: string): number {
   try {
     json = Buffer.from(padded, 'base64').toString('utf8')
   } catch (err) {
-    throw new Error(
-      `Failed to base64-decode JWT payload: ${err instanceof Error ? err.message : String(err)}`
-    )
+    throw new Error(`Failed to base64-decode JWT payload: ${err instanceof Error ? err.message : String(err)}`)
   }
   let parsed: unknown
   try {
     parsed = JSON.parse(json)
   } catch (err) {
-    throw new Error(
-      `JWT payload was not valid JSON: ${err instanceof Error ? err.message : String(err)}`
-    )
+    throw new Error(`JWT payload was not valid JSON: ${err instanceof Error ? err.message : String(err)}`)
   }
   if (typeof parsed !== 'object' || parsed === null || !('exp' in parsed)) {
     throw new Error('JWT payload is missing `exp`')
@@ -133,9 +129,7 @@ export async function mintConvexJwt(session: SessionState): Promise<MintResult> 
     throw new ClerkSessionExpiredError(res.status, body)
   }
   if (!res.ok) {
-    throw new Error(
-      `Convex mint endpoint failed: ${String(res.status)} ${await res.text()}`
-    )
+    throw new Error(`Convex mint endpoint failed: ${String(res.status)} ${await res.text()}`)
   }
   const body = (await res.json()) as { jwt: string }
   return { convexJwt: body.jwt, convexJwtExpiry: decodeJwtExp(body.jwt) }
@@ -179,9 +173,7 @@ export async function exchangeTicketForSession(opts: ExchangeOptions): Promise<S
     }).toString(),
   })
   if (!signInRes.ok) {
-    throw new Error(
-      `Clerk FAPI sign_in failed: ${String(signInRes.status)} ${await signInRes.text()}`
-    )
+    throw new Error(`Clerk FAPI sign_in failed: ${String(signInRes.status)} ${await signInRes.text()}`)
   }
   const signInBody = (await signInRes.json()) as ClerkSignInResponse
   const sessionId = signInBody.client?.last_active_session_id

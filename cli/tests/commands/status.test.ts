@@ -7,6 +7,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { status } from '../../src/claudeSwap'
+import { runStatus } from '../../src/commands/status'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+
 vi.mock('../../src/claudeSwap', () => ({
   status: vi.fn(),
 }))
@@ -15,10 +19,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { status } from '../../src/claudeSwap'
-import { runStatus } from '../../src/commands/status'
-import { makeVaultClient } from '../../src/convex/vaultClient'
 
 describe('runStatus', () => {
   // Each test queues `vi.mocked(makeVaultClient).mockResolvedValueOnce(...)`.
@@ -116,10 +116,7 @@ describe('runStatus', () => {
     })
 
     await runStatus()
-    expect(client.query).toHaveBeenCalledWith(
-      expect.anything(),
-      { email: 'samuel.asseg@gmail.com' }
-    )
+    expect(client.query).toHaveBeenCalledWith(expect.anything(), { email: 'samuel.asseg@gmail.com' })
     expect(captured.join('\n')).toContain('samuel.asseg@gmail.com')
   })
 })

@@ -20,14 +20,15 @@
  * re-open the link.
  */
 import { useUser } from '@clerk/tanstack-react-start'
-import { useAction } from 'convex/react'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
+import { useAction } from 'convex/react'
 import { CheckCircle2, ExternalLink, Loader2, ShieldX } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+
 import { api } from '../../../../convex/_generated/api'
 
 /**
@@ -66,22 +67,14 @@ function isLocalhostHttpUrl(value: string): boolean {
   // brackets in `.hostname` for IPv6 hosts (verified empirically); we
   // accept both bracketed and unbracketed forms defensively.
   const hostname = url.hostname
-  return (
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]' ||
-    hostname === 'localhost'
-  )
+  return hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]' || hostname === 'localhost'
 }
 
 export const searchSchema = z.object({
   // The localhost URL the CLI is listening on.
-  redirect: z
-    .string()
-    .url()
-    .refine(isLocalhostHttpUrl, {
-      message: 'redirect must be an http://127.0.0.1:<port>/, http://[::1]:<port>/, or http://localhost:<port>/ URL',
-    }),
+  redirect: z.string().url().refine(isLocalhostHttpUrl, {
+    message: 'redirect must be an http://127.0.0.1:<port>/, http://[::1]:<port>/, or http://localhost:<port>/ URL',
+  }),
   // CSRF-style nonce; the CLI generated this and we just echo it.
   state: z.string().min(8),
 })
@@ -130,9 +123,7 @@ export function CliLinkPage() {
           body: JSON.stringify({ state, signInToken }),
         })
         if (!res.ok) {
-          throw new Error(
-            `Localhost callback returned ${res.status.toString()} ${res.statusText}`
-          )
+          throw new Error(`Localhost callback returned ${res.status.toString()} ${res.statusText}`)
         }
         setStatus('done')
       } catch (e) {
@@ -152,10 +143,7 @@ export function CliLinkPage() {
           <CardTitle>Link your machine to cvault</CardTitle>
           <CardDescription>
             Confirming the cvault CLI on this machine is allowed to call your Convex deployment as{' '}
-            <span className="text-foreground font-medium">
-              {user?.primaryEmailAddress?.emailAddress ?? '…'}
-            </span>
-            .
+            <span className="text-foreground font-medium">{user?.primaryEmailAddress?.emailAddress ?? '…'}</span>.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -163,8 +151,8 @@ export function CliLinkPage() {
           {status !== 'done' && status !== 'error' && status !== 'need-signin' && (
             <p className="text-muted-foreground text-xs">
               This page POSTs the sign-in token to{' '}
-              <code className="bg-muted rounded px-1 py-0.5 font-mono">{redirect}</code>. The token
-              is single-use and expires in 10 minutes.
+              <code className="bg-muted rounded px-1 py-0.5 font-mono">{redirect}</code>. The token is single-use and
+              expires in 10 minutes.
             </p>
           )}
         </CardContent>
@@ -173,15 +161,7 @@ export function CliLinkPage() {
   )
 }
 
-function StatusBlock({
-  status,
-  errorMsg,
-  redirect,
-}: {
-  status: Status
-  errorMsg: string | null
-  redirect: string
-}) {
+function StatusBlock({ status, errorMsg, redirect }: { status: Status; errorMsg: string | null; redirect: string }) {
   if (status === 'idle' || status === 'minting') {
     return (
       <Row icon={<Loader2 className="size-4 animate-spin" aria-hidden />}>

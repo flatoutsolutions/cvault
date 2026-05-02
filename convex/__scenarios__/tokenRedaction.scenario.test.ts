@@ -24,18 +24,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { internal } from '../_generated/api'
 import { TEST_IDENTITY, vault } from '../__tests__/helpers'
-import {
-  __setAnthropicFetch,
-  __setRandomBytesForTest,
-} from '../subscriptions/anthropic'
-import {
-  buildOauthBlob,
-  makeAnthropicFetchStub,
-  seedSubscription,
-  withVaultKey,
-} from './_helpers.scenario'
+import { internal } from '../_generated/api'
+import { __setAnthropicFetch, __setRandomBytesForTest } from '../subscriptions/anthropic'
+import { buildOauthBlob, makeAnthropicFetchStub, seedSubscription, withVaultKey } from './_helpers.scenario'
 
 let keyHandle: ReturnType<typeof withVaultKey>
 
@@ -90,9 +82,7 @@ describe('scenario #14 — token redaction in refresh failure logs', () => {
     })
 
     // ---------- ASSERTIONS ----------
-    const logs = await t.run(
-      async (ctx) => await ctx.db.query('refreshLog').collect()
-    )
+    const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
     expect(logs).toHaveLength(1)
     expect(logs[0]?.outcome).toBe('failure')
     expect(logs[0]?.triggeredBy).toBe('cron')
@@ -115,9 +105,7 @@ describe('scenario #14 — token redaction in refresh failure logs', () => {
 
     // Sub state: lease released so next cron tick can retry. refreshExpiresAt
     // unchanged (5xx is transient, not a dead-token signal).
-    const after = await t.run(
-      async (ctx) => await ctx.db.get('subscriptions', seeded.subId)
-    )
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', seeded.subId))
     expect(after?.refreshLeaseHolder).toBeUndefined()
     expect(after?.refreshLeaseUntil).toBeUndefined()
   })
@@ -150,9 +138,7 @@ describe('scenario #14 — token redaction in refresh failure logs', () => {
       triggeredBy: 'cron',
     })
 
-    const logs = await t.run(
-      async (ctx) => await ctx.db.query('refreshLog').collect()
-    )
+    const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
     expect(logs).toHaveLength(1)
     expect(logs[0]?.outcome).toBe('failure')
 
@@ -193,9 +179,7 @@ describe('scenario #14 — token redaction in refresh failure logs', () => {
       triggeredBy: 'cron',
     })
 
-    const logs = await t.run(
-      async (ctx) => await ctx.db.query('refreshLog').collect()
-    )
+    const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
     expect(logs).toHaveLength(1)
     expect(logs[0]?.outcome).toBe('failure')
     const errorText = logs[0]?.error ?? ''

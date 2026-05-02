@@ -27,9 +27,12 @@
  * exposes `requestRefresh` instead — see IMPLEMENTATION_NOTES.md "Frontend
  * agent's earlier requests #3". Asserting against the shipped name.
  */
-import { getFunctionName } from 'convex/server'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// eslint-disable-next-line import/first
+import { SubsPage } from '../../src/routes/dashboard/index'
 
 const useQueryMock = vi.fn()
 const requestRefreshMock = vi.fn()
@@ -71,9 +74,6 @@ vi.mock('convex/react', () => ({
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
 }))
-
-// eslint-disable-next-line import/first
-import { SubsPage } from '../../src/routes/dashboard/index'
 
 function makeSub(overrides: Record<string, unknown> = {}) {
   const now = Date.now()
@@ -171,18 +171,14 @@ describe('scenario / force refresh button', () => {
 
     // Disabled WHILE in-flight.
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /refreshing/i }).hasAttribute('disabled')).toBe(
-        true
-      )
+      expect(screen.getByRole('button', { name: /refreshing/i }).hasAttribute('disabled')).toBe(true)
     })
 
     // Resolve the action; button should re-enable on next tick.
     resolveAction?.()
 
     await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: /force refresh/i }).hasAttribute('disabled')
-      ).toBe(false)
+      expect(screen.getByRole('button', { name: /force refresh/i }).hasAttribute('disabled')).toBe(false)
     })
   })
 
@@ -207,8 +203,7 @@ describe('scenario / force refresh button', () => {
     await waitFor(
       () => {
         const visible =
-          screen.queryByText(/refresh.*failed|REFRESH_FAILED|Anthropic 500/i) ??
-          screen.queryByRole('alert')
+          screen.queryByText(/refresh.*failed|REFRESH_FAILED|Anthropic 500/i) ?? screen.queryByRole('alert')
         expect(visible).not.toBeNull()
       },
       { timeout: 1500 }

@@ -12,12 +12,12 @@
  * If `claude-swap --status` fails (binary missing, returns garbage), we
  * still render the table — just without an active marker.
  */
+import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
-import { api } from '@cvault/convex/api'
 import { status } from '../claudeSwap'
 import { makeVaultClient } from '../convex/vaultClient'
-import { renderSubsTable, type SubRow } from '../render/table'
+import { type SubRow, renderSubsTable } from '../render/table'
 
 /**
  * Parse `claude-swap --status` output to find the active slot. Tolerant of

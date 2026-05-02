@@ -11,8 +11,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { api } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api } from '../_generated/api'
 import { __setClerkFetch } from './clerk'
 
 const ORIGINAL_CLERK_KEY = process.env.CLERK_SECRET_KEY
@@ -33,9 +33,7 @@ afterEach(() => {
 describe('cli.actions.startLink', () => {
   it('throws when called without a Clerk identity', async () => {
     const t = vault()
-    await expect(
-      t.action(api.cli.actions.startLink, { state: 'abc' })
-    ).rejects.toThrow(/authenticated/i)
+    await expect(t.action(api.cli.actions.startLink, { state: 'abc' })).rejects.toThrow(/authenticated/i)
   })
 
   it('mints a sign-in token from Clerk Backend API and returns it to the caller', async () => {
@@ -90,9 +88,9 @@ describe('cli.actions.startLink', () => {
       )
     )
 
-    await expect(
-      t.withIdentity(TEST_IDENTITY).action(api.cli.actions.startLink, { state: 'x' })
-    ).rejects.toThrow(/clerk/i)
+    await expect(t.withIdentity(TEST_IDENTITY).action(api.cli.actions.startLink, { state: 'x' })).rejects.toThrow(
+      /clerk/i
+    )
   })
 
   it('throws if CLERK_SECRET_KEY is not set on the deployment', async () => {
@@ -102,18 +100,18 @@ describe('cli.actions.startLink', () => {
     delete process.env.CLERK_SECRET_KEY
     __setClerkFetch(vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))))
 
-    await expect(
-      t.withIdentity(TEST_IDENTITY).action(api.cli.actions.startLink, { state: 'x' })
-    ).rejects.toThrow(/CLERK_SECRET_KEY/)
+    await expect(t.withIdentity(TEST_IDENTITY).action(api.cli.actions.startLink, { state: 'x' })).rejects.toThrow(
+      /CLERK_SECRET_KEY/
+    )
   })
 })
 
 describe('cli.actions.revokeSession', () => {
   it('throws when called without a Clerk identity', async () => {
     const t = vault()
-    await expect(
-      t.action(api.cli.actions.revokeSession, { clerkSessionId: 'sess_x' })
-    ).rejects.toThrow(/authenticated/i)
+    await expect(t.action(api.cli.actions.revokeSession, { clerkSessionId: 'sess_x' })).rejects.toThrow(
+      /authenticated/i
+    )
   })
 
   it('calls Clerk to load the session, verifies ownership, then revokes', async () => {
@@ -140,10 +138,7 @@ describe('cli.actions.revokeSession', () => {
         expect(init.method).toBe('POST')
         expect((init.headers as Record<string, string>).Authorization).toMatch(/^Bearer sk_test_/)
         return Promise.resolve(
-          new Response(
-            JSON.stringify({ id: 'sess_target_xyz', status: 'revoked' }),
-            { status: 200 }
-          )
+          new Response(JSON.stringify({ id: 'sess_target_xyz', status: 'revoked' }), { status: 200 })
         )
       }
       throw new Error(`unexpected fetch URL: ${url}`)
@@ -199,9 +194,7 @@ describe('cli.actions.revokeSession', () => {
     await seedUser(t)
 
     const fetchStub = vi.fn(() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ errors: [{ message: 'not found' }] }), { status: 404 })
-      )
+      Promise.resolve(new Response(JSON.stringify({ errors: [{ message: 'not found' }] }), { status: 404 }))
     )
     __setClerkFetch(fetchStub as unknown as typeof fetch)
 

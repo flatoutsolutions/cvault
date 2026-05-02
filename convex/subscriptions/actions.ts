@@ -39,7 +39,10 @@ async function sha256Hex(input: string): Promise<string> {
 export const pullForSwitch = authenticatedAction({
   args: { slotOrEmail: v.string() },
   returns: pullResultValidator,
-  handler: async (ctx, { slotOrEmail }): Promise<{
+  handler: async (
+    ctx,
+    { slotOrEmail }
+  ): Promise<{
     email: string
     slot: number
     plaintextBlob: string
@@ -86,7 +89,9 @@ export const pullForSwitch = authenticatedAction({
         code: 'REFRESH_FAILED',
         message:
           'Anthropic OAuth refresh failed and stored token is expired. ' +
-          'Try `cvault refresh ' + slotOrEmail + '` again, or check /dashboard/audit for details.',
+          'Try `cvault refresh ' +
+          slotOrEmail +
+          '` again, or check /dashboard/audit for details.',
       })
     }
 
@@ -414,9 +419,7 @@ export const fetchUsageForSub = internalAction({
       plaintext = decrypt(sub.ciphertext, sub.nonce)
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
-      console.error(
-        `[cvault] fetchUsageForSub: decrypt failed for subId ${subId}: ${redactTokens(errMsg)}`
-      )
+      console.error(`[cvault] fetchUsageForSub: decrypt failed for subId ${subId}: ${redactTokens(errMsg)}`)
       return null
     }
     type OAuthBlob = { claudeAiOauth?: { accessToken?: string } }

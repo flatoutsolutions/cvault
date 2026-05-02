@@ -11,13 +11,13 @@
 import { type FunctionReference, getFunctionName } from 'convex/server'
 import { describe, expect, it, vi } from 'vitest'
 
+import { runRefresh } from '../../src/commands/refresh'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+
 vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { runRefresh } from '../../src/commands/refresh'
-import { makeVaultClient } from '../../src/convex/vaultClient'
 
 function refName(ref: unknown): string {
   // `api.x.y.z` returns a Proxy whose name we read via convex's
@@ -79,9 +79,7 @@ describe('runRefresh', () => {
 
   it('throws a clear error when no sub matches the slot', async () => {
     const client = {
-      query: vi.fn().mockResolvedValueOnce([
-        { _id: 'sub_x', slot: 1, email: 'x@example.com' },
-      ]),
+      query: vi.fn().mockResolvedValueOnce([{ _id: 'sub_x', slot: 1, email: 'x@example.com' }]),
       action: vi.fn().mockResolvedValueOnce(null),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
@@ -92,24 +90,18 @@ describe('runRefresh', () => {
 
   it('throws a clear error when no sub matches the email', async () => {
     const client = {
-      query: vi.fn().mockResolvedValueOnce([
-        { _id: 'sub_x', slot: 1, email: 'x@example.com' },
-      ]),
+      query: vi.fn().mockResolvedValueOnce([{ _id: 'sub_x', slot: 1, email: 'x@example.com' }]),
       action: vi.fn().mockResolvedValueOnce(null),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
 
-    await expect(runRefresh({ slotOrEmail: 'unknown@example.com' })).rejects.toThrow(
-      /no subscription/i
-    )
+    await expect(runRefresh({ slotOrEmail: 'unknown@example.com' })).rejects.toThrow(/no subscription/i)
     expect(client.action).not.toHaveBeenCalled()
   })
 
   it('propagates Convex errors from the action call', async () => {
     const client = {
-      query: vi.fn().mockResolvedValueOnce([
-        { _id: 'sub_x', slot: 1, email: 'x@example.com' },
-      ]),
+      query: vi.fn().mockResolvedValueOnce([{ _id: 'sub_x', slot: 1, email: 'x@example.com' }]),
       action: vi.fn().mockRejectedValueOnce(new Error('500 boom')),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)

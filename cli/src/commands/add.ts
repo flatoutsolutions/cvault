@@ -13,10 +13,10 @@
  * The Convex action encrypts the plaintext blob server-side using the
  * master key in `VAULT_AES_KEY`. The CLI never sees the master key.
  */
+import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
-import { api } from '@cvault/convex/api'
-import { addAccountInteractive, exportAccount, status as csStatus } from '../claudeSwap'
+import { addAccountInteractive, status as csStatus, exportAccount } from '../claudeSwap'
 import { makeVaultClient } from '../convex/vaultClient'
 
 /**
@@ -37,9 +37,7 @@ import { makeVaultClient } from '../convex/vaultClient'
 function parseActiveSlot(statusOutput: string): number {
   const match = /Account[\s\-_:]+(\d+)/i.exec(statusOutput)
   if (!match || match[1] === undefined) {
-    throw new Error(
-      `Could not determine active slot from claude-swap --status output:\n${statusOutput}`
-    )
+    throw new Error(`Could not determine active slot from claude-swap --status output:\n${statusOutput}`)
   }
   return Number.parseInt(match[1], 10)
 }

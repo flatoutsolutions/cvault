@@ -36,8 +36,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { api } from '../_generated/api'
 import { TEST_IDENTITY, vault } from '../__tests__/helpers'
+import { api } from '../_generated/api'
 import { seedSubscription, withVaultKey } from './_helpers.scenario'
 
 // Use a distinct fill byte from refresh.test.ts (9), upsertFromPlaintext.test.ts
@@ -89,9 +89,7 @@ describe('scenario: encryption integrity (tampered ciphertext)', () => {
       return await ctx.db.get('subscriptions', seeded.subId)
     })
     expect(before).not.toBeNull()
-    const originalCiphertextHex = Buffer.from(
-      before?.ciphertext ?? new ArrayBuffer(0)
-    ).toString('hex')
+    const originalCiphertextHex = Buffer.from(before?.ciphertext ?? new ArrayBuffer(0)).toString('hex')
     expect(originalCiphertextHex.length).toBeGreaterThan(0)
 
     // Tamper a single byte in the middle of the ciphertext bundle. Same
@@ -102,10 +100,7 @@ describe('scenario: encryption integrity (tampered ciphertext)', () => {
     tampered[tamperIndex] = (tampered[tamperIndex] ?? 0) ^ 0x01
     await t.run(async (ctx) => {
       // Pass an ArrayBuffer slice to match Convex `v.bytes()`.
-      const buf = tampered.buffer.slice(
-        tampered.byteOffset,
-        tampered.byteOffset + tampered.byteLength
-      )
+      const buf = tampered.buffer.slice(tampered.byteOffset, tampered.byteOffset + tampered.byteLength)
       await ctx.db.patch('subscriptions', seeded.subId, { ciphertext: buf })
     })
 
@@ -158,9 +153,7 @@ describe('scenario: encryption integrity (tampered ciphertext)', () => {
       return await ctx.db.get('subscriptions', seeded.subId)
     })
     expect(after).not.toBeNull()
-    const afterCiphertextHex = Buffer.from(
-      after?.ciphertext ?? new ArrayBuffer(0)
-    ).toString('hex')
+    const afterCiphertextHex = Buffer.from(after?.ciphertext ?? new ArrayBuffer(0)).toString('hex')
     // The ciphertext we stored is the tampered one; it should still be
     // exactly that (no silent rewrite).
     const expectedHex = Buffer.from(tampered).toString('hex')

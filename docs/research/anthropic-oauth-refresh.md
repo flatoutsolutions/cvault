@@ -4,7 +4,7 @@ purpose: Reference for the credential vault's server-side refresh of Anthropic O
 sources:
   - repo: realiti4/claude-swap
     branch: main
-    head_commit: e1edd114cc607c197b2109080ee55345cb2ee0dc        # HEAD of main on retrieval date
+    head_commit: e1edd114cc607c197b2109080ee55345cb2ee0dc # HEAD of main on retrieval date
     head_commit_date: 2026-05-01
     files:
       - path: src/claude_swap/oauth.py
@@ -21,7 +21,7 @@ sources:
         url: https://github.com/realiti4/claude-swap/blob/main/src/claude_swap/__init__.py
 retrieved_at: 2026-05-02
 retrieved_via: WebFetch against raw.githubusercontent.com
-authoritative: false   # claude-swap is a third-party tool reverse-engineering the Claude Code OAuth flow; treat as a strong reference, not as an Anthropic spec.
+authoritative: false # claude-swap is a third-party tool reverse-engineering the Claude Code OAuth flow; treat as a strong reference, not as an Anthropic spec.
 ---
 
 # Anthropic OAuth Token Refresh
@@ -41,10 +41,10 @@ publishes an official spec.
 
 ## Endpoint
 
-| Item   | Value                                                |
-|--------|------------------------------------------------------|
-| URL    | `https://platform.claude.com/v1/oauth/token`         |
-| Method | `POST`                                               |
+| Item   | Value                                        |
+| ------ | -------------------------------------------- |
+| URL    | `https://platform.claude.com/v1/oauth/token` |
+| Method | `POST`                                       |
 
 Constants (verbatim from `oauth.py`):
 
@@ -107,10 +107,10 @@ because it's the only place `OAUTH_BETA_HEADER` is used in `oauth.py`.
 
 JSON object with three fields, all required:
 
-| Field           | Type   | Required | Value                                                        |
-|-----------------|--------|----------|--------------------------------------------------------------|
-| `grant_type`    | string | yes      | Literal `"refresh_token"`                                    |
-| `refresh_token` | string | yes      | The refresh token from `claudeAiOauth.refreshToken`          |
+| Field           | Type   | Required | Value                                                           |
+| --------------- | ------ | -------- | --------------------------------------------------------------- |
+| `grant_type`    | string | yes      | Literal `"refresh_token"`                                       |
+| `refresh_token` | string | yes      | The refresh token from `claudeAiOauth.refreshToken`             |
 | `client_id`     | string | yes      | `9d1c250a-e61b-44d9-88ed-5944d1962f5e` (the Claude Code app id) |
 
 No `client_secret` is sent — this is a public client. No `scope` is
@@ -144,13 +144,13 @@ if resp_data.get("scope"):
 
 So the documented response shape is:
 
-| Field            | Type    | Required | Notes                                                                                  |
-|------------------|---------|----------|----------------------------------------------------------------------------------------|
-| `access_token`   | string  | yes      | New bearer token to send as `Authorization: Bearer ...` to Anthropic APIs.             |
-| `expires_in`     | number  | yes      | **Seconds** until the access token expires. Convert to ms-since-epoch on receipt.      |
-| `refresh_token`  | string  | no       | If present, **the previous refresh token is invalidated and must be replaced** (token rotation). If absent, keep the existing refresh token. |
-| `scope`          | string  | no       | Space-separated scope list; claude-swap stores it as a `string[]`.                     |
-| `token_type`     | string  | no       | Standard OAuth field (`"Bearer"`); claude-swap ignores it.                             |
+| Field           | Type   | Required | Notes                                                                                                                                        |
+| --------------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `access_token`  | string | yes      | New bearer token to send as `Authorization: Bearer ...` to Anthropic APIs.                                                                   |
+| `expires_in`    | number | yes      | **Seconds** until the access token expires. Convert to ms-since-epoch on receipt.                                                            |
+| `refresh_token` | string | no       | If present, **the previous refresh token is invalidated and must be replaced** (token rotation). If absent, keep the existing refresh token. |
+| `scope`         | string | no       | Space-separated scope list; claude-swap stores it as a `string[]`.                                                                           |
+| `token_type`    | string | no       | Standard OAuth field (`"Bearer"`); claude-swap ignores it.                                                                                   |
 
 **Expiry encoding:** `expires_in` is **seconds**. claude-swap converts to
 **ms-since-epoch** when storing as `expiresAt`:
@@ -216,16 +216,16 @@ the vault should retry or surface as an internal error.
 
 ### Status → semantic mapping for the vault
 
-| HTTP status | OAuth `error`             | Vault interpretation                                          |
-|-------------|---------------------------|---------------------------------------------------------------|
-| `200`       | n/a                       | Success. Persist new tokens, replace refresh token if rotated. |
-| `400`       | `invalid_grant`           | **Refresh token dead. User must complete OAuth flow again.**  |
-| `400`       | `invalid_request`         | Vault bug (malformed body). Surface, don't retry.             |
-| `400`       | `unsupported_grant_type`  | Vault bug. Surface, don't retry.                              |
-| `401`       | `invalid_client`          | Wrong `client_id` — vault bug.                                |
-| `401`       | `invalid_grant`           | **Refresh token dead. User must re-login.**                   |
-| `429`       | n/a                       | Rate-limited. Back off and retry.                             |
-| `5xx`       | n/a                       | Transient server error. Retry with backoff.                   |
+| HTTP status | OAuth `error`            | Vault interpretation                                           |
+| ----------- | ------------------------ | -------------------------------------------------------------- |
+| `200`       | n/a                      | Success. Persist new tokens, replace refresh token if rotated. |
+| `400`       | `invalid_grant`          | **Refresh token dead. User must complete OAuth flow again.**   |
+| `400`       | `invalid_request`        | Vault bug (malformed body). Surface, don't retry.              |
+| `400`       | `unsupported_grant_type` | Vault bug. Surface, don't retry.                               |
+| `401`       | `invalid_client`         | Wrong `client_id` — vault bug.                                 |
+| `401`       | `invalid_grant`          | **Refresh token dead. User must re-login.**                    |
+| `429`       | n/a                      | Rate-limited. Back off and retry.                              |
+| `5xx`       | n/a                      | Transient server error. Retry with backoff.                    |
 
 ---
 
@@ -299,14 +299,14 @@ claude-swap is intentionally minimal here:
 Recommended vault retry strategy (not in claude-swap, but consistent
 with what Anthropic's endpoint will tolerate):
 
-| Failure                          | Strategy                                                  |
-|----------------------------------|-----------------------------------------------------------|
-| Network / DNS / connection error | Retry up to 3x with exponential backoff (250ms, 1s, 4s).  |
-| `5xx`                            | Retry up to 3x with exponential backoff.                  |
-| `429`                            | Honour `Retry-After` if present; otherwise 5s, 30s, 2m.   |
-| `400` / `401` with `invalid_grant` | **Do not retry.** Mark credential as dead, signal user.   |
-| `400` with anything else         | **Do not retry.** Surface as internal error.              |
-| `200`                            | Persist + return.                                         |
+| Failure                            | Strategy                                                 |
+| ---------------------------------- | -------------------------------------------------------- |
+| Network / DNS / connection error   | Retry up to 3x with exponential backoff (250ms, 1s, 4s). |
+| `5xx`                              | Retry up to 3x with exponential backoff.                 |
+| `429`                              | Honour `Retry-After` if present; otherwise 5s, 30s, 2m.  |
+| `400` / `401` with `invalid_grant` | **Do not retry.** Mark credential as dead, signal user.  |
+| `400` with anything else           | **Do not retry.** Surface as internal error.             |
+| `200`                              | Persist + return.                                        |
 
 ---
 
@@ -323,7 +323,7 @@ with what Anthropic's endpoint will tolerate):
    ms, confirming the response uses **seconds**. The locally-stored
    `expiresAt` is **ms-since-epoch** — do not confuse the two.
 4. **Refresh-token rotation is conditional.** claude-swap only overwrites
-   the stored refresh token *if* the response includes one. We don't
+   the stored refresh token _if_ the response includes one. We don't
    know from the source whether Anthropic always issues a new refresh
    token or only sometimes. Plan for "always" (the safer assumption)
    but accept "sometimes" if the field is absent.
@@ -353,23 +353,23 @@ Uses Node 22's built-in `fetch`. No external dependencies.
 
 ```ts
 // convex/oauth/anthropicRefresh.ts
-import { ConvexError } from "convex/values";
+import { ConvexError } from 'convex/values'
 
-const OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
-const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const OAUTH_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
+const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+const OAUTH_EXPIRY_BUFFER_MS = 5 * 60 * 1000
 
 export type AnthropicRefreshSuccess = {
-  accessToken: string;
-  expiresAt: number;          // ms since epoch
-  refreshToken: string;       // possibly rotated; possibly identical to input
-  scopes: string[];           // empty if response omits `scope`
-};
+  accessToken: string
+  expiresAt: number // ms since epoch
+  refreshToken: string // possibly rotated; possibly identical to input
+  scopes: string[] // empty if response omits `scope`
+}
 
 export type AnthropicRefreshDead = {
-  kind: "invalid_grant";
-  description: string | undefined;
-};
+  kind: 'invalid_grant'
+  description: string | undefined
+}
 
 /**
  * Refresh an Anthropic OAuth access token.
@@ -378,35 +378,35 @@ export type AnthropicRefreshDead = {
  * runtime will retry. Returns a discriminated union for terminal outcomes.
  */
 export async function refreshAnthropicToken(
-  refreshToken: string,
+  refreshToken: string
 ): Promise<AnthropicRefreshSuccess | AnthropicRefreshDead> {
   const body = JSON.stringify({
-    grant_type: "refresh_token",
+    grant_type: 'refresh_token',
     refresh_token: refreshToken,
     client_id: OAUTH_CLIENT_ID,
-  });
+  })
 
   const res = await fetch(OAUTH_TOKEN_URL, {
-    method: "POST",
+    method: 'POST',
     headers: {
-      "Content-Type": "application/json",
-      "User-Agent": "cvault/1.0",
+      'Content-Type': 'application/json',
+      'User-Agent': 'cvault/1.0',
     },
     body,
-  });
+  })
 
   // Read the body once so we can include it in error messages without
   // double-consuming the response stream.
-  const rawText = await res.text();
+  const rawText = await res.text()
 
   if (res.status === 200) {
     const json = JSON.parse(rawText) as {
-      access_token: string;
-      expires_in: number;        // seconds
-      refresh_token?: string;    // may be omitted if no rotation
-      scope?: string;            // space-separated
-      token_type?: string;       // typically "Bearer"; ignored
-    };
+      access_token: string
+      expires_in: number // seconds
+      refresh_token?: string // may be omitted if no rotation
+      scope?: string // space-separated
+      token_type?: string // typically "Bearer"; ignored
+    }
     return {
       accessToken: json.access_token,
       // Convert seconds -> ms-since-epoch with our 5-minute safety buffer
@@ -414,26 +414,23 @@ export async function refreshAnthropicToken(
       expiresAt: Date.now() + json.expires_in * 1000,
       // If the response omits a new refresh_token, keep the old one.
       refreshToken: json.refresh_token ?? refreshToken,
-      scopes: json.scope ? json.scope.split(" ") : [],
-    };
+      scopes: json.scope ? json.scope.split(' ') : [],
+    }
   }
 
   // Try to parse OAuth error body (RFC 6749 §5.2).
-  let oauthError: { error?: string; error_description?: string } = {};
+  let oauthError: { error?: string; error_description?: string } = {}
   try {
-    oauthError = JSON.parse(rawText) as typeof oauthError;
+    oauthError = JSON.parse(rawText) as typeof oauthError
   } catch {
     // Body wasn't JSON; fall through to the generic transient path below.
   }
 
-  if (
-    (res.status === 400 || res.status === 401) &&
-    oauthError.error === "invalid_grant"
-  ) {
+  if ((res.status === 400 || res.status === 401) && oauthError.error === 'invalid_grant') {
     return {
-      kind: "invalid_grant",
+      kind: 'invalid_grant',
       description: oauthError.error_description,
-    };
+    }
   }
 
   // 4xx other than invalid_grant => caller bug or revoked client.
@@ -441,12 +438,12 @@ export async function refreshAnthropicToken(
   // We surface both as ConvexError; the caller (or a wrapper with
   // exponential backoff) decides retry policy.
   throw new ConvexError({
-    code: res.status === 429 || res.status >= 500 ? "transient" : "permanent",
+    code: res.status === 429 || res.status >= 500 ? 'transient' : 'permanent',
     httpStatus: res.status,
     oauthError: oauthError.error ?? null,
     oauthErrorDescription: oauthError.error_description ?? null,
     rawBody: rawText.slice(0, 500),
-  });
+  })
 }
 
 /**
@@ -454,7 +451,7 @@ export async function refreshAnthropicToken(
  * Mirrors claude-swap's 5-minute skew buffer.
  */
 export function isAnthropicTokenExpired(expiresAtMs: number): boolean {
-  return Date.now() + OAUTH_EXPIRY_BUFFER_MS >= expiresAtMs;
+  return Date.now() + OAUTH_EXPIRY_BUFFER_MS >= expiresAtMs
 }
 ```
 
@@ -469,7 +466,7 @@ shape.
 
 ```ts
 // convex/oauth/anthropicTypes.ts
-import { v } from "convex/values";
+import { v } from 'convex/values'
 
 /**
  * Raw response body from POST https://platform.claude.com/v1/oauth/token.
@@ -479,11 +476,11 @@ import { v } from "convex/values";
  */
 export const anthropicRefreshResponse = v.object({
   access_token: v.string(),
-  expires_in: v.number(),                   // seconds
-  refresh_token: v.optional(v.string()),    // present iff rotated
-  scope: v.optional(v.string()),            // space-separated
-  token_type: v.optional(v.string()),       // typically "Bearer"
-});
+  expires_in: v.number(), // seconds
+  refresh_token: v.optional(v.string()), // present iff rotated
+  scope: v.optional(v.string()), // space-separated
+  token_type: v.optional(v.string()), // typically "Bearer"
+})
 
 /**
  * Normalised vault storage shape for an Anthropic OAuth credential.
@@ -493,9 +490,9 @@ export const anthropicRefreshResponse = v.object({
 export const anthropicStoredCredential = v.object({
   accessToken: v.string(),
   refreshToken: v.string(),
-  expiresAt: v.number(),                    // ms since epoch
+  expiresAt: v.number(), // ms since epoch
   scopes: v.array(v.string()),
-});
+})
 
 /**
  * RFC 6749 §5.2 OAuth error body. claude-swap doesn't parse it; we do,
@@ -503,10 +500,10 @@ export const anthropicStoredCredential = v.object({
  * everything else.
  */
 export const oauthErrorBody = v.object({
-  error: v.string(),                        // e.g. "invalid_grant"
+  error: v.string(), // e.g. "invalid_grant"
   error_description: v.optional(v.string()),
   error_uri: v.optional(v.string()),
-});
+})
 ```
 
 If you want a single validator for the full action result, mirror the
@@ -515,12 +512,12 @@ TypeScript discriminated union from the previous section:
 ```ts
 export const anthropicRefreshResult = v.union(
   v.object({
-    kind: v.literal("ok"),
+    kind: v.literal('ok'),
     credential: anthropicStoredCredential,
   }),
   v.object({
-    kind: v.literal("invalid_grant"),
+    kind: v.literal('invalid_grant'),
     description: v.optional(v.string()),
-  }),
-);
+  })
+)
 ```

@@ -27,10 +27,22 @@
  * `render/table.ts` already cover the rounding rule; this scenario
  * asserts the wiring carries the cached numbers through unmolested.
  */
+import { api } from '@cvault/convex/api'
+import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getFunctionName } from 'convex/server'
-import { api } from '@cvault/convex/api'
+import { status } from '../../src/claudeSwap'
+import { runList } from '../../src/commands/list'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+import {
+  SAMPLE_OAUTH_BLOB,
+  cleanupTempHome,
+  createFakeVaultClient,
+  getCall,
+  makeSub,
+  refName,
+  setupTempHome,
+} from './_helpers'
 
 vi.mock('../../src/claudeSwap', () => ({
   status: vi.fn(),
@@ -40,19 +52,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { status } from '../../src/claudeSwap'
-import { runList } from '../../src/commands/list'
-import { makeVaultClient } from '../../src/convex/vaultClient'
-import {
-  cleanupTempHome,
-  createFakeVaultClient,
-  getCall,
-  makeSub,
-  refName,
-  SAMPLE_OAUTH_BLOB,
-  setupTempHome,
-} from './_helpers'
 
 let tempHome: string
 
@@ -90,9 +89,7 @@ describe('Scenario #3 — List with usage', () => {
 
     // Dispatch: the typed `listForUser` ref was used.
     expect(fake.query).toHaveBeenCalledOnce()
-    expect(refName(getCall(fake.query, 0).ref)).toBe(
-      getFunctionName(api.subscriptions.queries.listForUser)
-    )
+    expect(refName(getCall(fake.query, 0).ref)).toBe(getFunctionName(api.subscriptions.queries.listForUser))
 
     const out = captured.join('\n')
     // Email present.

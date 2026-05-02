@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+
 import type { api } from '../../../../convex/_generated/api'
 import { ExpiryCountdown } from './ExpiryCountdown'
 import { ReloginBadge } from './ReloginBadge'
@@ -37,9 +38,7 @@ import { UsageBar } from './UsageBar'
  * Element type of `api.subscriptions.queries.listForUser`'s return array.
  * Derived from the generated API so it tracks the backend validator.
  */
-export type SubscriptionMeta = FunctionReturnType<
-  typeof api.subscriptions.queries.listForUser
->[number]
+export type SubscriptionMeta = FunctionReturnType<typeof api.subscriptions.queries.listForUser>[number]
 
 export type SubscriptionCardProps = {
   sub: SubscriptionMeta
@@ -138,11 +137,7 @@ export function SubscriptionCard({
           </Button>
         </div>
         {forceRefreshError !== undefined && (
-          <p
-            data-slot="force-refresh-error"
-            className="text-destructive text-xs"
-            role="alert"
-          >
+          <p data-slot="force-refresh-error" className="text-destructive text-xs" role="alert">
             {forceRefreshError}
           </p>
         )}

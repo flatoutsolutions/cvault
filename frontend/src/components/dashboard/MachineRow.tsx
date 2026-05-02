@@ -28,13 +28,7 @@ function relativeTime(at: number, now: number = Date.now()): string {
   return `${days.toString()}d ago`
 }
 
-export function MachineRow({
-  clerkSessionId,
-  lastIpHash,
-  lastSeenAt,
-  onRevoke,
-  pending,
-}: MachineRowProps) {
+export function MachineRow({ clerkSessionId, lastIpHash, lastSeenAt, onRevoke, pending }: MachineRowProps) {
   return (
     <div
       data-slot="machine-row"

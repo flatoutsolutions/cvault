@@ -15,10 +15,7 @@
  */
 import { afterEach, vi } from 'vitest'
 
-const KNOWN_BENIGN_REJECTIONS = [
-  /Browser sign-in timed out/,
-  /callback server cancelled/,
-]
+const KNOWN_BENIGN_REJECTIONS = [/Browser sign-in timed out/, /callback server cancelled/]
 
 process.on('unhandledRejection', (err: unknown) => {
   if (err instanceof Error) {

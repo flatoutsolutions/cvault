@@ -9,6 +9,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// eslint-disable-next-line import/first
+import { MachinesPage } from '../../routes/dashboard/machines'
+
 let sessionsResult: unknown = undefined
 const revokeMock = vi.fn().mockResolvedValue({ revoked: true })
 
@@ -20,9 +23,6 @@ vi.mock('convex/react', () => ({
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
 }))
-
-// eslint-disable-next-line import/first
-import { MachinesPage } from '../../routes/dashboard/machines'
 
 describe('/dashboard/machines', () => {
   beforeEach(() => {
@@ -57,9 +57,7 @@ describe('/dashboard/machines', () => {
 
   it('calls the revoke action with the clicked session id', async () => {
     const now = Date.now()
-    sessionsResult = [
-      { clerkSessionId: 'sess_111aaa222bbb', lastSeenAt: now, lastIpHash: 'abcd' },
-    ]
+    sessionsResult = [{ clerkSessionId: 'sess_111aaa222bbb', lastSeenAt: now, lastIpHash: 'abcd' }]
     render(<MachinesPage />)
 
     fireEvent.click(screen.getByRole('button', { name: /revoke/i }))
@@ -70,9 +68,7 @@ describe('/dashboard/machines', () => {
 
   it('renders an inline error block when the revoke action throws', async () => {
     const now = Date.now()
-    sessionsResult = [
-      { clerkSessionId: 'sess_111aaa222bbb', lastSeenAt: now, lastIpHash: 'abcd' },
-    ]
+    sessionsResult = [{ clerkSessionId: 'sess_111aaa222bbb', lastSeenAt: now, lastIpHash: 'abcd' }]
     revokeMock.mockRejectedValueOnce(new Error('CLERK_BACKEND_ERROR: 429'))
     render(<MachinesPage />)
 

@@ -30,6 +30,13 @@ import { existsSync, readFileSync } from 'node:fs'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { importEnvelope, switchTo } from '../../src/claudeSwap'
+import { runSwitch } from '../../src/commands/switch'
+import { runSync } from '../../src/commands/sync'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+import { lastHashPath } from '../../src/paths'
+import { SAMPLE_OAUTH_BLOB, cleanupTempHome, createFakeVaultClient, makeSub, setupTempHome } from './_helpers'
+
 vi.mock('../../src/claudeSwap', () => ({
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
@@ -39,19 +46,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { importEnvelope, switchTo } from '../../src/claudeSwap'
-import { runSwitch } from '../../src/commands/switch'
-import { runSync } from '../../src/commands/sync'
-import { makeVaultClient } from '../../src/convex/vaultClient'
-import { lastHashPath } from '../../src/paths'
-import {
-  cleanupTempHome,
-  createFakeVaultClient,
-  makeSub,
-  SAMPLE_OAUTH_BLOB,
-  setupTempHome,
-} from './_helpers'
 
 let tempHome: string
 

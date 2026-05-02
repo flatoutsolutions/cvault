@@ -22,6 +22,11 @@ jobs:
       - name: Format check
         run: yarn format:check
 
+  # NOTE: lint/build/test do NOT run `convex codegen`. The generated
+  # `convex/_generated/*` files are committed to the repo (see
+  # `git ls-files convex/_generated`), so CI can typecheck and bundle
+  # without a CONVEX_DEPLOY_KEY. Codegen is only needed when the deploy
+  # key is configured (sync-secrets / deploy-backend below).
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -29,8 +34,6 @@ jobs:
       - uses: flatoutsolutions/github-actions/setup@v1
         with:
           node-version: '22.21.1'
-          convex-codegen: 'true'
-          convex-deploy-key: ${{ secrets.CONVEX_DEPLOY_KEY }}
       - name: Lint
         run: yarn lint:check
 
@@ -41,8 +44,6 @@ jobs:
       - uses: flatoutsolutions/github-actions/setup@v1
         with:
           node-version: '22.21.1'
-          convex-codegen: 'true'
-          convex-deploy-key: ${{ secrets.CONVEX_DEPLOY_KEY }}
       - name: Build
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
@@ -50,8 +51,14 @@ jobs:
           VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
           VITE_APP_TITLE: ${{ vars.VITE_APP_TITLE }}
         run: |
-          DEPLOY_NAME=$(echo "$CONVEX_DEPLOY_KEY" | sed 's/.*:\(.*\)|.*/\1/')
-          export VITE_CONVEX_URL="https://${DEPLOY_NAME}.convex.cloud"
+          # CONVEX_DEPLOY_KEY may be unset on a fresh repo; the URL fallback
+          # keeps the bundle build working until prod secrets are wired.
+          if [ -n "$CONVEX_DEPLOY_KEY" ]; then
+            DEPLOY_NAME=$(echo "$CONVEX_DEPLOY_KEY" | sed 's/.*:\(.*\)|.*/\1/')
+            export VITE_CONVEX_URL="https://${DEPLOY_NAME}.convex.cloud"
+          else
+            export VITE_CONVEX_URL="https://placeholder.convex.cloud"
+          fi
           echo "Building with VITE_CONVEX_URL: $VITE_CONVEX_URL (NODE_ENV=$NODE_ENV)"
           yarn build
       - name: Upload build artifact
@@ -69,8 +76,6 @@ jobs:
       - uses: flatoutsolutions/github-actions/setup@v1
         with:
           node-version: '22.21.1'
-          convex-codegen: 'true'
-          convex-deploy-key: ${{ secrets.CONVEX_DEPLOY_KEY }}
       - name: Run tests
         run: yarn test
       - name: Run integration tests
@@ -80,8 +85,11 @@ jobs:
   # Runs alongside lint/build/test so it adds zero wall-clock time.
   # Must complete before deploy-backend to avoid the Convex
   # "Environment variables have changed during push" race condition.
+  # Skipped automatically when CONVEX_DEPLOY_KEY is not configured (e.g.
+  # before the prod deployment is wired up) — otherwise the job would
+  # fail every push on a fresh repo.
   sync-secrets:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && vars.HAS_CONVEX_DEPLOY_KEY == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -165,7 +173,10 @@ jobs:
   # ============================================
   deploy-backend:
     needs: [detect-changes, sync-secrets]
-    if: github.event_name == 'push' && needs.detect-changes.outputs.backend == 'true'
+    if: |
+      github.event_name == 'push'
+      && needs.detect-changes.outputs.backend == 'true'
+      && vars.HAS_CONVEX_DEPLOY_KEY == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -185,7 +196,10 @@ jobs:
   # ============================================
   deploy-frontend:
     needs: [detect-changes, build]
-    if: github.event_name == 'push' && needs.detect-changes.outputs.frontend == 'true'
+    if: |
+      github.event_name == 'push'
+      && needs.detect-changes.outputs.frontend == 'true'
+      && vars.HAS_CLOUDFLARE_API_TOKEN == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifact

@@ -18,10 +18,11 @@
  * idempotent and continues on per-step failure (one bad slot does not
  * block the rest).
  */
-import { defineCommand } from 'citty'
 import { existsSync, readdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
+
+import { defineCommand } from 'citty'
 
 import { ClaudeSwapMissingError, purge } from '../claudeSwap'
 import { vaultDir } from '../paths'

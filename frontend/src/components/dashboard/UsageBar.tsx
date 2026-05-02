@@ -64,19 +64,10 @@ export function UsageBar({ label, usage }: UsageBarProps) {
   const state = isCritical ? 'critical' : 'normal'
 
   return (
-    <div
-      data-slot="usage-bar"
-      data-state={state}
-      className="flex flex-col gap-1.5"
-    >
+    <div data-slot="usage-bar" data-state={state} className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between text-xs">
         <span className="text-muted-foreground font-medium">{label}</span>
-        <span
-          className={cn(
-            'tabular-nums font-medium',
-            isCritical ? 'text-destructive' : 'text-foreground'
-          )}
-        >
+        <span className={cn('tabular-nums font-medium', isCritical ? 'text-destructive' : 'text-foreground')}>
           {usage !== undefined ? `${Math.round(usage.pct).toString()}%` : '—'}
         </span>
       </div>
@@ -86,9 +77,7 @@ export function UsageBar({ label, usage }: UsageBarProps) {
         aria-label={`${label} usage`}
       />
       {usage !== undefined && (
-        <div className="text-muted-foreground text-xs">
-          resets in {formatCountdown(usage.resetsAt)}
-        </div>
+        <div className="text-muted-foreground text-xs">resets in {formatCountdown(usage.resetsAt)}</div>
       )}
     </div>
   )

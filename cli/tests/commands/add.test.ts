@@ -15,6 +15,11 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import { addAccountInteractive, exportAccount, status } from '../../src/claudeSwap'
+import { runAdd } from '../../src/commands/add'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+import { singleAccountEnvelope } from '../fixtures/envelopes/singleAccount'
+
 vi.mock('../../src/claudeSwap', () => ({
   addAccountInteractive: vi.fn().mockResolvedValue(undefined),
   status: vi.fn(),
@@ -25,11 +30,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { addAccountInteractive, exportAccount, status } from '../../src/claudeSwap'
-import { makeVaultClient } from '../../src/convex/vaultClient'
-import { runAdd } from '../../src/commands/add'
-import { singleAccountEnvelope } from '../fixtures/envelopes/singleAccount'
 
 interface FakeClient {
   action: ReturnType<typeof vi.fn>
@@ -69,9 +69,7 @@ describe('runAdd', () => {
 
   it('omits `label` when not supplied', async () => {
     vi.mocked(status).mockReturnValueOnce('Active account: 1 (a@b.com)\n')
-    vi.mocked(exportAccount).mockReturnValueOnce(
-      singleAccountEnvelope({ number: 1, email: 'a@b.com' })
-    )
+    vi.mocked(exportAccount).mockReturnValueOnce(singleAccountEnvelope({ number: 1, email: 'a@b.com' }))
     const client = fakeVaultClient()
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
 
@@ -94,9 +92,7 @@ describe('runAdd', () => {
     vi.mocked(status).mockReturnValueOnce(
       'Status: Account-1 (samuel.asseg@gmail.com [Org Name])\n  Total managed accounts: 2\n'
     )
-    vi.mocked(exportAccount).mockReturnValueOnce(
-      singleAccountEnvelope({ number: 1, email: 'samuel.asseg@gmail.com' })
-    )
+    vi.mocked(exportAccount).mockReturnValueOnce(singleAccountEnvelope({ number: 1, email: 'samuel.asseg@gmail.com' }))
     const client = fakeVaultClient()
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
 

@@ -11,16 +11,16 @@
 
 All verification commands run from `/Users/saadings/Desktop/cvault/`.
 
-| Gate | Command | Result |
-|---|---|---|
-| Backend + frontend tests | `yarn test` | **PASS** — 122 tests across 23 files (2.0 s) |
-| CLI tests | `cd cli && bunx --bun vitest run` | **PASS** — 117 tests across 18 files (374 ms) |
-| Root lint | `yarn lint:check` | **PASS** — clean (no output) |
-| Frontend typecheck | `npx tsc --noEmit -p tsconfig.app.json` | **PASS** — clean (no output) |
-| Convex typecheck | `npx convex dev --once --typecheck enable` | **PASS** — "Convex functions ready! (4.79 s)" |
-| CLI typecheck | `cd cli && bunx tsc --noEmit` | **PASS** — clean |
-| Frontend build | `yarn build` | **PASS** — TanStack Start prerender succeeded |
-| Format check | `yarn format:check` | **FAIL** — 95 files have prettier-style issues (Low) |
+| Gate                     | Command                                    | Result                                               |
+| ------------------------ | ------------------------------------------ | ---------------------------------------------------- |
+| Backend + frontend tests | `yarn test`                                | **PASS** — 122 tests across 23 files (2.0 s)         |
+| CLI tests                | `cd cli && bunx --bun vitest run`          | **PASS** — 117 tests across 18 files (374 ms)        |
+| Root lint                | `yarn lint:check`                          | **PASS** — clean (no output)                         |
+| Frontend typecheck       | `npx tsc --noEmit -p tsconfig.app.json`    | **PASS** — clean (no output)                         |
+| Convex typecheck         | `npx convex dev --once --typecheck enable` | **PASS** — "Convex functions ready! (4.79 s)"        |
+| CLI typecheck            | `cd cli && bunx tsc --noEmit`              | **PASS** — clean                                     |
+| Frontend build           | `yarn build`                               | **PASS** — TanStack Start prerender succeeded        |
+| Format check             | `yarn format:check`                        | **FAIL** — 95 files have prettier-style issues (Low) |
 
 Tests + typechecks + lint match the builder agents' claims. The only verification miss is a missing `yarn format:fix` pass before the review window — see L8.
 
@@ -29,18 +29,19 @@ Tests + typechecks + lint match the builder agents' claims. The only verificatio
 ## Summary
 
 | Severity | Count |
-|---|---|
-| Critical | 1 |
-| High | 4 |
-| Medium | 7 |
-| Low | 8 |
-| Info | 5 |
+| -------- | ----- |
+| Critical | 1     |
+| High     | 4     |
+| Medium   | 7     |
+| Low      | 8     |
+| Info     | 5     |
 
 The build is structurally sound: encryption envelope is correct, refresh-race
 lease protocol holds, user isolation is enforced via authenticated wrappers
-+ `byUser*` indexes, token redaction works for the documented shapes, and
-the CLI's localhost callback binds 127.0.0.1 with constant-time state
-comparison. Test coverage is broad (240+ tests across 41 files).
+
+- `byUser*` indexes, token redaction works for the documented shapes, and
+  the CLI's localhost callback binds 127.0.0.1 with constant-time state
+  comparison. Test coverage is broad (240+ tests across 41 files).
 
 The single Critical issue is a **cross-tenant Clerk session-revocation
 hole** in `cli.actions.revokeSession` that the read-only security audit
@@ -74,7 +75,7 @@ export const revokeSession = authenticatedAction({
 The action is called as `api.cli.actions.revokeSession` from
 `/dashboard/machines`. It accepts an arbitrary `clerkSessionId` and revokes
 it via the Clerk Backend API. The **only** check is that the caller is
-authenticated to *some* Clerk session. There is no check that the session
+authenticated to _some_ Clerk session. There is no check that the session
 being revoked belongs to the caller.
 
 Attack: Alice (any signed-in user) calls `api.cli.actions.revokeSession({ clerkSessionId: "<bob_session_id>" })`. The action calls Clerk Backend API with the deployment's `CLERK_SECRET_KEY` and revokes Bob's session. Bob is logged out everywhere.
@@ -94,7 +95,9 @@ it('rejects revoke when the caller does not own the session', async () => {
   // Bob has activity for sess_bob_xyz
   await t.run(async (ctx) => {
     await ctx.db.insert('machineActivity', {
-      userId: bobId, clerkSessionId: 'sess_bob_xyz', action: 'pull',
+      userId: bobId,
+      clerkSessionId: 'sess_bob_xyz',
+      action: 'pull',
       at: Date.now(),
     })
   })
@@ -132,13 +135,19 @@ not enforce the inverse constraint.
 
 ```ts
 const SearchSchema = z.object({
-  redirect: z.string().url().refine((url) => {
-    try {
-      const u = new URL(url)
-      return u.protocol === 'http:'
-        && (u.hostname === '127.0.0.1' || u.hostname === '[::1]' || u.hostname === 'localhost')
-    } catch { return false }
-  }, 'redirect must be http://127.0.0.1:<port>/...'),
+  redirect: z
+    .string()
+    .url()
+    .refine((url) => {
+      try {
+        const u = new URL(url)
+        return (
+          u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === '[::1]' || u.hostname === 'localhost')
+        )
+      } catch {
+        return false
+      }
+    }, 'redirect must be http://127.0.0.1:<port>/...'),
   state: z.string().min(8),
 })
 ```
@@ -166,7 +175,7 @@ const handleForceRefresh = async ({ email }) => {
 
 The backend has shipped `api.subscriptions.actions.requestRefresh({ subId })` (per IMPLEMENTATION_NOTES.md §"Frontend agent's earlier requests" #3) but the frontend was never updated to call it. The button is visibly active (looks clickable, shows a spinner) but does nothing — a silent regression.
 
-**Fix:** 
+**Fix:**
 
 ```ts
 const requestRefresh = useAction(api.subscriptions.actions.requestRefresh)
@@ -181,7 +190,11 @@ const handleForceRefresh = async ({ email }: { email: string }) => {
     console.error('[cvault] Force Refresh failed', e)
     // surface error to the user — currently swallowed
   } finally {
-    setRefreshingByEmail((prev) => { const next = { ...prev }; delete next[email]; return next })
+    setRefreshingByEmail((prev) => {
+      const next = { ...prev }
+      delete next[email]
+      return next
+    })
   }
 }
 ```
@@ -205,7 +218,7 @@ if (sub.expiresAt < now + REFRESH_PROACTIVE_MS) {
 const fresh = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, ...)
 ```
 
-`refreshOAuthToken` swallows network/5xx failures (logs `outcome: 'failure'` and returns null). `pullForSwitch` then re-reads the *unchanged* sub row, decrypts, and returns the **stale, already-expired** plaintext to the CLI. The CLI imports it into Keychain and `claude-swap --switch-to`s — at which point Claude Code uses an expired token and the user gets opaque "401 from Anthropic" errors with no mention of the cvault layer.
+`refreshOAuthToken` swallows network/5xx failures (logs `outcome: 'failure'` and returns null). `pullForSwitch` then re-reads the _unchanged_ sub row, decrypts, and returns the **stale, already-expired** plaintext to the CLI. The CLI imports it into Keychain and `claude-swap --switch-to`s — at which point Claude Code uses an expired token and the user gets opaque "401 from Anthropic" errors with no mention of the cvault layer.
 
 **Fix:** After the refresh attempt, re-check `fresh.expiresAt` against `now + REFRESH_PROACTIVE_MS`. If it's still in the past (refresh definitively did not advance it), throw a `ConvexError({ code: 'REFRESH_FAILED', message: 'Token refresh failed; check /dashboard/audit and try again' })`. Spec §10 says "creds corrupt — re-add", but for transient failure the message should differ.
 
@@ -226,7 +239,7 @@ if (fresh.expiresAt < Date.now()) {
 
 ```ts
 // refreshOAuthToken
-const plaintext = decrypt(sub.ciphertext, sub.nonce)  // throws → handler exits with thrown error
+const plaintext = decrypt(sub.ciphertext, sub.nonce) // throws → handler exits with thrown error
 // ... releaseRefreshLease never runs
 ```
 
@@ -248,10 +261,13 @@ try {
   plaintext = decrypt(sub.ciphertext, sub.nonce)
 } catch (err) {
   await ctx.runMutation(internal.subscriptions.mutations.markReloginRequired, {
-    subId, holderToken,
+    subId,
+    holderToken,
   })
   await ctx.runMutation(internal.refreshLog.mutations.insert, {
-    userId: sub.userId, subscriptionId: subId, triggeredBy,
+    userId: sub.userId,
+    subscriptionId: subId,
+    triggeredBy,
     outcome: 'failure',
     error: redactTokens(`decrypt failed: ${err instanceof Error ? err.message : String(err)}`),
     at: Date.now(),
@@ -342,11 +358,13 @@ per spec.
 **File:** `convex/cli/httpSync.ts`, `convex/cli/syncAction.ts`
 
 The endpoint returns the plaintext for every active sub in one call.
+
 - No `machineActivity` row written (`pullForSwitch` writes one for each per-sub pull, but bulk-sync writes none).
 - No rate limit (a leaked Clerk JWT yields the entire credential dump in one request).
 - No idempotency / per-call counter.
 
-**Fix:** 
+**Fix:**
+
 - Insert a `machineActivity` row with `action: 'pull'` and a separate marker (or new literal `'sync'`) for the bulk-pull.
 - Add convex-helpers rate limiting (1 bulk pull per machine per minute) once the v2 rate-limit work lands.
 - Pass `request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()` as `rawIp` so the audit row at least gets an IP hash.
@@ -375,6 +393,7 @@ metadata arg.
 **File:** `convex/machineActivity/mutations.ts:38-60` and call sites
 
 The mutation hashes `rawIp` to a SHA-256 prefix and stores it. But:
+
 - `pullForSwitch` is invoked over WebSocket; no access to the raw HTTP request.
 - `cliSyncHandler` has access to `request` but doesn't read forwarded-for.
 
@@ -408,6 +427,7 @@ export const remove = internalMutation({
 When a Clerk user is deleted, the `users` row is removed but the user's
 `subscriptions`, `refreshLog`, and `machineActivity` rows remain. The
 cron then continues to:
+
 - refresh the orphan subscriptions every 10 minutes (Anthropic API quota burn)
 - poll usage every 5 minutes (more quota burn)
 
@@ -420,7 +440,8 @@ all subscriptions and audit rows for the user. Consider doing this via
 a scheduled action so it can chunk if the user has many rows:
 
 ```ts
-const subs = await ctx.db.query('subscriptions')
+const subs = await ctx.db
+  .query('subscriptions')
   .withIndex('byUserAndSlot', (q) => q.eq('userId', user._id))
   .collect()
 for (const sub of subs) {
@@ -517,6 +538,7 @@ at CLI compile time.
 
 ```ts
 import { api } from '@cvault/convex/api'
+
 // ...
 await client.action(api.subscriptions.actions.upsertFromPlaintext, {
   email: account.email,
@@ -544,6 +566,7 @@ not the helpful `"Failed to parse"` error.
 
 ```ts
 import { z } from 'zod'
+
 const SessionStateSchema = z.object({
   version: z.literal(1),
   clerkSessionId: z.string(),
@@ -591,6 +614,7 @@ const safe = email
 ```
 
 Tested:
+
 - `"\0"` (null byte) — passes through
 - `"\n"` (newline) — passes through
 - RTL-override `‮` — passes through
@@ -637,7 +661,9 @@ export async function refreshAccessToken(
 `convex/organizationMembers/actions.ts:28,47`
 
 ```ts
-args: { data: v.any() as Validator<UserJSON> }
+args: {
+  data: v.any() as Validator<UserJSON>
+}
 ```
 
 Pre-existing Blueprint code, but the `as` cast violates the user's
@@ -721,6 +747,7 @@ The five backend deviations called out in `IMPLEMENTATION_NOTES.md` line 104+:
 ## Test quality review
 
 **Strengths:**
+
 - Cross-user isolation covered for `subscriptions.queries.listForUser` and `refreshLog.queries.recentForUser`.
 - `requestRefresh` cross-tenant check covered (`refresh.test.ts:204-228`).
 - Encryption roundtrip + tamper + nonce uniqueness + key-length all tested in `crypto.node.test.ts`.
@@ -730,6 +757,7 @@ The five backend deviations called out in `IMPLEMENTATION_NOTES.md` line 104+:
 - Frontend tests cover skeleton loading, empty state, action wiring, sign-in gating.
 
 **Gaps:**
+
 - **Critical:** no test for cross-tenant `revokeSession` (C1). The existing test only verifies the action calls Clerk; nothing checks ownership.
 - No test for 400 `invalid_grant` body (covers only 401 per spec; the deviation widening to 400 is untested).
 - No test for `decrypt` failure inside `refreshOAuthToken` / `fetchUsageForSub` (H4 lease-leak path is uncovered).

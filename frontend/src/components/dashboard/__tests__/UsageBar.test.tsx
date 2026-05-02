@@ -22,12 +22,7 @@ import { UsageBar } from '../UsageBar'
 describe('UsageBar', () => {
   it('renders the window label and integer percentage', () => {
     const oneHourFromNow = Date.now() + 60 * 60 * 1000
-    render(
-      <UsageBar
-        label="5h"
-        usage={{ pct: 42.7, resetsAt: oneHourFromNow, fetchedAt: Date.now() }}
-      />
-    )
+    render(<UsageBar label="5h" usage={{ pct: 42.7, resetsAt: oneHourFromNow, fetchedAt: Date.now() }} />)
     // Label is shown verbatim
     expect(screen.getByText('5h')).toBeTruthy()
     // Percentage is rounded to nearest integer (43 not 42.7)
@@ -44,12 +39,7 @@ describe('UsageBar', () => {
 
   it('marks the bar as critical when pct >= 90', () => {
     const future = Date.now() + 60_000
-    const { container } = render(
-      <UsageBar
-        label="5h"
-        usage={{ pct: 95, resetsAt: future, fetchedAt: Date.now() }}
-      />
-    )
+    const { container } = render(<UsageBar label="5h" usage={{ pct: 95, resetsAt: future, fetchedAt: Date.now() }} />)
     // Critical state is signalled via data-state so styling stays
     // co-located in the component but tests don't depend on Tailwind classes.
     const root = container.querySelector('[data-slot="usage-bar"]')
@@ -59,12 +49,7 @@ describe('UsageBar', () => {
 
   it('uses a normal data-state when pct < 90', () => {
     const future = Date.now() + 60_000
-    const { container } = render(
-      <UsageBar
-        label="5h"
-        usage={{ pct: 30, resetsAt: future, fetchedAt: Date.now() }}
-      />
-    )
+    const { container } = render(<UsageBar label="5h" usage={{ pct: 30, resetsAt: future, fetchedAt: Date.now() }} />)
     const root = container.querySelector('[data-slot="usage-bar"]')
     expect(root?.getAttribute('data-state')).toBe('normal')
   })
@@ -72,12 +57,7 @@ describe('UsageBar', () => {
   it('renders a human countdown to resetsAt', () => {
     // 3 hours and 15 minutes in the future
     const resetsAt = Date.now() + 3 * 60 * 60 * 1000 + 15 * 60 * 1000
-    render(
-      <UsageBar
-        label="5h"
-        usage={{ pct: 50, resetsAt, fetchedAt: Date.now() }}
-      />
-    )
+    render(<UsageBar label="5h" usage={{ pct: 50, resetsAt, fetchedAt: Date.now() }} />)
     // Countdown format: "Xh Xm" for less than a day, "Xd Xh" for more.
     // Allow a fuzzy match (3h 14m vs 3h 15m) since rendering takes a tick.
     const countdownEl = screen.getByText(/3h 1[45]m/)
@@ -86,12 +66,7 @@ describe('UsageBar', () => {
 
   it('shows "now" when resetsAt is in the past', () => {
     const past = Date.now() - 60_000
-    render(
-      <UsageBar
-        label="5h"
-        usage={{ pct: 50, resetsAt: past, fetchedAt: Date.now() }}
-      />
-    )
+    render(<UsageBar label="5h" usage={{ pct: 50, resetsAt: past, fetchedAt: Date.now() }} />)
     expect(screen.getByText(/now|0m/i)).toBeTruthy()
   })
 })

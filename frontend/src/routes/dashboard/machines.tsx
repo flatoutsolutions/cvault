@@ -9,12 +9,13 @@
  * The Revoke button calls the Convex action which proxies to Clerk
  * Backend API (`POST /v1/sessions/{id}/revoke`).
  */
-import { useAction, useQuery } from 'convex/react'
 import { createFileRoute } from '@tanstack/react-router'
+import { useAction, useQuery } from 'convex/react'
 import { useState } from 'react'
 
 import { MachineRow } from '@/components/dashboard/MachineRow'
 import { Skeleton } from '@/components/ui/skeleton'
+
 import { api } from '../../../../convex/_generated/api'
 
 export const Route = createFileRoute('/dashboard/machines')({
@@ -70,9 +71,9 @@ export function MachinesPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Machines</h1>
         <p className="text-muted-foreground text-sm">
-          Each row is a Clerk session that has called Convex from the cvault CLI.
-          Revoke a session to immediately invalidate its credentials — the next
-          CLI call from that machine will require <code className="bg-muted rounded px-1 py-0.5 font-mono">cvault login</code>.
+          Each row is a Clerk session that has called Convex from the cvault CLI. Revoke a session to immediately
+          invalidate its credentials — the next CLI call from that machine will require{' '}
+          <code className="bg-muted rounded px-1 py-0.5 font-mono">cvault login</code>.
         </p>
       </div>
 
@@ -80,8 +81,7 @@ export function MachinesPage() {
         <div className="bg-card border-border rounded-lg border p-8 text-center text-sm">
           <p className="text-muted-foreground">
             No machines have used the vault yet. Run{' '}
-            <code className="bg-muted rounded px-1 py-0.5 font-mono">cvault login</code> on a
-            machine to register it.
+            <code className="bg-muted rounded px-1 py-0.5 font-mono">cvault login</code> on a machine to register it.
           </p>
         </div>
       ) : (

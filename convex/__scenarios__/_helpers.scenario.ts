@@ -10,9 +10,9 @@
  */
 import { type Mock, vi } from 'vitest'
 
+import { type TEST_IDENTITY, vault } from '../__tests__/helpers'
 import { api } from '../_generated/api'
 import { type Id } from '../_generated/dataModel'
-import { type TEST_IDENTITY, vault } from '../__tests__/helpers'
 
 // ---------------------------------------------------------------------------
 // Plaintext / encryption helpers
@@ -25,11 +25,7 @@ import { type TEST_IDENTITY, vault } from '../__tests__/helpers'
  *   - look enough like the real shape that token redaction can fire
  *   - be distinguishable across iterations in race tests
  */
-export function buildOauthBlob(opts: {
-  accessSuffix?: string
-  refreshSuffix?: string
-  expiresAt: number
-}): string {
+export function buildOauthBlob(opts: { accessSuffix?: string; refreshSuffix?: string; expiresAt: number }): string {
   const accessSuffix = opts.accessSuffix ?? 'INITIAL-AAAAAAAAAAAAAAAAAAAAAAAA'
   const refreshSuffix = opts.refreshSuffix ?? 'INITIAL-BBBBBBBBBBBBBBBBBBBBBBBB'
   return JSON.stringify({
@@ -85,18 +81,16 @@ export async function seedSubscription(opts: {
   const { encrypt } = await import('../subscriptions/crypto')
   const { ciphertext, nonce } = encrypt(blob)
 
-  const inserted = await t
-    .withIdentity(identity)
-    .mutation(api.subscriptions.mutations.upsert, {
-      email,
-      ciphertext,
-      nonce,
-      expiresAt,
-      refreshExpiresAt,
-      subscriptionType: 'max',
-      rateLimitTier: 'tier1',
-      label,
-    })
+  const inserted = await t.withIdentity(identity).mutation(api.subscriptions.mutations.upsert, {
+    email,
+    ciphertext,
+    nonce,
+    expiresAt,
+    refreshExpiresAt,
+    subscriptionType: 'max',
+    rateLimitTier: 'tier1',
+    label,
+  })
   return {
     subId: inserted.subId,
     userId: inserted.userId,
@@ -141,9 +135,7 @@ export function makeAnthropicFetchStub(spec: AnthropicResponseSpec): Mock<typeof
  * Build a multi-call fetch stub whose Nth call returns specs[N]. After
  * the list is exhausted, subsequent calls reuse the last spec.
  */
-export function makeAnthropicSequenceStub(
-  specs: ReadonlyArray<AnthropicResponseSpec>
-): Mock<typeof fetch> {
+export function makeAnthropicSequenceStub(specs: ReadonlyArray<AnthropicResponseSpec>): Mock<typeof fetch> {
   let i = 0
   return vi.fn<typeof fetch>(() => {
     const spec = specs[Math.min(i, specs.length - 1)] ?? { status: 200, body: {} }

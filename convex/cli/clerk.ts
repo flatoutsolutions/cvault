@@ -58,10 +58,7 @@ export type SignInTokenResult = SignInTokenSuccess | SignInTokenError
  * @param userId        Clerk user_id (e.g. "user_abcXYZ")
  * @param expiresInSec  Seconds until the token expires. Default 600 (10 min).
  */
-export async function mintSignInToken(
-  userId: string,
-  expiresInSec = 600
-): Promise<SignInTokenResult> {
+export async function mintSignInToken(userId: string, expiresInSec = 600): Promise<SignInTokenResult> {
   const secret = loadSecretKey()
   const fn = activeFetch()
 
@@ -220,17 +217,14 @@ export async function createSessionTokenFromTemplate(
   // becomes useless within an oncall response window.
   const expiresInSeconds = options.expiresInSeconds ?? 3600
 
-  const resp = await fn(
-    `${CLERK_API_BASE}/v1/sessions/${sessionId}/tokens/${templateName}`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ expires_in_seconds: expiresInSeconds }),
-    }
-  )
+  const resp = await fn(`${CLERK_API_BASE}/v1/sessions/${sessionId}/tokens/${templateName}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ expires_in_seconds: expiresInSeconds }),
+  })
 
   if (!resp.ok) {
     const body = await resp.text()

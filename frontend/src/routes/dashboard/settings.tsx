@@ -29,9 +29,7 @@ function SettingsPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground text-sm">
-          Account-level controls and operational tooling.
-        </p>
+        <p className="text-muted-foreground text-sm">Account-level controls and operational tooling.</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -42,9 +40,8 @@ function SettingsPage() {
               <Badge variant="outline">v2</Badge>
             </div>
             <CardDescription>
-              Re-wrap every stored credential blob with a fresh AES-256 master key.
-              Currently a manual re-add of every subscription is required if the key is
-              lost or compromised.
+              Re-wrap every stored credential blob with a fresh AES-256 master key. Currently a manual re-add of every
+              subscription is required if the key is lost or compromised.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -61,9 +58,8 @@ function SettingsPage() {
               <Badge variant="outline">v2</Badge>
             </div>
             <CardDescription>
-              Download an encrypted bundle of all your subscriptions, secured by a
-              passphrase you choose. Useful for disaster recovery if the Convex
-              deployment is lost.
+              Download an encrypted bundle of all your subscriptions, secured by a passphrase you choose. Useful for
+              disaster recovery if the Convex deployment is lost.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -80,8 +76,8 @@ function SettingsPage() {
               <Badge variant="outline">v2</Badge>
             </div>
             <CardDescription>
-              Get a Slack DM or email when an OAuth refresh fails permanently
-              (refresh_token revoked / Anthropic returns invalid_grant).
+              Get a Slack DM or email when an OAuth refresh fails permanently (refresh_token revoked / Anthropic returns
+              invalid_grant).
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -95,14 +91,11 @@ function SettingsPage() {
           <CardHeader>
             <CardTitle>Documentation</CardTitle>
             <CardDescription>
-              Reference material for the cvault CLI, Convex backend, and
-              integration with claude-swap.
+              Reference material for the cvault CLI, Convex backend, and integration with claude-swap.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
-            <HelpLink href="https://github.com/realiti4/claude-swap">
-              claude-swap on GitHub
-            </HelpLink>
+            <HelpLink href="https://github.com/realiti4/claude-swap">claude-swap on GitHub</HelpLink>
             <HelpLink href="https://docs.anthropic.com/">Anthropic docs</HelpLink>
             <HelpLink href="https://docs.convex.dev/">Convex docs</HelpLink>
             <HelpLink href="https://clerk.com/docs">Clerk docs</HelpLink>

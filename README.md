@@ -51,6 +51,7 @@ npx convex env set CLERK_WEBHOOK_SECRET whsec_...
 ```
 
 In Clerk dashboard:
+
 - Create a JWT template named `convex` (preset "Convex"), `aud: convex`
 - Add a webhook → URL `<VITE_CONVEX_SITE_URL>/webhooks/clerk`, events `user.created/updated/deleted`
 
@@ -90,6 +91,7 @@ codesign --force --sign - ./cvault          # macOS only — required to avoid S
 ## Configuration reference
 
 CLI reads (highest precedence first):
+
 1. `CVAULT_CONVEX_URL`, `CVAULT_FRONTEND_API_URL`, `CVAULT_DASHBOARD_URL`
 2. Repo `.env.local`: `VITE_CONVEX_URL`, `CLERK_FRONTEND_API_URL`
 3. `~/.vault/config.json`: `{convexUrl, frontendApiUrl, dashboardUrl}`
@@ -113,13 +115,13 @@ Formula/     Homebrew tap formula
 
 ## Stack
 
-| Layer | Tech |
-|---|---|
-| Backend | Convex (DB, functions, real-time, cron, HTTP) |
-| Frontend | React 19 + TanStack Start + shadcn/ui + Tailwind v4 |
-| Auth | Clerk (Convex JWT template + webhooks) |
-| CLI | TypeScript on Bun (`citty`, `convex/browser`, `Bun.spawn`, `Bun.serve`) |
-| Tests | Vitest + Testing Library + `convex-test` |
+| Layer    | Tech                                                                    |
+| -------- | ----------------------------------------------------------------------- |
+| Backend  | Convex (DB, functions, real-time, cron, HTTP)                           |
+| Frontend | React 19 + TanStack Start + shadcn/ui + Tailwind v4                     |
+| Auth     | Clerk (Convex JWT template + webhooks)                                  |
+| CLI      | TypeScript on Bun (`citty`, `convex/browser`, `Bun.spawn`, `Bun.serve`) |
+| Tests    | Vitest + Testing Library + `convex-test`                                |
 
 ---
 

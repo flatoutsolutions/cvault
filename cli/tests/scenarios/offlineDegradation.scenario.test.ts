@@ -28,6 +28,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { importEnvelope, switchTo } from '../../src/claudeSwap'
+import { runSwitch } from '../../src/commands/switch'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+import { cleanupTempHome, setupTempHome } from './_helpers'
+
 vi.mock('../../src/claudeSwap', () => ({
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
@@ -37,11 +42,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { importEnvelope, switchTo } from '../../src/claudeSwap'
-import { runSwitch } from '../../src/commands/switch'
-import { makeVaultClient } from '../../src/convex/vaultClient'
-import { cleanupTempHome, setupTempHome } from './_helpers'
 
 let tempHome: string
 
@@ -69,18 +69,14 @@ describe('Scenario #12 — Offline degradation', () => {
     expect(importEnvelope).not.toHaveBeenCalled()
     // Printed a warning the user can recognize.
     expect(warnSpy).toHaveBeenCalledOnce()
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/offline|local cache/i)
-    )
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/offline|local cache/i))
     warnSpy.mockRestore()
   })
 
   it('falls back when the action call rejects mid-flight with a network-shaped error', async () => {
     const fakeClient = {
       query: vi.fn(),
-      action: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('fetch failed: ECONNREFUSED 127.0.0.1:443')),
+      action: vi.fn().mockRejectedValueOnce(new Error('fetch failed: ECONNREFUSED 127.0.0.1:443')),
       mutation: vi.fn(),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fakeClient as never)
@@ -99,9 +95,7 @@ describe('Scenario #12 — Offline degradation', () => {
   it('does NOT fall back when the action throws a non-network error (re-throws instead)', async () => {
     const fakeClient = {
       query: vi.fn(),
-      action: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('500 InternalError: VAULT_AES_KEY missing')),
+      action: vi.fn().mockRejectedValueOnce(new Error('500 InternalError: VAULT_AES_KEY missing')),
       mutation: vi.fn(),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fakeClient as never)

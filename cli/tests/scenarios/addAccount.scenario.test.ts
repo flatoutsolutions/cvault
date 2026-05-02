@@ -25,10 +25,16 @@
  *    handlers mirror the real Convex behavior closely enough that the
  *    follow-up `cvault list` call returns the row we just inserted
  */
+import { api } from '@cvault/convex/api'
+import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getFunctionName } from 'convex/server'
-import { api } from '@cvault/convex/api'
+import { addAccountInteractive, exportAccount, status } from '../../src/claudeSwap'
+import { runAdd } from '../../src/commands/add'
+import { runList } from '../../src/commands/list'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+import { singleAccountEnvelope } from '../fixtures/envelopes/singleAccount'
+import { cleanupTempHome, createFakeVaultClient, getCall, refName, setupTempHome } from './_helpers'
 
 vi.mock('../../src/claudeSwap', () => ({
   addAccountInteractive: vi.fn().mockResolvedValue(undefined),
@@ -40,19 +46,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { addAccountInteractive, exportAccount, status } from '../../src/claudeSwap'
-import { runAdd } from '../../src/commands/add'
-import { runList } from '../../src/commands/list'
-import { makeVaultClient } from '../../src/convex/vaultClient'
-import { singleAccountEnvelope } from '../fixtures/envelopes/singleAccount'
-import {
-  cleanupTempHome,
-  createFakeVaultClient,
-  getCall,
-  refName,
-  setupTempHome,
-} from './_helpers'
 
 let tempHome: string
 
@@ -87,9 +80,7 @@ describe('Scenario #2 — Add account flow', () => {
     // `upsertFromPlaintext` ref (NOT a string-keyed proxy).
     expect(fake.action).toHaveBeenCalledOnce()
     const call = getCall(fake.action, 0)
-    expect(refName(call.ref)).toBe(
-      getFunctionName(api.subscriptions.actions.upsertFromPlaintext)
-    )
+    expect(refName(call.ref)).toBe(getFunctionName(api.subscriptions.actions.upsertFromPlaintext))
 
     const payload = call.args ?? {}
     expect(payload.email).toBe('work@example.com')
@@ -127,9 +118,7 @@ describe('Scenario #2 — Add account flow', () => {
 
   it('omits `label` from the dispatched payload when not supplied', async () => {
     vi.mocked(status).mockReturnValueOnce('Active account: 1 (a@b.com)\n')
-    vi.mocked(exportAccount).mockReturnValueOnce(
-      singleAccountEnvelope({ number: 1, email: 'a@b.com' })
-    )
+    vi.mocked(exportAccount).mockReturnValueOnce(singleAccountEnvelope({ number: 1, email: 'a@b.com' }))
     const fake = createFakeVaultClient()
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
 

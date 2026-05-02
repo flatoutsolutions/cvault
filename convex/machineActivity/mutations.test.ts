@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { api, internal } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
 
 describe('machineActivity.mutations.record', () => {
   it('inserts a row with the action + clerkSessionId', async () => {

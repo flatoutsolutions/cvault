@@ -23,18 +23,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { api, internal } from '../_generated/api'
 import { TEST_IDENTITY, vault } from '../__tests__/helpers'
-import {
-  __setAnthropicFetch,
-  __setRandomBytesForTest,
-} from '../subscriptions/anthropic'
-import {
-  buildOauthBlob,
-  makeAnthropicFetchStub,
-  seedSubscription,
-  withVaultKey,
-} from './_helpers.scenario'
+import { api, internal } from '../_generated/api'
+import { __setAnthropicFetch, __setRandomBytesForTest } from '../subscriptions/anthropic'
+import { buildOauthBlob, makeAnthropicFetchStub, seedSubscription, withVaultKey } from './_helpers.scenario'
 
 let keyHandle: ReturnType<typeof withVaultKey>
 
@@ -54,111 +46,98 @@ async function sha256Hex(input: string): Promise<string> {
 }
 
 describe('scenario #6 — auto-refresh near expiry (cron)', () => {
-  it(
-    'refresh cron rotates ciphertext, advances expiresAt, logs success, and the new hash propagates via pullForSwitch',
-    async () => {
-      const t = vault()
+  it('refresh cron rotates ciphertext, advances expiresAt, logs success, and the new hash propagates via pullForSwitch', async () => {
+    const t = vault()
 
-      // ---------- SETUP ----------
-      // Seed a sub whose access token expires 5 minutes from now (well
-      // inside the cron's 15-minute REFRESH_WINDOW_MS).
-      const seedExpiresAt = Date.now() + 5 * 60 * 1000
-      const initialBlob = buildOauthBlob({
-        accessSuffix: 'CRON-INITIAL-AAAAAAAAAAAAAAAAAAAAA',
-        refreshSuffix: 'CRON-INITIAL-BBBBBBBBBBBBBBBBBBBBB',
-        expiresAt: seedExpiresAt,
-      })
-      const seeded = await seedSubscription({
-        t,
-        identity: TEST_IDENTITY,
-        email: 'cron@example.com',
-        expiresAt: seedExpiresAt,
-        blob: initialBlob,
-      })
+    // ---------- SETUP ----------
+    // Seed a sub whose access token expires 5 minutes from now (well
+    // inside the cron's 15-minute REFRESH_WINDOW_MS).
+    const seedExpiresAt = Date.now() + 5 * 60 * 1000
+    const initialBlob = buildOauthBlob({
+      accessSuffix: 'CRON-INITIAL-AAAAAAAAAAAAAAAAAAAAA',
+      refreshSuffix: 'CRON-INITIAL-BBBBBBBBBBBBBBBBBBBBB',
+      expiresAt: seedExpiresAt,
+    })
+    const seeded = await seedSubscription({
+      t,
+      identity: TEST_IDENTITY,
+      email: 'cron@example.com',
+      expiresAt: seedExpiresAt,
+      blob: initialBlob,
+    })
 
-      // Snapshot the initial ciphertext + content hash so we can compare.
-      const before = await t.run(
-        async (ctx) => await ctx.db.get('subscriptions', seeded.subId)
-      )
-      expect(before).not.toBeNull()
-      const beforeCtHex = Buffer.from(before?.ciphertext ?? new ArrayBuffer(0)).toString('hex')
-      const beforeContentHash = await sha256Hex(initialBlob)
+    // Snapshot the initial ciphertext + content hash so we can compare.
+    const before = await t.run(async (ctx) => await ctx.db.get('subscriptions', seeded.subId))
+    expect(before).not.toBeNull()
+    const beforeCtHex = Buffer.from(before?.ciphertext ?? new ArrayBuffer(0)).toString('hex')
+    const beforeContentHash = await sha256Hex(initialBlob)
 
-      // Stub Anthropic to return a fresh access+refresh tuple. expires_in is
-      // 8 hours which is the typical Anthropic value (per oauth research).
-      const fetchStub = makeAnthropicFetchStub({
-        status: 200,
-        body: {
-          access_token: 'sk-ant-oat01-CRON-FRESH-CCCCCCCCCCCCCCCCCCCCCCC',
-          refresh_token: 'sk-ant-ort01-CRON-FRESH-DDDDDDDDDDDDDDDDDDDDDDD',
-          expires_in: 28_800,
-          scope: 'user:inference',
-        },
-      })
-      __setAnthropicFetch(fetchStub)
+    // Stub Anthropic to return a fresh access+refresh tuple. expires_in is
+    // 8 hours which is the typical Anthropic value (per oauth research).
+    const fetchStub = makeAnthropicFetchStub({
+      status: 200,
+      body: {
+        access_token: 'sk-ant-oat01-CRON-FRESH-CCCCCCCCCCCCCCCCCCCCCCC',
+        refresh_token: 'sk-ant-ort01-CRON-FRESH-DDDDDDDDDDDDDDDDDDDDDDD',
+        expires_in: 28_800,
+        scope: 'user:inference',
+      },
+    })
+    __setAnthropicFetch(fetchStub)
 
-      // ---------- RUN: phase 1 (cron fires) ----------
-      await t.action(internal.subscriptions.crons.refreshExpiringTokens, {})
+    // ---------- RUN: phase 1 (cron fires) ----------
+    await t.action(internal.subscriptions.crons.refreshExpiringTokens, {})
 
-      // ---------- ASSERTIONS: backend state after cron ----------
-      // Anthropic was hit exactly once (one expiring sub).
-      expect(fetchStub).toHaveBeenCalledTimes(1)
+    // ---------- ASSERTIONS: backend state after cron ----------
+    // Anthropic was hit exactly once (one expiring sub).
+    expect(fetchStub).toHaveBeenCalledTimes(1)
 
-      const after = await t.run(
-        async (ctx) => await ctx.db.get('subscriptions', seeded.subId)
-      )
-      expect(after).not.toBeNull()
-      // expiresAt is now > 60min in the future (we returned 8h).
-      expect(after?.expiresAt).toBeGreaterThan(Date.now() + 60 * 60 * 1000)
-      // Ciphertext bytes changed (fresh nonce + rotated tokens).
-      const afterCtHex = Buffer.from(after?.ciphertext ?? new ArrayBuffer(0)).toString(
-        'hex'
-      )
-      expect(afterCtHex).not.toBe(beforeCtHex)
-      // Lease cleanly released.
-      expect(after?.refreshLeaseHolder).toBeUndefined()
-      expect(after?.refreshLeaseUntil).toBeUndefined()
-      // lastRefreshedAt stamped close to now.
-      expect(after?.lastRefreshedAt).toBeGreaterThan(Date.now() - 60_000)
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', seeded.subId))
+    expect(after).not.toBeNull()
+    // expiresAt is now > 60min in the future (we returned 8h).
+    expect(after?.expiresAt).toBeGreaterThan(Date.now() + 60 * 60 * 1000)
+    // Ciphertext bytes changed (fresh nonce + rotated tokens).
+    const afterCtHex = Buffer.from(after?.ciphertext ?? new ArrayBuffer(0)).toString('hex')
+    expect(afterCtHex).not.toBe(beforeCtHex)
+    // Lease cleanly released.
+    expect(after?.refreshLeaseHolder).toBeUndefined()
+    expect(after?.refreshLeaseUntil).toBeUndefined()
+    // lastRefreshedAt stamped close to now.
+    expect(after?.lastRefreshedAt).toBeGreaterThan(Date.now() - 60_000)
 
-      // refreshLog row: success, cron-triggered, owned by the right user/sub.
-      const logs = await t.run(
-        async (ctx) => await ctx.db.query('refreshLog').collect()
-      )
-      expect(logs).toHaveLength(1)
-      expect(logs[0]?.outcome).toBe('success')
-      expect(logs[0]?.triggeredBy).toBe('cron')
-      expect(logs[0]?.subscriptionId).toEqual(seeded.subId)
-      expect(logs[0]?.userId).toEqual(seeded.userId)
-      // Successful refresh has no error field.
-      expect(logs[0]?.error).toBeUndefined()
+    // refreshLog row: success, cron-triggered, owned by the right user/sub.
+    const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
+    expect(logs).toHaveLength(1)
+    expect(logs[0]?.outcome).toBe('success')
+    expect(logs[0]?.triggeredBy).toBe('cron')
+    expect(logs[0]?.subscriptionId).toEqual(seeded.subId)
+    expect(logs[0]?.userId).toEqual(seeded.userId)
+    // Successful refresh has no error field.
+    expect(logs[0]?.error).toBeUndefined()
 
-      // ---------- RUN: phase 2 (CLI pulls, sees new hash) ----------
-      const pullResult = await t
-        .withIdentity(TEST_IDENTITY)
-        .action(api.subscriptions.actions.pullForSwitch, {
-          slotOrEmail: 'cron@example.com',
-        })
+    // ---------- RUN: phase 2 (CLI pulls, sees new hash) ----------
+    const pullResult = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.pullForSwitch, {
+      slotOrEmail: 'cron@example.com',
+    })
 
-      // ---------- ASSERTIONS: pull returns new content ----------
-      expect(pullResult.email).toBe('cron@example.com')
-      expect(pullResult.slot).toBe(seeded.slot)
-      // The plaintext we get back contains the FRESH access/refresh tokens.
-      expect(pullResult.plaintextBlob).toContain('CRON-FRESH-CCCCCCCCCCCC')
-      expect(pullResult.plaintextBlob).toContain('CRON-FRESH-DDDDDDDDDDDD')
-      // Content hash differs from the pre-refresh snapshot, so any CLI
-      // caching the old hash will re-import.
-      expect(pullResult.contentHash).not.toBe(beforeContentHash)
-      // The hash matches the freshly-decrypted plaintext.
-      const expectedHash = await sha256Hex(pullResult.plaintextBlob)
-      expect(pullResult.contentHash).toBe(expectedHash)
+    // ---------- ASSERTIONS: pull returns new content ----------
+    expect(pullResult.email).toBe('cron@example.com')
+    expect(pullResult.slot).toBe(seeded.slot)
+    // The plaintext we get back contains the FRESH access/refresh tokens.
+    expect(pullResult.plaintextBlob).toContain('CRON-FRESH-CCCCCCCCCCCC')
+    expect(pullResult.plaintextBlob).toContain('CRON-FRESH-DDDDDDDDDDDD')
+    // Content hash differs from the pre-refresh snapshot, so any CLI
+    // caching the old hash will re-import.
+    expect(pullResult.contentHash).not.toBe(beforeContentHash)
+    // The hash matches the freshly-decrypted plaintext.
+    const expectedHash = await sha256Hex(pullResult.plaintextBlob)
+    expect(pullResult.contentHash).toBe(expectedHash)
 
-      // pullForSwitch shouldn't have re-triggered a refresh (the access
-      // token is now valid for ~8h, far outside the 5-minute proactive
-      // window). Stub still at 1 call total.
-      expect(fetchStub).toHaveBeenCalledTimes(1)
-    }
-  )
+    // pullForSwitch shouldn't have re-triggered a refresh (the access
+    // token is now valid for ~8h, far outside the 5-minute proactive
+    // window). Stub still at 1 call total.
+    expect(fetchStub).toHaveBeenCalledTimes(1)
+  })
 
   it('refresh cron skips subs whose token is still valid for > REFRESH_WINDOW_MS', async () => {
     const t = vault()
@@ -179,15 +158,11 @@ describe('scenario #6 — auto-refresh near expiry (cron)', () => {
 
     // Anthropic was NOT contacted — sub is still fresh.
     expect(fetchStub).not.toHaveBeenCalled()
-    const after = await t.run(
-      async (ctx) => await ctx.db.get('subscriptions', seeded.subId)
-    )
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', seeded.subId))
     expect(after?.expiresAt).toBe(farFuture)
 
     // No refresh log row was written (no refresh attempt happened).
-    const logs = await t.run(
-      async (ctx) => await ctx.db.query('refreshLog').collect()
-    )
+    const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
     expect(logs).toHaveLength(0)
   })
 })

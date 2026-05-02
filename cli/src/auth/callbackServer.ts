@@ -58,20 +58,18 @@ export function startCallbackServer(opts: StartCallbackOptions): CallbackHandle 
   // consumer chooses not to observe (e.g. tests calling `cancel()` to stop
   // the server without caring about the result). Consumers can still
   // attach their own .catch / await on `result`.
-  const result: Promise<CallbackResult> = new Promise<CallbackResult>(
-    (resolve, reject) => {
-      resolveResult = (r) => {
-        if (settled) return
-        settled = true
-        resolve(r)
-      }
-      rejectResult = (err) => {
-        if (settled) return
-        settled = true
-        reject(err)
-      }
+  const result: Promise<CallbackResult> = new Promise<CallbackResult>((resolve, reject) => {
+    resolveResult = (r) => {
+      if (settled) return
+      settled = true
+      resolve(r)
     }
-  )
+    rejectResult = (err) => {
+      if (settled) return
+      settled = true
+      reject(err)
+    }
+  })
   // Default observer — synchronous attachment is critical so it runs in the
   // same microtask the rejection scheduling does.
   result.catch((): undefined => undefined)
@@ -113,10 +111,7 @@ export function startCallbackServer(opts: StartCallbackOptions): CallbackHandle 
 
       // Length-check first — `timingSafeEqual` requires equal-length buffers.
       const stateBytes = new TextEncoder().encode(state)
-      if (
-        stateBytes.byteLength !== expectedStateBytes.byteLength ||
-        !timingSafeEqual(stateBytes, expectedStateBytes)
-      ) {
+      if (stateBytes.byteLength !== expectedStateBytes.byteLength || !timingSafeEqual(stateBytes, expectedStateBytes)) {
         return new Response('state mismatch', { status: 400, headers: corsHeaders })
       }
 
@@ -136,9 +131,7 @@ export function startCallbackServer(opts: StartCallbackOptions): CallbackHandle 
   // Total timeout — never let a forgotten browser tab leave the listener up.
   const timeout = setTimeout(
     () => {
-      rejectResult(
-        new Error('Browser sign-in timed out. Re-run `cvault login` to try again.')
-      )
+      rejectResult(new Error('Browser sign-in timed out. Re-run `cvault login` to try again.'))
       void server.stop(true)
     },
     opts.timeoutMs ?? 2 * 60 * 1000

@@ -26,16 +26,7 @@ export interface SubRow {
   isActive: boolean
 }
 
-const HEADERS = [
-  'SLOT',
-  'EMAIL',
-  'LABEL',
-  '5H',
-  '7D',
-  'EXPIRES',
-  'LAST REFRESH',
-  'STATUS',
-] as const
+const HEADERS = ['SLOT', 'EMAIL', 'LABEL', '5H', '7D', 'EXPIRES', 'LAST REFRESH', 'STATUS'] as const
 
 /**
  * Format a future or past timestamp relative to `now` ms.
@@ -110,13 +101,9 @@ export function renderSubsTable(rows: SubRow[], now: number = Date.now()): strin
     return w
   })
 
-  const headerLine = HEADERS.map((h, i) => padRight(h, widths[i] ?? h.length)).join(
-    '  '
-  )
+  const headerLine = HEADERS.map((h, i) => padRight(h, widths[i] ?? h.length)).join('  ')
   const sep = widths.map((w) => '-'.repeat(w)).join('  ')
-  const dataLines = dataRows.map((row) =>
-    row.map((cell, i) => padRight(cell, widths[i] ?? cell.length)).join('  ')
-  )
+  const dataLines = dataRows.map((row) => row.map((cell, i) => padRight(cell, widths[i] ?? cell.length)).join('  '))
 
   return [headerLine, sep, ...dataLines].join('\n')
 }

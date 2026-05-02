@@ -40,9 +40,7 @@ describe('AuditRow', () => {
     expect(screen.getByText(/alice@example\.com/)).toBeTruthy()
     expect(screen.getByText(/cron/i)).toBeTruthy()
     expect(screen.getByText(/success/i)).toBeTruthy()
-    expect(container.querySelector('[data-slot="audit-row"]')?.getAttribute('data-state')).toBe(
-      'ok'
-    )
+    expect(container.querySelector('[data-slot="audit-row"]')?.getAttribute('data-state')).toBe('ok')
   })
 
   it('renders a refresh-failure row with error state', () => {
@@ -59,9 +57,7 @@ describe('AuditRow', () => {
         }}
       />
     )
-    expect(container.querySelector('[data-slot="audit-row"]')?.getAttribute('data-state')).toBe(
-      'error'
-    )
+    expect(container.querySelector('[data-slot="audit-row"]')?.getAttribute('data-state')).toBe('error')
     expect(screen.getByText(/<redacted>/)).toBeTruthy()
   })
 
@@ -78,9 +74,7 @@ describe('AuditRow', () => {
         }}
       />
     )
-    expect(container.querySelector('[data-slot="audit-row"]')?.getAttribute('data-state')).toBe(
-      'error'
-    )
+    expect(container.querySelector('[data-slot="audit-row"]')?.getAttribute('data-state')).toBe('error')
     expect(screen.getByText(/relogin/i)).toBeTruthy()
   })
 

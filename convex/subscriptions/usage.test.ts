@@ -8,8 +8,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { api, internal } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
 import { __setAnthropicFetch } from './anthropic'
 
 const ORIGINAL_KEY = process.env.VAULT_AES_KEY
@@ -83,9 +83,7 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     const t = vault()
     const inserted = await seedSubscription(t)
 
-    __setAnthropicFetch(
-      vi.fn(() => Promise.resolve(new Response('Rate Limited', { status: 429 })))
-    )
+    __setAnthropicFetch(vi.fn(() => Promise.resolve(new Response('Rate Limited', { status: 429 }))))
 
     await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
 
@@ -102,10 +100,10 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     __setAnthropicFetch(
       vi.fn(() =>
         Promise.resolve(
-          new Response(
-            JSON.stringify({ five_hour: { utilization: 5, resets_at: future } }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } }
-          )
+          new Response(JSON.stringify({ five_hour: { utilization: 5, resets_at: future } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
         )
       )
     )
