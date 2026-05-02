@@ -1,16 +1,18 @@
 /**
  * Helpers for round-tripping a single account between the Convex vault and
- * `claude-swap`. The CLI sends an opaque `plaintextBlob` to Convex on
- * `cvault add` (encrypted server-side under VAULT_AES_KEY) and receives it
- * back on `cvault switch` / `cvault sync`. claude-swap requires a specific
- * envelope shape for `--import`; this module is the single source of
- * truth for the round-trip.
+ * the local credentials store. The CLI sends an opaque `plaintextBlob` to
+ * Convex on `cvault add` (encrypted server-side under VAULT_AES_KEY) and
+ * receives it back on `cvault switch` / `cvault sync`. The native
+ * credential module's `applyEnvelope` requires a specific envelope shape;
+ * this file is the single source of truth for the round-trip.
  *
- * IMPORTANT: claude-swap's `--import` requires both `credentials` and
- * `config` on each account to be JSON objects, not strings or null. We
- * default `config` to `{}` for legacy uploads that did not capture it.
+ * IMPORTANT: legacy `claude-swap --import` required both `credentials` and
+ * `config` on each account to be JSON objects, not strings or null. The
+ * native `applyEnvelope` is more lenient, but we keep the legacy invariant
+ * (default `config` to `{}`) so envelopes still parse on older CLI builds
+ * that may pull from the same Convex vault.
  */
-import type { ClaudeSwapEnvelope } from './claudeSwap'
+import type { ClaudeSwapEnvelope } from './credentials'
 
 /**
  * Shape of the plaintext JSON blob we serialize into Convex for one
@@ -63,7 +65,8 @@ export function buildSingleAccountEnvelope(pull: PullResult): ClaudeSwapEnvelope
     version: 1,
     exportedAt: new Date().toISOString(),
     exportedFrom: 'cvault',
-    swapVersion: 'cvault-managed',
+    // Unified producer stamp — see `cli/src/native/envelope.ts`.
+    swapVersion: 'cvault-native-1',
     encrypted: false,
     activeAccountNumber: pull.slot,
     accounts: [account],

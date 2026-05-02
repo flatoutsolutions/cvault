@@ -31,9 +31,9 @@ import { api } from '@cvault/convex/api'
 import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { status } from '../../src/claudeSwap'
 import { runList } from '../../src/commands/list'
 import { makeVaultClient } from '../../src/convex/vaultClient'
+import { getActiveAccount } from '../../src/credentials'
 import {
   SAMPLE_OAUTH_BLOB,
   cleanupTempHome,
@@ -44,8 +44,8 @@ import {
   setupTempHome,
 } from './_helpers'
 
-vi.mock('../../src/claudeSwap', () => ({
-  status: vi.fn(),
+vi.mock('../../src/credentials', () => ({
+  getActiveAccount: vi.fn(),
 }))
 
 vi.mock('../../src/convex/vaultClient', () => ({
@@ -78,7 +78,7 @@ describe('Scenario #3 — List with usage', () => {
 
     const fake = createFakeVaultClient({ subscriptions: [sub] })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
-    vi.mocked(status).mockReturnValueOnce('Active account: 1 (a@b.com)\n')
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'a@b.com' })
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -118,7 +118,7 @@ describe('Scenario #3 — List with usage', () => {
     })
     const fake = createFakeVaultClient({ subscriptions: [sub] })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
-    vi.mocked(status).mockReturnValueOnce('No active account')
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -135,7 +135,7 @@ describe('Scenario #3 — List with usage', () => {
     expect(dataLine).toMatch(/\s-\s/)
   })
 
-  it('marks no slot active when claude-swap --status fails (offline / not installed)', async () => {
+  it('marks no slot active when reading the local active account fails', async () => {
     const sub = await makeSub({
       email: 'offline@b.com',
       slot: 3,
@@ -143,8 +143,8 @@ describe('Scenario #3 — List with usage', () => {
     })
     const fake = createFakeVaultClient({ subscriptions: [sub] })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
-    vi.mocked(status).mockImplementationOnce(() => {
-      throw new Error('claude-swap missing')
+    vi.mocked(getActiveAccount).mockImplementationOnce(() => {
+      throw new Error('keychain read failed')
     })
 
     const captured: string[] = []

@@ -4,19 +4,20 @@
  * artifacts and caches go, configuration stays.
  *
  * Removes:
- *   1. Every `claude-swap`-managed Keychain account (loops
- *      `claude-swap --remove-account <slot>`)
- *   2. Every `~/.vault/last-hash-{email}.txt` file (the per-email cache the
- *      pull-on-use path uses to skip redundant `claude-swap --import`)
+ *   1. The active Claude Code credentials (Keychain entry on macOS,
+ *      `~/.claude/.credentials.json` on Linux/WSL) and the
+ *      `oauthAccount` slice in `~/.claude.json`.
+ *   2. Every `~/.vault/last-hash-{email}.txt` file (the per-email cache
+ *      the pull-on-use path uses to skip redundant credential imports).
  *
  * Preserves:
  *   - `~/.vault/session.json` — user stays signed into the CLI
- *   - Convex vault — `cvault sync --all` will repopulate the Keychain
+ *   - Convex vault — `cvault sync --all` will repopulate the credentials
  *     after this command if the user wants the prior state back
+ *   - Sibling keys in `~/.claude.json` (telemetry IDs, feature flags)
  *
  * Destructive op: prompts y/N unless `--yes` is passed. Each step is
- * idempotent and continues on per-step failure (one bad slot does not
- * block the rest).
+ * idempotent and continues on per-step failure.
  */
 import { existsSync, readdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
@@ -24,7 +25,7 @@ import { createInterface } from 'node:readline/promises'
 
 import { defineCommand } from 'citty'
 
-import { ClaudeSwapMissingError, purge } from '../claudeSwap'
+import { purge } from '../credentials'
 import { vaultDir } from '../paths'
 
 export interface RunCleanOptions {
@@ -35,7 +36,7 @@ export interface RunCleanOptions {
 }
 
 interface RemovalSummary {
-  /** True when `claude-swap --purge --force` succeeded. */
+  /** True when the active credentials wipe succeeded. */
   keychainPurged: boolean
   hashFilesRemoved: number
   hashFilesFailed: number
@@ -66,9 +67,9 @@ async function confirmClean(io: NonNullable<RunCleanOptions['io']>): Promise<boo
   const rl = createInterface({ input: io.input, output: io.output })
   try {
     const answer = await rl.question(
-      'This will remove every claude-swap-managed Keychain account on this ' +
-        'machine and delete the local pull-on-use cache. The Convex vault is ' +
-        'NOT affected; you stay signed in to cvault. Continue? [y/N] '
+      'This will clear the active Claude Code credentials on this machine ' +
+        'and delete the local pull-on-use cache. The Convex vault is NOT ' +
+        'affected; you stay signed in to cvault. Continue? [y/N] '
     )
     return /^y(es)?$/i.test(answer.trim())
   } finally {
@@ -87,22 +88,20 @@ export async function runClean(opts: RunCleanOptions = {}): Promise<RemovalSumma
     }
   }
 
-  // `claude-swap --purge --force` wipes every managed account in one
-  // atomic call. We previously iterated `--remove-account <slot>`, which
-  // walked off the end after the very first removal because claude-swap
-  // renumbers slots in place (remove slot 1 → old slot 2 becomes slot 1,
-  // etc.). The purge call avoids the trap.
+  // `purge()` wipes the active credentials store + the `oauthAccount`
+  // slice in `~/.claude.json`. On native there's a single active account
+  // at a time, so this is one atomic call (no slot-renumbering trap like
+  // the legacy `claude-swap --remove-account` loop had).
   let keychainPurged = false
   try {
-    purge()
+    await purge()
     keychainPurged = true
   } catch (err) {
-    if (err instanceof ClaudeSwapMissingError) {
-      console.warn('claude-swap not installed; skipping Keychain wipe.')
-    } else {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`claude-swap --purge failed: ${msg}`)
-    }
+    // `purge()` no longer shells out to a separate binary, so the only
+    // failures here are Keychain access errors (which `keychain.ts`
+    // categorizes and reports with hints) — surface those verbatim.
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`purge failed: ${msg}`)
   }
 
   const { removed: hashFilesRemoved, failed: hashFilesFailed } = clearHashFiles()
@@ -113,7 +112,7 @@ export async function runClean(opts: RunCleanOptions = {}): Promise<RemovalSumma
     hashFilesFailed,
   }
   console.log(
-    `${keychainPurged ? 'Purged claude-swap accounts' : 'Skipped Keychain wipe'}, ` +
+    `${keychainPurged ? 'Cleared active credentials' : 'Skipped Keychain wipe'}, ` +
       `removed ${String(hashFilesRemoved)} hash file(s). Session and Convex vault preserved.`
   )
   return summary
@@ -123,7 +122,7 @@ export const cleanCommand = defineCommand({
   meta: {
     name: 'clean',
     description:
-      'Wipe local claude-swap Keychain accounts and the pull-on-use cache. ' +
+      'Wipe the active Claude Code credentials and the pull-on-use cache. ' +
       'Server-side vault and CLI session are preserved.',
   },
   args: {

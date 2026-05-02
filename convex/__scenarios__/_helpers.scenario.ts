@@ -19,7 +19,7 @@ import { type Id } from '../_generated/dataModel'
 // ---------------------------------------------------------------------------
 
 /**
- * Build a deterministic OAuth blob shaped like what claude-swap stores.
+ * Build a deterministic OAuth blob shaped like Claude Code's Keychain entry.
  * `accessToken` and `refreshToken` are intentionally not real Anthropic
  * tokens — they only need to:
  *   - look enough like the real shape that token redaction can fire

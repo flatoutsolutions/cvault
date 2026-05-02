@@ -1,7 +1,7 @@
 {
   "name": "cvault",
   "version": "0.1.0",
-  "description": "Centralized Claude Code credential vault — wraps claude-swap with Convex sync.",
+  "description": "Centralized Claude Code credential vault — native macOS Keychain integration with Convex sync.",
   "type": "module",
   "license": "MIT",
   "author": "Stefan Asseg <stefan@flatout.solutions>",

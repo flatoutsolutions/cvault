@@ -7,7 +7,7 @@
  *
  * - Master key from `VAULT_AES_KEY` env var (32 bytes, base64-encoded).
  * - Fresh 12-byte nonce per write.
- * - Plaintext is the JSON-stringified `claudeAiOauth` blob (see claude-swap).
+ * - Plaintext is the JSON-stringified `claudeAiOauth` blob.
  * - Auth tag is appended to the ciphertext (Node `node:crypto` GCM API),
  *   so decrypt() will throw on tamper.
  *

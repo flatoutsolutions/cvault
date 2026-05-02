@@ -5,20 +5,21 @@
  *
  * For every sub the user has in the vault:
  *   1. Pull plaintext via `pullForSwitch` (server refreshes if needed)
- *   2. Wrap as a single-account envelope and `claude-swap --import -`
+ *   2. Wrap as a single-account envelope and `importEnvelope` it
  *   3. Update `~/.vault/last-hash-{email}.txt`
  *
  * Continues on per-sub failure so one bad sub (e.g. expired refresh
  * token) doesn't block the rest. Errors are printed to stderr.
  *
- * No `--switch-to` at the end — the user picks the active sub
- * afterward via `cvault switch`.
+ * Note: on native there is exactly one active credential at a time, so
+ * the LAST imported sub becomes the active one. The user may then run
+ * `cvault switch <slot|email>` to pick a specific one as active.
  */
 import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
-import { importEnvelope } from '../claudeSwap'
 import { type VaultClient, makeVaultClient } from '../convex/vaultClient'
+import { importEnvelope } from '../credentials'
 import { buildSingleAccountEnvelope } from '../envelope'
 import { lastHashPath, writeSecret } from '../paths'
 
@@ -33,7 +34,7 @@ async function syncOne(client: VaultClient, sub: SubMetaListed): Promise<void> {
   })
 
   const envelope = buildSingleAccountEnvelope(pull)
-  importEnvelope(envelope, true)
+  await importEnvelope(envelope, true)
   await writeSecret(lastHashPath(pull.email), pull.contentHash)
 }
 

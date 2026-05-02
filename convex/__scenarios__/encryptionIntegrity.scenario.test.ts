@@ -135,7 +135,7 @@ describe('scenario: encryption integrity (tampered ciphertext)', () => {
 
     // No plaintext-shaped fragments may appear anywhere in the error.
     // These four checks together cover (a) raw token bytes, (b) the
-    // claude-swap field names that would only appear if the JSON blob were
+    // OAuth blob field names that would only appear if the JSON blob were
     // partially decoded and re-stringified into the error.
     expect(errString).not.toContain('sk-ant-')
     expect(errString).not.toContain(distinctiveAccess)

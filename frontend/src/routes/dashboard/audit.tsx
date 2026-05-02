@@ -14,14 +14,20 @@
  *   - outcome (success / failure / reloginRequired / activity / "all")
  */
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery } from 'convex/react'
+import { usePaginatedQuery, useQuery } from 'convex/react'
 import { useMemo, useState } from 'react'
 
 import type { AuditRowData } from '@/components/dashboard/AuditRow'
 import { AuditRow } from '@/components/dashboard/AuditRow'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import { api } from '../../../../convex/_generated/api'
+
+// One page is 50 rows. The audit feed is append-only and grows on every
+// `cvault refresh / switch / add / pull / login` — paginating keeps the
+// initial page snappy while letting the user scroll arbitrarily far back.
+const PAGE_SIZE = 50
 
 export const Route = createFileRoute('/dashboard/audit')({
   component: AuditPage,
@@ -33,8 +39,16 @@ type Filter = 'all' | 'success' | 'failure' | 'reloginRequired' | 'activity'
  * Exported for tests. Wired into TanStack Router via `Route` above.
  */
 export function AuditPage() {
-  const refreshLog = useQuery(api.refreshLog.queries.recentForUser, { limit: 200 })
-  const machineActivity = useQuery(api.machineActivity.queries.recentForUser, { limit: 200 })
+  const {
+    results: refreshLog,
+    status: refreshStatus,
+    loadMore: loadMoreRefresh,
+  } = usePaginatedQuery(api.refreshLog.queries.recentForUser, {}, { initialNumItems: PAGE_SIZE })
+  const {
+    results: machineActivity,
+    status: activityStatus,
+    loadMore: loadMoreActivity,
+  } = usePaginatedQuery(api.machineActivity.queries.recentForUser, {}, { initialNumItems: PAGE_SIZE })
   const subs = useQuery(api.subscriptions.queries.listForUser, {})
 
   const [subFilter, setSubFilter] = useState<string>('all')
@@ -50,8 +64,6 @@ export function AuditPage() {
   }, [subs])
 
   const merged = useMemo<AuditRowData[]>(() => {
-    if (refreshLog === undefined || machineActivity === undefined) return []
-
     const refreshRows: AuditRowData[] = refreshLog.map((r) => ({
       kind: 'refresh',
       id: r._id,
@@ -95,19 +107,30 @@ export function AuditPage() {
   // Distinct session ids appearing in machineActivity, for the filter dropdown.
   const sessionIds = useMemo(() => {
     const set = new Set<string>()
-    for (const a of machineActivity ?? []) {
+    for (const a of machineActivity) {
       set.add(a.clerkSessionId)
     }
     return Array.from(set).sort()
   }, [machineActivity])
 
-  if (refreshLog === undefined || machineActivity === undefined) {
+  // First-page loading skeleton: only shown while BOTH paginated queries
+  // are still on their initial fetch. After that we render rows
+  // incrementally — `LoadingMore` and `Exhausted` are handled inline.
+  if (refreshStatus === 'LoadingFirstPage' && activityStatus === 'LoadingFirstPage') {
     return (
       <div className="flex flex-col gap-4">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-96 w-full rounded-xl" />
       </div>
     )
+  }
+
+  const canLoadMore = refreshStatus === 'CanLoadMore' || activityStatus === 'CanLoadMore'
+  const isLoadingMore = refreshStatus === 'LoadingMore' || activityStatus === 'LoadingMore'
+
+  function loadMoreBoth() {
+    if (refreshStatus === 'CanLoadMore') loadMoreRefresh(PAGE_SIZE)
+    if (activityStatus === 'CanLoadMore') loadMoreActivity(PAGE_SIZE)
   }
 
   return (
@@ -169,6 +192,14 @@ export function AuditPage() {
           filtered.map((row) => <AuditRow key={`${row.kind}-${row.id}`} row={row} />)
         )}
       </div>
+
+      {(canLoadMore || isLoadingMore) && (
+        <div className="flex justify-center">
+          <Button variant="outline" size="sm" onClick={loadMoreBoth} disabled={isLoadingMore}>
+            {isLoadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

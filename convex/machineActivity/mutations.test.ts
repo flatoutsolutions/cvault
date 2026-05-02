@@ -85,9 +85,9 @@ describe('machineActivity.queries.recentForUser', () => {
       at: 2000,
     })
 
-    const rows = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForUser, {
-      limit: 10,
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForUser, {
+      paginationOpts: { numItems: 10, cursor: null },
     })
-    expect(rows.map((r: { action: string }) => r.action)).toEqual(['switch', 'add']) // newest first
+    expect(result.page.map((r: { action: string }) => r.action)).toEqual(['switch', 'add']) // newest first
   })
 })

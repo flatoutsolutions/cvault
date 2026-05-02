@@ -261,15 +261,14 @@ jobs:
           {
             echo "## cvault $VERSION"
             echo ""
-            echo "Single-binary CLI for the cvault credential vault. Wraps"
-            echo "[\`claude-swap\`](https://github.com/realiti4/claude-swap) with cross-machine sync via Convex."
+            echo "Single-binary CLI for the cvault credential vault — Mac Keychain"
+            echo "credential sync across machines via Convex."
             echo ""
             echo "### Install (Homebrew, recommended)"
             echo ""
             echo '```sh'
             echo "brew tap stefanasseg/cvault"
             echo "brew install cvault"
-            echo "uv tool install claude-swap   # required runtime dependency"
             echo '```'
             echo ""
             echo "### Manual download"

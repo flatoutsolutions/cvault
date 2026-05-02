@@ -16,11 +16,11 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { importEnvelope } from '../../src/claudeSwap'
 import { runSync } from '../../src/commands/sync'
 import { makeVaultClient } from '../../src/convex/vaultClient'
+import { importEnvelope } from '../../src/credentials'
 
-vi.mock('../../src/claudeSwap', () => ({
+vi.mock('../../src/credentials', () => ({
   importEnvelope: vi.fn(),
 }))
 

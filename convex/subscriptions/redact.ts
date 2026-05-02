@@ -4,7 +4,7 @@
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §6.
  *
- * Token shape (per claude-swap and observed Anthropic OAuth output):
+ * Token shape (observed Anthropic OAuth output):
  *   sk-ant-{type}{digits}-{base64url-ish chars, length >= 20}
  *
  * Concrete examples we've seen:

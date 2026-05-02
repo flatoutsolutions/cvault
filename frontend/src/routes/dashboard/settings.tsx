@@ -90,12 +90,9 @@ function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Documentation</CardTitle>
-            <CardDescription>
-              Reference material for the cvault CLI, Convex backend, and integration with claude-swap.
-            </CardDescription>
+            <CardDescription>Reference material for the cvault CLI and Convex backend.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
-            <HelpLink href="https://github.com/realiti4/claude-swap">claude-swap on GitHub</HelpLink>
             <HelpLink href="https://docs.anthropic.com/">Anthropic docs</HelpLink>
             <HelpLink href="https://docs.convex.dev/">Convex docs</HelpLink>
             <HelpLink href="https://clerk.com/docs">Clerk docs</HelpLink>

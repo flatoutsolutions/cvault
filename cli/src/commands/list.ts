@@ -7,42 +7,42 @@
  *   - Convex `api.subscriptions.queries.listForUser` for sub metadata
  *     (no ciphertext, no plaintext — just slot, email, label, usage,
  *      expiry, last refresh)
- *   - Local `claude-swap --status` for the currently-active sub
+ *   - Local `getActiveAccount()` (from `credentials.ts`) for the
+ *     currently-active sub on this machine
  *
- * If `claude-swap --status` fails (binary missing, returns garbage), we
- * still render the table — just without an active marker.
+ * The active marker is keyed off EMAIL not slot — slot numbers are owned
+ * by Convex and the vault's slot for a sub may differ from the legacy
+ * "active slot" string the local `status()` produced. Email is the
+ * stable identifier that survives renumbers + cross-machine sync.
+ *
+ * If reading the local active account fails (no credentials, malformed
+ * claude.json), we still render the table — just without an active
+ * marker.
  */
 import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
-import { status } from '../claudeSwap'
 import { makeVaultClient } from '../convex/vaultClient'
+import { getActiveAccount } from '../credentials'
 import { type SubRow, renderSubsTable } from '../render/table'
-
-/**
- * Parse `claude-swap --status` output to find the active slot. Tolerant of
- * formatting drift; returns undefined if the format isn't recognized. See
- * `add.ts::parseActiveSlot` for the regex rationale (must accept the real
- * `Status: Account-N` format and reject the trailing `Total managed
- * accounts: N` summary line).
- */
-function parseActiveSlot(out: string): number | undefined {
-  const m = /Account[\s\-_:]+(\d+)/i.exec(out)
-  if (!m || m[1] === undefined) return undefined
-  const n = Number.parseInt(m[1], 10)
-  return Number.isNaN(n) ? undefined : n
-}
 
 export async function runList(): Promise<void> {
   const client = await makeVaultClient()
   const subs = await client.query(api.subscriptions.queries.listForUser, {})
 
-  let activeSlot: number | undefined
+  // R2: case-insensitive compare. Anthropic emails are case-insensitive
+  // at SMTP and Clerk normalizes inconsistently; lower-case both sides
+  // so `Stefan@example.com` (vault) matches `stefan@example.com`
+  // (`oauthAccount`).
+  let activeEmailLower: string | undefined
   try {
-    activeSlot = parseActiveSlot(status())
+    const email = getActiveAccount()?.email
+    activeEmailLower = email !== undefined ? email.toLowerCase() : undefined
   } catch {
-    // claude-swap missing or errored — still render the rest of the table.
-    activeSlot = undefined
+    // Reading the local credentials store may fail (perms, missing
+    // claude.json, etc.). Render the table without an active marker
+    // rather than aborting — the user can still see what's in the vault.
+    activeEmailLower = undefined
   }
 
   const rows: SubRow[] = subs.map((s) => ({
@@ -54,7 +54,7 @@ export async function runList(): Promise<void> {
     lastRefreshedAt: s.lastRefreshedAt,
     usage5hPct: s.usage5h?.pct,
     usage7dPct: s.usage7d?.pct,
-    isActive: s.slot === activeSlot,
+    isActive: activeEmailLower !== undefined && s.email.toLowerCase() === activeEmailLower,
   }))
 
   console.log(renderSubsTable(rows))
