@@ -1,4 +1,5 @@
 /// <reference types="vitest" />
+import { resolve } from 'node:path'
 import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
 
@@ -16,8 +17,13 @@ export default defineConfig(({ mode }) => {
       testTimeout: 300_000,
       hookTimeout: 120_000,
       env,
-      // ONLY include scenario tests
       include: ['**/*.scenario.test.ts'],
+    },
+    resolve: {
+      alias: {
+        '@cvault/convex/api': resolve(__dirname, 'convex/_generated/api'),
+        '@cvault/convex/dataModel': resolve(__dirname, 'convex/_generated/dataModel'),
+      },
     },
   }
 })
