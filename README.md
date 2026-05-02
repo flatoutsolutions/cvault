@@ -76,6 +76,8 @@ bun run src/index.ts -- status
 bun run src/index.ts -- refresh <slot|email>
 bun run src/index.ts -- remove <slot|email>
 bun run src/index.ts -- sync --all          # bootstrap on a new machine
+bun run src/index.ts -- clean               # wipe local Keychain + last-hash cache
+                                            # (server vault + login preserved; --yes to skip prompt)
 ```
 
 Or build a static binary:
