@@ -108,14 +108,15 @@ interface RunBunBuildArgs {
 }
 
 async function runBunBuild({ target, outfile, cwd }: RunBunBuildArgs): Promise<number> {
-  // Mirror the existing build:* scripts in package.json: minify,
-  // sourcemap, bytecode, target, outfile.
+  // --bytecode is intentionally omitted: it currently triggers
+  // "Failed to generate bytecode for ./index.js" on Bun 1.2.x with our
+  // module graph. Acceptable trade-off since the resulting binary still
+  // codesigns + runs; bytecode would cut ~50ms off cold start only.
   const args = [
     'build',
     '--compile',
     '--minify',
     '--sourcemap',
-    '--bytecode',
     `--target=${target}`,
     './src/index.ts',
     '--outfile',
