@@ -26,10 +26,7 @@ function DashboardLayout() {
       <div className="bg-background text-foreground min-h-screen">
         <header className="border-border sticky top-0 z-10 border-b backdrop-blur">
           <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
-            <Link
-              to="/dashboard"
-              className="text-foreground text-base font-semibold tracking-tight"
-            >
+            <Link to="/dashboard" className="text-foreground text-base font-semibold tracking-tight">
               cvault
             </Link>
             <nav className="ml-4 flex items-center gap-1 text-sm">
@@ -85,9 +82,8 @@ function SignedOutPlaceholder() {
     <div className="bg-card border-border flex flex-col items-center gap-4 rounded-lg border p-12 text-center">
       <h1 className="text-2xl font-semibold">Sign in to manage your Claude Code subscriptions</h1>
       <p className="text-muted-foreground max-w-md text-sm">
-        cvault keeps your Anthropic OAuth credentials encrypted in Convex and
-        synced across machines. Sign in with the same Clerk account you use on
-        your CLI.
+        cvault keeps your Anthropic OAuth credentials encrypted in Convex and synced across machines. Sign in with the
+        same Clerk account you use on your CLI.
       </p>
       <SignInButton mode="modal">
         <Button size="lg">Sign in</Button>

@@ -70,9 +70,7 @@ export async function readSession(): Promise<SessionState> {
   try {
     parsed = JSON.parse(text)
   } catch (err) {
-    throw new Error(
-      `Failed to parse session.json: ${err instanceof Error ? err.message : String(err)}`
-    )
+    throw new Error(`Failed to parse session.json: ${err instanceof Error ? err.message : String(err)}`)
   }
   return parsed as SessionState
 }

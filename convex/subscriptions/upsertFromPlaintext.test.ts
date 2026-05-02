@@ -9,8 +9,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { api } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api } from '../_generated/api'
 import { decrypt } from './crypto'
 
 const ORIGINAL_KEY = process.env.VAULT_AES_KEY
@@ -54,16 +54,13 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
     const t = vault()
     await seedUser(t)
 
-    const result = await t.withIdentity(TEST_IDENTITY).action(
-      api.subscriptions.actions.upsertFromPlaintext,
-      {
-        email: 'fresh@example.com',
-        plaintextBlob: SAMPLE_BLOB,
-        expiresAt: Date.now() + 60 * 60 * 1000,
-        subscriptionType: 'max',
-        rateLimitTier: 'tier1',
-      }
-    )
+    const result = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'fresh@example.com',
+      plaintextBlob: SAMPLE_BLOB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
 
     expect(result.created).toBe(true)
     expect(result.slot).toBe(1)
@@ -77,10 +74,7 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
     expect(ciphertextHex).not.toContain(Buffer.from(SAMPLE_BLOB).toString('hex'))
 
     // Decrypting with the same VAULT_AES_KEY recovers the plaintext.
-    const recovered = decrypt(
-      row?.ciphertext ?? new ArrayBuffer(0),
-      row?.nonce ?? new ArrayBuffer(0)
-    )
+    const recovered = decrypt(row?.ciphertext ?? new ArrayBuffer(0), row?.nonce ?? new ArrayBuffer(0))
     expect(recovered).toBe(SAMPLE_BLOB)
   })
 
@@ -88,20 +82,15 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
     const t = vault()
     await seedUser(t)
 
-    const result = await t.withIdentity(TEST_IDENTITY).action(
-      api.subscriptions.actions.upsertFromPlaintext,
-      {
-        email: 'audit-add@example.com',
-        plaintextBlob: SAMPLE_BLOB,
-        expiresAt: Date.now() + 60 * 60 * 1000,
-        subscriptionType: 'max',
-        rateLimitTier: 'tier1',
-      }
-    )
+    const result = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'audit-add@example.com',
+      plaintextBlob: SAMPLE_BLOB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
 
-    const rows = await t.run(async (ctx) =>
-      await ctx.db.query('machineActivity').collect()
-    )
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     const addRow = rows.find((r) => r.action === 'add')
     expect(addRow).toBeDefined()
     expect(addRow?.subscriptionId).toEqual(result.subId)
@@ -111,16 +100,13 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
     const t = vault()
     await seedUser(t)
 
-    const first = await t.withIdentity(TEST_IDENTITY).action(
-      api.subscriptions.actions.upsertFromPlaintext,
-      {
-        email: 'rotate@example.com',
-        plaintextBlob: SAMPLE_BLOB,
-        expiresAt: Date.now() + 60 * 60 * 1000,
-        subscriptionType: 'max',
-        rateLimitTier: 'tier1',
-      }
-    )
+    const first = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'rotate@example.com',
+      plaintextBlob: SAMPLE_BLOB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
     expect(first.created).toBe(true)
 
     const newer = JSON.stringify({
@@ -130,26 +116,20 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
         expiresAt: 1800000000000,
       },
     })
-    const second = await t.withIdentity(TEST_IDENTITY).action(
-      api.subscriptions.actions.upsertFromPlaintext,
-      {
-        email: 'rotate@example.com',
-        plaintextBlob: newer,
-        expiresAt: Date.now() + 120 * 60 * 1000,
-        subscriptionType: 'max',
-        rateLimitTier: 'tier1',
-      }
-    )
+    const second = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'rotate@example.com',
+      plaintextBlob: newer,
+      expiresAt: Date.now() + 120 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
     expect(second.created).toBe(false)
     expect(second.subId).toEqual(first.subId)
     expect(second.slot).toBe(first.slot)
 
     // Decrypt the latest row -> should be the second blob, not the first.
     const row = await t.run(async (ctx) => await ctx.db.get('subscriptions', second.subId))
-    const recovered = decrypt(
-      row?.ciphertext ?? new ArrayBuffer(0),
-      row?.nonce ?? new ArrayBuffer(0)
-    )
+    const recovered = decrypt(row?.ciphertext ?? new ArrayBuffer(0), row?.nonce ?? new ArrayBuffer(0))
     expect(recovered).toBe(newer)
   })
 })

@@ -26,6 +26,11 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { startCallbackServer } from '../../src/auth/callbackServer'
+import { exchangeTicketForSession } from '../../src/auth/clerkFapi'
+import { runLogin } from '../../src/commands/login'
+import { cleanupTempHome, setupTempHome } from './_helpers'
+
 vi.mock('../../src/auth/openBrowser', () => ({
   openBrowser: vi.fn().mockResolvedValue(undefined),
 }))
@@ -35,11 +40,6 @@ vi.mock('../../src/auth/clerkFapi', () => ({
   ClerkSessionExpiredError: class extends Error {},
   cliUserAgent: () => 'cvault-cli/0.1.0 (test)',
 }))
-
-import { startCallbackServer } from '../../src/auth/callbackServer'
-import { exchangeTicketForSession } from '../../src/auth/clerkFapi'
-import { runLogin } from '../../src/commands/login'
-import { cleanupTempHome, setupTempHome } from './_helpers'
 
 let tempHome: string
 

@@ -34,7 +34,10 @@ export const recentForUser = authenticatedQuery({
   args: { limit: v.optional(v.number()) },
   returns: v.array(machineActivityRowValidator),
   handler: async (ctx, { limit }) => {
-    return await ctx.db.query('machineActivity').order('desc').take(limit ?? 100)
+    return await ctx.db
+      .query('machineActivity')
+      .order('desc')
+      .take(limit ?? 100)
   },
 })
 

@@ -47,9 +47,7 @@ export const refreshExpiringTokens = internalAction({
       if (r.status === 'rejected') {
         const subId = expiring[idx]?.subId ?? 'unknown'
         const reason = r.reason instanceof Error ? r.reason.message : String(r.reason)
-        console.error(
-          `[cvault] refreshExpiringTokens: sub ${String(subId)} threw unhandled: ${reason}`
-        )
+        console.error(`[cvault] refreshExpiringTokens: sub ${String(subId)} threw unhandled: ${reason}`)
       }
     }
     return null
@@ -80,9 +78,7 @@ export const pollUsage = internalAction({
       if (r.status === 'rejected') {
         const subId = active[idx]?.subId ?? 'unknown'
         const reason = r.reason instanceof Error ? r.reason.message : String(r.reason)
-        console.error(
-          `[cvault] pollUsage: sub ${String(subId)} threw unhandled: ${reason}`
-        )
+        console.error(`[cvault] pollUsage: sub ${String(subId)} threw unhandled: ${reason}`)
       }
     }
     return null

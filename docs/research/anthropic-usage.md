@@ -8,13 +8,13 @@ This brief documents what we need to call `GET https://api.anthropic.com/api/oau
 
 ## Endpoint
 
-| Field            | Value                                              |
-| ---------------- | -------------------------------------------------- |
-| URL              | `https://api.anthropic.com/api/oauth/usage`        |
-| Method           | `GET`                                              |
-| Body             | none                                               |
-| Auth             | OAuth access token (Claude Code CLI token)         |
-| Beta header      | required (`anthropic-beta: oauth-2025-04-20`)      |
+| Field                 | Value                                         |
+| --------------------- | --------------------------------------------- |
+| URL                   | `https://api.anthropic.com/api/oauth/usage`   |
+| Method                | `GET`                                         |
+| Body                  | none                                          |
+| Auth                  | OAuth access token (Claude Code CLI token)    |
+| Beta header           | required (`anthropic-beta: oauth-2025-04-20`) |
 | Timeout (claude-swap) | 5 seconds (request), 10 seconds (refresh)     |
 
 The OAuth access token is the `claudeAiOauth.accessToken` value Claude Code stores on disk. claude-swap derives `OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"` for the refresh flow but the `/usage` endpoint itself does not need the client id — only the bearer token.
@@ -57,86 +57,84 @@ Drop-in for a `convex/internal/usage.ts` action. Keep the literal `OAUTH_BETA_HE
 
 ```ts
 // convex/lib/anthropicUsage.ts
-const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
-const OAUTH_BETA_HEADER = "oauth-2025-04-20";
+const ANTHROPIC_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+const OAUTH_BETA_HEADER = 'oauth-2025-04-20'
 
 export type RawUsageWindow = {
-  utilization: number; // 0..100, percent
-  resets_at: string;   // ISO 8601 UTC, e.g. "2026-05-02T22:00:00Z"
-};
+  utilization: number // 0..100, percent
+  resets_at: string // ISO 8601 UTC, e.g. "2026-05-02T22:00:00Z"
+}
 
 export type RawUsageResponse = {
-  five_hour?: RawUsageWindow;
-  seven_day?: RawUsageWindow;
-};
+  five_hour?: RawUsageWindow
+  seven_day?: RawUsageWindow
+}
 
 export type UsageFetchOutcome =
-  | { kind: "ok"; usage5h: NormalizedUsage | null; usage7d: NormalizedUsage | null }
-  | { kind: "tokenInvalid" }   // 401 — refresh access token, retry once
-  | { kind: "rateLimited"; retryAfterMs: number | null } // 429
-  | { kind: "serverError"; status: number; body: string }
-  | { kind: "networkError"; error: string };
+  | { kind: 'ok'; usage5h: NormalizedUsage | null; usage7d: NormalizedUsage | null }
+  | { kind: 'tokenInvalid' } // 401 — refresh access token, retry once
+  | { kind: 'rateLimited'; retryAfterMs: number | null } // 429
+  | { kind: 'serverError'; status: number; body: string }
+  | { kind: 'networkError'; error: string }
 
 export type NormalizedUsage = {
-  pct: number;        // 0..100, raw integer percent from Anthropic
-  resetsAt: number;   // ms epoch (UTC), parsed from ISO 8601
-  fetchedAt: number;  // ms epoch (UTC), set when we received the response
-};
+  pct: number // 0..100, raw integer percent from Anthropic
+  resetsAt: number // ms epoch (UTC), parsed from ISO 8601
+  fetchedAt: number // ms epoch (UTC), set when we received the response
+}
 
-export async function fetchAnthropicUsage(
-  accessToken: string,
-): Promise<UsageFetchOutcome> {
-  let res: Response;
+export async function fetchAnthropicUsage(accessToken: string): Promise<UsageFetchOutcome> {
+  let res: Response
   try {
     res = await fetch(ANTHROPIC_USAGE_URL, {
-      method: "GET",
+      method: 'GET',
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "anthropic-beta": OAUTH_BETA_HEADER,
-        "User-Agent": "cvault/1.0",
+        'anthropic-beta': OAUTH_BETA_HEADER,
+        'User-Agent': 'cvault/1.0',
       },
       // Convex actions run in V8; AbortSignal.timeout is supported.
       signal: AbortSignal.timeout(10_000),
-    });
+    })
   } catch (e) {
-    return { kind: "networkError", error: String(e) };
+    return { kind: 'networkError', error: String(e) }
   }
 
-  if (res.status === 401) return { kind: "tokenInvalid" };
+  if (res.status === 401) return { kind: 'tokenInvalid' }
 
   if (res.status === 429) {
-    const retryAfterRaw = res.headers.get("retry-after");
+    const retryAfterRaw = res.headers.get('retry-after')
     const retryAfterMs = retryAfterRaw
       ? Number.isNaN(Number(retryAfterRaw))
         ? null
         : Number(retryAfterRaw) * 1000
-      : null;
-    return { kind: "rateLimited", retryAfterMs };
+      : null
+    return { kind: 'rateLimited', retryAfterMs }
   }
 
   if (res.status >= 500) {
-    return { kind: "serverError", status: res.status, body: await res.text() };
+    return { kind: 'serverError', status: res.status, body: await res.text() }
   }
 
   if (!res.ok) {
-    return { kind: "serverError", status: res.status, body: await res.text() };
+    return { kind: 'serverError', status: res.status, body: await res.text() }
   }
 
-  const data = (await res.json()) as RawUsageResponse;
-  const fetchedAt = Date.now();
+  const data = (await res.json()) as RawUsageResponse
+  const fetchedAt = Date.now()
 
   const normalize = (w: RawUsageWindow | undefined): NormalizedUsage | null => {
-    if (!w) return null;
-    const resetsAt = Date.parse(w.resets_at); // ISO 8601 -> ms epoch
-    if (Number.isNaN(resetsAt)) return null;
-    return { pct: w.utilization, resetsAt, fetchedAt };
-  };
+    if (!w) return null
+    const resetsAt = Date.parse(w.resets_at) // ISO 8601 -> ms epoch
+    if (Number.isNaN(resetsAt)) return null
+    return { pct: w.utilization, resetsAt, fetchedAt }
+  }
 
   return {
-    kind: "ok",
+    kind: 'ok',
     usage5h: normalize(data.five_hour),
     usage7d: normalize(data.seven_day),
-  };
+  }
 }
 ```
 
@@ -152,13 +150,13 @@ claude-swap's `request_usage_data` returns the parsed JSON verbatim, and `build_
 // /api/oauth/usage  -> 200 OK
 {
   "five_hour": {
-    "utilization": 42,                         // integer percent, 0..100
-    "resets_at": "2026-05-02T22:00:00Z"        // ISO 8601 UTC
+    "utilization": 42, // integer percent, 0..100
+    "resets_at": "2026-05-02T22:00:00Z", // ISO 8601 UTC
   },
   "seven_day": {
     "utilization": 71,
-    "resets_at": "2026-05-09T18:00:00Z"
-  }
+    "resets_at": "2026-05-09T18:00:00Z",
+  },
 }
 ```
 
@@ -179,15 +177,15 @@ This is what claude-swap stores in its 15s in-process cache and renders in the C
 ```jsonc
 {
   "five_hour": {
-    "pct": 42,                  // copied from utilization
-    "countdown": "2h 15m",      // derived: human-readable time until resets_at
-    "clock": "22:00"            // derived: local-time HH:MM (or "May 2 22:00" if not today)
+    "pct": 42, // copied from utilization
+    "countdown": "2h 15m", // derived: human-readable time until resets_at
+    "clock": "22:00", // derived: local-time HH:MM (or "May 2 22:00" if not today)
   },
   "seven_day": {
     "pct": 71,
     "countdown": "6d 19h",
-    "clock": "May 9 18:00"
-  }
+    "clock": "May 9 18:00",
+  },
 }
 ```
 
@@ -196,7 +194,7 @@ Derivation formulas (from `format_reset` in `oauth.py` lines 119–144):
 - **`countdown`** = `resets_at - now()` formatted as:
   - `> 1d` → `"{d}d {h}h"`
   - `> 1h` → `"{h}h {m}m"`
-  - else  → `"{m}m"`
+  - else → `"{m}m"`
   - clamped to `0` if `resets_at` is in the past.
 - **`clock`** = `resets_at.astimezone()` (local TZ) formatted as `"%H:%M"` if today, else `"%b %-d %H:%M"`.
 
@@ -221,13 +219,13 @@ Validators that round-trip the data we persist. Reuse via shared `usageWindowVal
 
 ```ts
 // convex/subscriptions/schema.ts (excerpt)
-import { v } from "convex/values";
+import { v } from 'convex/values'
 
 export const usageWindowValidator = v.object({
-  pct: v.number(),       // 0..100, copied from Anthropic `utilization`
-  resetsAt: v.number(),  // ms epoch UTC, parsed from `resets_at`
+  pct: v.number(), // 0..100, copied from Anthropic `utilization`
+  resetsAt: v.number(), // ms epoch UTC, parsed from `resets_at`
   fetchedAt: v.number(), // ms epoch UTC, set when we received the response
-});
+})
 
 // inside the subscriptions table:
 //   usage5h: v.optional(usageWindowValidator),
@@ -238,23 +236,24 @@ Validator for the optional argument the internal mutation accepts when patching 
 
 ```ts
 // convex/subscriptions/internal.ts
-import { internalMutation } from "../_generated/server";
-import { v } from "convex/values";
-import { usageWindowValidator } from "./schema";
+import { v } from 'convex/values'
+
+import { internalMutation } from '../_generated/server'
+import { usageWindowValidator } from './schema'
 
 export const patchUsage = internalMutation({
   args: {
-    subId: v.id("subscriptions"),
+    subId: v.id('subscriptions'),
     usage5h: v.optional(v.union(usageWindowValidator, v.null())),
     usage7d: v.optional(v.union(usageWindowValidator, v.null())),
   },
   handler: async (ctx, { subId, usage5h, usage7d }) => {
-    const patch: Record<string, unknown> = {};
-    if (usage5h !== undefined) patch.usage5h = usage5h ?? undefined;
-    if (usage7d !== undefined) patch.usage7d = usage7d ?? undefined;
-    await ctx.db.patch(subId, patch);
+    const patch: Record<string, unknown> = {}
+    if (usage5h !== undefined) patch.usage5h = usage5h ?? undefined
+    if (usage7d !== undefined) patch.usage7d = usage7d ?? undefined
+    await ctx.db.patch(subId, patch)
   },
-});
+})
 ```
 
 `v.union(usageWindowValidator, v.null())` lets the action signal "explicitly absent" (e.g. Anthropic omitted the window) vs `undefined` ("don't touch this field on the existing doc"). Adjust to your taste; the spec only says `v.optional(v.object(...))`, so `null` is **not** a valid stored value — strip it before patching as shown above.
@@ -265,14 +264,14 @@ export const patchUsage = internalMutation({
 
 claude-swap's behavior in `fetch_usage_for_account` (lines 193–256) and `fetch_usage` (lines 183–190):
 
-| Status | claude-swap behavior | What it likely means | cvault recommendation |
-| ------ | -------------------- | -------------------- | --------------------- |
-| **200** | Parse JSON, return normalized `{ five_hour?, seven_day? }`. | Success. | Patch `subscriptions.usage5h` / `usage7d`. Reset failure backoff. |
-| **401** | If account is **inactive** AND has `refreshToken`, refresh via `https://platform.claude.com/v1/oauth/token` (POST `grant_type=refresh_token`), persist new creds, retry the usage call **once**. If retry also fails, return `None`. Active accounts (whose creds are owned by Claude Code CLI itself) are never refreshed by claude-swap — it returns `None` immediately. | Access token expired OR was revoked (subscription cancelled, user logged out everywhere, refresh token revoked). | Same pattern: try refresh, persist, retry once. If second 401, mark sub as `reloginRequired` per spec (`refreshLog.outcome = 'reloginRequired'`) and stop scheduling fetches until the user re-pastes credentials. The 401 alone does not distinguish "expired access token" from "cancelled subscription" — only a failed **refresh** disambiguates. |
-| **429** | Not handled explicitly — falls into the generic `Exception` branch and is logged + suppressed (returns `None`). No `Retry-After` parsing. | Per-account or global rate limit on the usage endpoint. | Honor `Retry-After` header (seconds). Schedule the next fetch after that delay. Do not fail-loud — this is expected under load. |
-| **5xx** | Same generic `Exception` branch — logged + return `None`. No retries. | Anthropic side issue. | Backoff (exponential), don't escalate. Keep last-known `usage5h` / `usage7d` in place. |
-| **Network / timeout** | Same generic branch. Request timeout is 5s. | Transient. | Same as 5xx: silent retry on next 5-minute tick. |
-| **Other 4xx (400, 403, 404)** | Same generic branch. | 403 likely = beta header missing or account not authorized for OAuth. 400 = malformed request. 404 = endpoint moved (the URL is undocumented). | Log loudly. These are bugs in our integration, not transient. Surface via `refreshLog.outcome = 'failure'` with the body. |
+| Status                        | claude-swap behavior                                                                                                                                                                                                                                                                                                                                                       | What it likely means                                                                                                                           | cvault recommendation                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **200**                       | Parse JSON, return normalized `{ five_hour?, seven_day? }`.                                                                                                                                                                                                                                                                                                                | Success.                                                                                                                                       | Patch `subscriptions.usage5h` / `usage7d`. Reset failure backoff.                                                                                                                                                                                                                                                                                     |
+| **401**                       | If account is **inactive** AND has `refreshToken`, refresh via `https://platform.claude.com/v1/oauth/token` (POST `grant_type=refresh_token`), persist new creds, retry the usage call **once**. If retry also fails, return `None`. Active accounts (whose creds are owned by Claude Code CLI itself) are never refreshed by claude-swap — it returns `None` immediately. | Access token expired OR was revoked (subscription cancelled, user logged out everywhere, refresh token revoked).                               | Same pattern: try refresh, persist, retry once. If second 401, mark sub as `reloginRequired` per spec (`refreshLog.outcome = 'reloginRequired'`) and stop scheduling fetches until the user re-pastes credentials. The 401 alone does not distinguish "expired access token" from "cancelled subscription" — only a failed **refresh** disambiguates. |
+| **429**                       | Not handled explicitly — falls into the generic `Exception` branch and is logged + suppressed (returns `None`). No `Retry-After` parsing.                                                                                                                                                                                                                                  | Per-account or global rate limit on the usage endpoint.                                                                                        | Honor `Retry-After` header (seconds). Schedule the next fetch after that delay. Do not fail-loud — this is expected under load.                                                                                                                                                                                                                       |
+| **5xx**                       | Same generic `Exception` branch — logged + return `None`. No retries.                                                                                                                                                                                                                                                                                                      | Anthropic side issue.                                                                                                                          | Backoff (exponential), don't escalate. Keep last-known `usage5h` / `usage7d` in place.                                                                                                                                                                                                                                                                |
+| **Network / timeout**         | Same generic branch. Request timeout is 5s.                                                                                                                                                                                                                                                                                                                                | Transient.                                                                                                                                     | Same as 5xx: silent retry on next 5-minute tick.                                                                                                                                                                                                                                                                                                      |
+| **Other 4xx (400, 403, 404)** | Same generic branch.                                                                                                                                                                                                                                                                                                                                                       | 403 likely = beta header missing or account not authorized for OAuth. 400 = malformed request. 404 = endpoint moved (the URL is undocumented). | Log loudly. These are bugs in our integration, not transient. Surface via `refreshLog.outcome = 'failure'` with the body.                                                                                                                                                                                                                             |
 
 ### Retry summary
 

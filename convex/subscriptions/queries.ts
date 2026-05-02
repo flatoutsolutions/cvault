@@ -10,7 +10,7 @@
 import { v } from 'convex/values'
 
 import { type Doc } from '../_generated/dataModel'
-import { authenticatedQuery } from '../utils/auth'
+import { authenticatedQuery, getIdentity } from '../utils/auth'
 
 const subscriptionMetaValidator = v.object({
   _id: v.id('subscriptions'),
@@ -51,12 +51,38 @@ function toMeta(sub: Doc<'subscriptions'>) {
   return rest
 }
 
-// Any authenticated caller sees all subs.
+/**
+ * Resolve the caller's `users` row id from their Clerk identity. Returns
+ * `null` when no row exists yet — typically because the Clerk webhook
+ * has not yet fired. Callers treat that the same as "no subscriptions"
+ * to avoid leaking the anomaly.
+ */
+async function callerUserId(
+  ctx: import('convex/server').GenericQueryCtx<import('../_generated/dataModel').DataModel>
+): Promise<import('../_generated/dataModel').Id<'users'> | null> {
+  const identity = getIdentity(ctx)
+  const user = await ctx.db
+    .query('users')
+    .withIndex('byExternalId', (q) => q.eq('externalId', identity.subject))
+    .unique()
+  return user?._id ?? null
+}
+
 export const listForUser = authenticatedQuery({
   args: {},
   returns: v.array(subscriptionMetaValidator),
   handler: async (ctx) => {
-    const subs = await ctx.db.query('subscriptions').collect()
+    // SECURITY: scope the query to the authenticated caller. Without this
+    // filter, every signed-in user would receive everyone else's sub
+    // metadata (including emails, slot numbers, expiry timestamps, and
+    // org names). The ciphertext is still stripped by `toMeta`, but
+    // metadata leakage alone is a critical privacy bug.
+    const userId = await callerUserId(ctx)
+    if (userId === null) return []
+    const subs = await ctx.db
+      .query('subscriptions')
+      .withIndex('byUserAndSlot', (q) => q.eq('userId', userId))
+      .collect()
     return subs
       .filter((s) => s.removedAt === undefined)
       .sort((a, b) => a.slot - b.slot)
@@ -68,9 +94,13 @@ export const getMetaByEmail = authenticatedQuery({
   args: { email: v.string() },
   returns: v.union(subscriptionMetaValidator, v.null()),
   handler: async (ctx, { email }) => {
+    // SECURITY: scope to the caller. A globally-keyed lookup would let
+    // any signed-in user enumerate other users' subs by email.
+    const userId = await callerUserId(ctx)
+    if (userId === null) return null
     const subs = await ctx.db
       .query('subscriptions')
-      .filter((q) => q.eq(q.field('email'), email))
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', userId).eq('email', email))
       .collect()
     const sub = subs.find((s) => s.removedAt === undefined)
     return sub ? toMeta(sub) : null

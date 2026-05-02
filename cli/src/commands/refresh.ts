@@ -13,10 +13,10 @@
  * internal refresh). The CLI takes a slot or email; we resolve it to a
  * `subId` via `listForUser` first, then call the action.
  */
-import { defineCommand } from 'citty'
-
 import { api } from '@cvault/convex/api'
 import type { Id } from '@cvault/convex/dataModel'
+import { defineCommand } from 'citty'
+
 import { makeVaultClient } from '../convex/vaultClient'
 
 export interface RunRefreshOptions {
@@ -34,14 +34,10 @@ export async function runRefresh(opts: RunRefreshOptions): Promise<void> {
   const asNum = Number.parseInt(opts.slotOrEmail, 10)
   const isSlot = !Number.isNaN(asNum) && asNum.toString() === opts.slotOrEmail
 
-  const found = isSlot
-    ? subs.find((s) => s.slot === asNum)
-    : subs.find((s) => s.email === opts.slotOrEmail)
+  const found = isSlot ? subs.find((s) => s.slot === asNum) : subs.find((s) => s.email === opts.slotOrEmail)
 
   if (!found) {
-    throw new Error(
-      `No subscription matching ${opts.slotOrEmail}. Run \`cvault list\` to see available subscriptions.`
-    )
+    throw new Error(`No subscription matching ${opts.slotOrEmail}. Run \`cvault list\` to see available subscriptions.`)
   }
 
   await client.action(api.subscriptions.actions.requestRefresh, {

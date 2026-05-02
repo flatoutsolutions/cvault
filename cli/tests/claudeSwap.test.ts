@@ -92,30 +92,21 @@ describe('runClaudeSwap', () => {
 
   it('applies a 30-second default timeout', () => {
     const calls: SpawnCall[] = []
-    stubSpawnSync(
-      () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }),
-      calls
-    )
+    stubSpawnSync(() => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }), calls)
     runClaudeSwap(['--status'])
     expect(calls[0]?.timeout).toBe(30_000)
   })
 
   it('honors a custom timeout', () => {
     const calls: SpawnCall[] = []
-    stubSpawnSync(
-      () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }),
-      calls
-    )
+    stubSpawnSync(() => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }), calls)
     runClaudeSwap(['--status'], { timeoutMs: 5_000 })
     expect(calls[0]?.timeout).toBe(5_000)
   })
 
   it('passes stdin as utf8 to the subprocess', () => {
     const calls: SpawnCall[] = []
-    stubSpawnSync(
-      () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }),
-      calls
-    )
+    stubSpawnSync(() => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }), calls)
     runClaudeSwap(['--import', '-'], { stdin: '{"hello":"world"}' })
     expect(calls[0]?.stdin).toBe('{"hello":"world"}')
   })
@@ -173,14 +164,7 @@ describe('verb helpers', () => {
     // sub-document into `config`. Without it, `cvault switch` later trips
     // claude-swap's "Invalid oauthAccount in backup" validator on the
     // destination machine.
-    expect(calls[0]?.cmd).toEqual([
-      'claude-swap',
-      '--export',
-      '-',
-      '--account',
-      '1',
-      '--full',
-    ])
+    expect(calls[0]?.cmd).toEqual(['claude-swap', '--export', '-', '--account', '1', '--full'])
   })
 
   it('exportAccount accepts an email argument', () => {
@@ -195,14 +179,7 @@ describe('verb helpers', () => {
       calls
     )
     exportAccount('a@b.com')
-    expect(calls[0]?.cmd).toEqual([
-      'claude-swap',
-      '--export',
-      '-',
-      '--account',
-      'a@b.com',
-      '--full',
-    ])
+    expect(calls[0]?.cmd).toEqual(['claude-swap', '--export', '-', '--account', 'a@b.com', '--full'])
   })
 
   it('exportAccount throws ClaudeSwapError on non-JSON stdout', () => {
@@ -217,10 +194,7 @@ describe('verb helpers', () => {
   it('importEnvelope calls --import - with the JSON payload on stdin', () => {
     const calls: SpawnCall[] = []
     const env = singleAccountEnvelope()
-    stubSpawnSync(
-      () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }),
-      calls
-    )
+    stubSpawnSync(() => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }), calls)
     importEnvelope(env)
     expect(calls[0]?.cmd).toEqual(['claude-swap', '--import', '-'])
     expect(JSON.parse(calls[0]?.stdin ?? '')).toEqual(env)
@@ -228,30 +202,21 @@ describe('verb helpers', () => {
 
   it('importEnvelope adds --force when force=true', () => {
     const calls: SpawnCall[] = []
-    stubSpawnSync(
-      () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }),
-      calls
-    )
+    stubSpawnSync(() => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }), calls)
     importEnvelope(singleAccountEnvelope(), true)
     expect(calls[0]?.cmd).toEqual(['claude-swap', '--import', '-', '--force'])
   })
 
   it('switchTo calls --switch-to <id>', () => {
     const calls: SpawnCall[] = []
-    stubSpawnSync(
-      () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }),
-      calls
-    )
+    stubSpawnSync(() => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }), calls)
     switchTo(2)
     expect(calls[0]?.cmd).toEqual(['claude-swap', '--switch-to', '2'])
   })
 
   it('removeAccount calls --remove-account <id>', () => {
     const calls: SpawnCall[] = []
-    stubSpawnSync(
-      () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }),
-      calls
-    )
+    stubSpawnSync(() => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }), calls)
     removeAccount('a@b.com')
     expect(calls[0]?.cmd).toEqual(['claude-swap', '--remove-account', 'a@b.com'])
   })

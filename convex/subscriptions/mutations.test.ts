@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { api, internal } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
 
 /**
  * Spec: §5 (mutations) + §9 (refresh race protection) + §11 (testing).
@@ -190,25 +190,20 @@ describe('subscriptions.mutations.softRemove', () => {
   it("inserts a machineActivity row with action='remove'", async () => {
     const t = vault()
     await seedUser(t)
-    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(
-      api.subscriptions.mutations.upsert,
-      {
-        email: 'audit-remove@example.com',
-        ciphertext: FAKE_CIPHERTEXT,
-        nonce: FAKE_NONCE,
-        expiresAt: Date.now() + 60_000,
-        subscriptionType: 'max',
-        rateLimitTier: 'tier1',
-      }
-    )
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'audit-remove@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
 
     await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
       email: 'audit-remove@example.com',
     })
 
-    const rows = await t.run(async (ctx) =>
-      await ctx.db.query('machineActivity').collect()
-    )
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     const removeRow = rows.find((r) => r.action === 'remove')
     expect(removeRow).toBeDefined()
     expect(removeRow?.subscriptionId).toEqual(inserted.subId)
@@ -248,26 +243,21 @@ describe('subscriptions.mutations.rename', () => {
   it("inserts a machineActivity row with action='rename'", async () => {
     const t = vault()
     await seedUser(t)
-    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(
-      api.subscriptions.mutations.upsert,
-      {
-        email: 'audit-rename@example.com',
-        ciphertext: FAKE_CIPHERTEXT,
-        nonce: FAKE_NONCE,
-        expiresAt: Date.now() + 60_000,
-        subscriptionType: 'max',
-        rateLimitTier: 'tier1',
-      }
-    )
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'audit-rename@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
 
     await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.rename, {
       email: 'audit-rename@example.com',
       label: 'Personal',
     })
 
-    const rows = await t.run(async (ctx) =>
-      await ctx.db.query('machineActivity').collect()
-    )
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     const renameRow = rows.find((r) => r.action === 'rename')
     expect(renameRow).toBeDefined()
     expect(renameRow?.subscriptionId).toEqual(inserted.subId)

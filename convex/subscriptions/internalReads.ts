@@ -26,12 +26,8 @@ const subscriptionRawValidator = v.object({
   lastRefreshedAt: v.number(),
   refreshLeaseHolder: v.optional(v.string()),
   refreshLeaseUntil: v.optional(v.number()),
-  usage5h: v.optional(
-    v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })
-  ),
-  usage7d: v.optional(
-    v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })
-  ),
+  usage5h: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
+  usage7d: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
   removedAt: v.optional(v.number()),
 })
 
@@ -75,10 +71,17 @@ export const getSubscriptionForActor = internalQuery({
 export const getSubscriptionByIdForActor = internalQuery({
   args: { externalId: v.string(), subId: v.id('subscriptions') },
   returns: v.union(subscriptionRawValidator, v.null()),
-  handler: async (ctx, { externalId: _externalId, subId }) => {
-    void _externalId
+  handler: async (ctx, { externalId, subId }) => {
+    // SECURITY: must verify caller owns the subscription. Without this
+    // check, any signed-in Clerk user could pass another user's `subId`
+    // to `requestRefresh` (or any caller of this query) and act on it —
+    // the deployment's CLERK_SECRET_KEY would be a confused deputy.
+    // Subscription IDs are not designed as unguessable secrets; they
+    // appear in dashboard URLs and audit rows.
     const sub = await ctx.db.get('subscriptions', subId)
     if (!sub || sub.removedAt !== undefined) return null
+    const owner = await ctx.db.get('users', sub.userId)
+    if (!owner || owner.externalId !== externalId) return null
     return sub
   },
 })
@@ -94,9 +97,7 @@ export const findExpiringSubs = internalQuery({
       .withIndex('byExpiry', (q) => q.lt('expiresAt', cutoff))
       .collect()
     // Filter out tombstoned subs in JS (low cardinality of soft-deletes per spec §4).
-    return rows
-      .filter((r) => r.removedAt === undefined)
-      .map((r) => ({ subId: r._id }))
+    return rows.filter((r) => r.removedAt === undefined).map((r) => ({ subId: r._id }))
   },
 })
 
@@ -106,8 +107,6 @@ export const listAllActiveSubIds = internalQuery({
   returns: v.array(v.object({ subId: v.id('subscriptions') })),
   handler: async (ctx) => {
     const rows = await ctx.db.query('subscriptions').collect()
-    return rows
-      .filter((r) => r.removedAt === undefined)
-      .map((r) => ({ subId: r._id }))
+    return rows.filter((r) => r.removedAt === undefined).map((r) => ({ subId: r._id }))
   },
 })

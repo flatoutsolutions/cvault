@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { formatRelativeMs, renderSubsTable, type SubRow } from '../../src/render/table'
+import { type SubRow, formatRelativeMs, renderSubsTable } from '../../src/render/table'
 
 const NOW = 1_700_000_000_000
 
@@ -45,10 +45,7 @@ describe('formatRelativeMs', () => {
 
 describe('renderSubsTable', () => {
   it('renders a header row + each sub row with stable columns', () => {
-    const out = renderSubsTable(
-      [row({ slot: 1, email: 'alice@x.com', isActive: true })],
-      NOW
-    )
+    const out = renderSubsTable([row({ slot: 1, email: 'alice@x.com', isActive: true })], NOW)
     expect(out).toContain('SLOT')
     expect(out).toContain('EMAIL')
     expect(out).toContain('LABEL')
@@ -61,10 +58,7 @@ describe('renderSubsTable', () => {
 
   it('marks the active sub with a dot prefix', () => {
     const out = renderSubsTable(
-      [
-        row({ slot: 1, email: 'a@b.com', isActive: false }),
-        row({ slot: 2, email: 'c@d.com', isActive: true }),
-      ],
+      [row({ slot: 1, email: 'a@b.com', isActive: false }), row({ slot: 2, email: 'c@d.com', isActive: true })],
       NOW
     )
     const lines = out.split('\n')
@@ -75,10 +69,7 @@ describe('renderSubsTable', () => {
   })
 
   it('renders missing usage as "-"', () => {
-    const out = renderSubsTable(
-      [row({ usage5hPct: undefined, usage7dPct: undefined })],
-      NOW
-    )
+    const out = renderSubsTable([row({ usage5hPct: undefined, usage7dPct: undefined })], NOW)
     expect(out).toMatch(/\s-\s/)
   })
 
@@ -89,10 +80,7 @@ describe('renderSubsTable', () => {
   })
 
   it('flags relogin when refreshExpiresAt is in the past', () => {
-    const out = renderSubsTable(
-      [row({ refreshExpiresAt: NOW - 60_000 })],
-      NOW
-    )
+    const out = renderSubsTable([row({ refreshExpiresAt: NOW - 60_000 })], NOW)
     expect(out).toMatch(/relogin/i)
   })
 

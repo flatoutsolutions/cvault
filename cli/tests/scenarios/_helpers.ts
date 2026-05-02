@@ -25,15 +25,11 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import {
-  type FunctionReference,
-  getFunctionName,
-} from 'convex/server'
-import type { Mock } from 'vitest'
-import { vi } from 'vitest'
-
 import { api } from '@cvault/convex/api'
 import type { Id } from '@cvault/convex/dataModel'
+import { type FunctionReference, getFunctionName } from 'convex/server'
+import type { Mock } from 'vitest'
+import { vi } from 'vitest'
 
 // ---------------------------------------------------------------------------
 // HOME isolation — every CLI scenario writes into ~/.vault/.
@@ -155,9 +151,7 @@ export async function sha256Hex(input: string): Promise<string> {
  * `getMetaByEmail` query path. Mirrors what the real Convex queries do
  * with ciphertext + nonce.
  */
-function stripPlaintextFields(
-  sub: FakeSubscription
-): Omit<FakeSubscription, 'plaintextBlob' | 'contentHash'> {
+function stripPlaintextFields(sub: FakeSubscription): Omit<FakeSubscription, 'plaintextBlob' | 'contentHash'> {
   const { plaintextBlob, contentHash, ...meta } = sub
   void plaintextBlob
   void contentHash
@@ -245,9 +239,7 @@ export const SAMPLE_OAUTH_BLOB = JSON.stringify({
  */
 export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVaultClient {
   const state: FakeBackendState = {
-    subscriptions: new Map(
-      (opts.subscriptions ?? []).map((s) => [s._id as string, s])
-    ),
+    subscriptions: new Map((opts.subscriptions ?? []).map((s) => [s._id as string, s])),
     machineActivity: [],
     refreshLog: [],
     clerkSessionId: opts.clerkSessionId ?? 'sess_test_machine_1',

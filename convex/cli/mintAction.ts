@@ -30,7 +30,6 @@ import { verifyToken } from '@clerk/backend'
 import { ConvexError, v } from 'convex/values'
 
 import { internalAction } from '../_generated/server'
-
 import { createSessionTokenFromTemplate } from './clerk'
 
 export const mintConvexJwt = internalAction({
@@ -54,9 +53,7 @@ export const mintConvexJwt = internalAction({
     } catch (err) {
       throw new ConvexError({
         code: 'SESSION_TOKEN_INVALID',
-        message: `Could not verify Clerk session token: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        message: `Could not verify Clerk session token: ${err instanceof Error ? err.message : String(err)}`,
       })
     }
 

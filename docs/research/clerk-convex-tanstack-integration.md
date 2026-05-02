@@ -237,8 +237,8 @@ For the dashboard's `/sign-in` page (custom UI, not modal), use the
 
 ```tsx
 // frontend/src/routes/sign-in.tsx (example)
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useSignIn } from '@clerk/tanstack-react-start'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/sign-in')({ component: SignInPage })
@@ -254,9 +254,7 @@ function SignInPage() {
 
   async function startSignIn() {
     const result = await signIn.create({ identifier: email })
-    const emailFactor = result.supportedFirstFactors?.find(
-      (f) => f.strategy === 'email_code'
-    )
+    const emailFactor = result.supportedFirstFactors?.find((f) => f.strategy === 'email_code')
     if (!emailFactor) throw new Error('Email code not supported on this account')
     await signIn.prepareFirstFactor({
       strategy: 'email_code',
@@ -311,8 +309,8 @@ export const startInstance = createStart(() => ({
 
 ```ts
 // any route's server function
-import { createServerFn } from '@tanstack/react-start'
 import { auth } from '@clerk/tanstack-react-start/server'
+import { createServerFn } from '@tanstack/react-start'
 
 const me = createServerFn().handler(async () => {
   const { isAuthenticated, userId, getToken } = await auth()
@@ -335,10 +333,10 @@ The Blueprint uses `convex/react-clerk`'s `ConvexProviderWithClerk`. The integra
 contract:
 
 ```tsx
-import { ConvexProviderWithClerk } from 'convex/react-clerk'
 import { useAuth } from '@clerk/tanstack-react-start'
+import { ConvexProviderWithClerk } from 'convex/react-clerk'
 
-<ConvexProviderWithClerk client={convexClient} useAuth={useAuth}>
+;<ConvexProviderWithClerk client={convexClient} useAuth={useAuth}>
   …
 </ConvexProviderWithClerk>
 ```
@@ -376,20 +374,20 @@ Docs: <https://docs.convex.dev/auth/clerk>,
 Clerk has three machine-auth product surfaces, and only one fits the
 "authenticate AS the user across machines" requirement:
 
-| Approach | Fit for cvault CLI? | Why / why not |
-|---|---|---|
-| **OAuth Authorization Code** (Clerk-as-OAuth-server, third-party app) | No | Heavy setup; intended for third-party apps wanting access to Clerk users. cvault is the same app, not a third party. |
-| **M2M tokens** (`POST /v1/m2m_tokens`) | No | Authenticates a *machine*, not a user. Token is issued to a registered machine identity, not tied to `user_id`. Convex `ctx.auth.getUserIdentity()` would not return the human's identity. |
-| **API keys (per-user)** | Partially | Long-lived per-user tokens that look like sessions to Convex. Currently in beta; semantics differ from session JWTs in subtle ways (no `sid`, special `sub`). Avoid until GA unless we accept beta risk. |
-| **Sign-in token + ticket strategy** | **Yes (best fit)** | Backend mints a short-lived single-use sign-in token tied to a specific `user_id`; client exchanges it via the `ticket` strategy to create a real Clerk session in a real Clerk client. From there the CLI behaves exactly like a browser tab — same `getToken({ template: 'convex' })` flow, same revocation surface in the dashboard. |
-| **Direct password / email-code sign-in via Clerk Frontend API** | Possible fallback | The CLI implements the same `signIn.create()` / `attemptFirstFactor()` flow that the dashboard does, but headless. Works with the official `clerk-sdk-python` package or raw HTTP to FAPI. Avoids the dashboard round-trip but means the CLI runs through 2FA / CAPTCHA / device verification etc. on its own. Higher implementation cost. |
+| Approach                                                              | Fit for cvault CLI? | Why / why not                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **OAuth Authorization Code** (Clerk-as-OAuth-server, third-party app) | No                  | Heavy setup; intended for third-party apps wanting access to Clerk users. cvault is the same app, not a third party.                                                                                                                                                                                                                       |
+| **M2M tokens** (`POST /v1/m2m_tokens`)                                | No                  | Authenticates a _machine_, not a user. Token is issued to a registered machine identity, not tied to `user_id`. Convex `ctx.auth.getUserIdentity()` would not return the human's identity.                                                                                                                                                 |
+| **API keys (per-user)**                                               | Partially           | Long-lived per-user tokens that look like sessions to Convex. Currently in beta; semantics differ from session JWTs in subtle ways (no `sid`, special `sub`). Avoid until GA unless we accept beta risk.                                                                                                                                   |
+| **Sign-in token + ticket strategy**                                   | **Yes (best fit)**  | Backend mints a short-lived single-use sign-in token tied to a specific `user_id`; client exchanges it via the `ticket` strategy to create a real Clerk session in a real Clerk client. From there the CLI behaves exactly like a browser tab — same `getToken({ template: 'convex' })` flow, same revocation surface in the dashboard.    |
+| **Direct password / email-code sign-in via Clerk Frontend API**       | Possible fallback   | The CLI implements the same `signIn.create()` / `attemptFirstFactor()` flow that the dashboard does, but headless. Works with the official `clerk-sdk-python` package or raw HTTP to FAPI. Avoids the dashboard round-trip but means the CLI runs through 2FA / CAPTCHA / device verification etc. on its own. Higher implementation cost. |
 
 **Settled choice for cvault: browser-assisted sign-in token + ticket exchange,
 then cache the resulting session JWT.** This re-uses the dashboard for the actual
 human-credential entry (passwords, MFA, social login) and keeps the CLI itself
 credential-free.
 
-> Clerk does NOT publish an OAuth 2.0 *Device Authorization Grant* (RFC 8628) for
+> Clerk does NOT publish an OAuth 2.0 _Device Authorization Grant_ (RFC 8628) for
 > end-user sessions. The "device flow" Clerk talks about under "OAuth Applications"
 > is a separate product that turns Clerk into an OAuth provider for third-party apps —
 > not a way to log a CLI into your own Clerk app as the human user. So the
@@ -476,6 +474,7 @@ credential-free.
 ```ts
 // convex/cli/actions.ts (does not exist yet — example for impl)
 import { v } from 'convex/values'
+
 import { action } from '../_generated/server'
 
 export const startLink = action({
@@ -518,12 +517,13 @@ export const startLink = action({
 
 ```tsx
 // frontend/src/routes/cli/link.tsx (example)
-import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { useUser } from '@clerk/tanstack-react-start'
+import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { useAction } from 'convex/react'
-import { api } from '../../../../convex/_generated/api'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
+
+import { api } from '../../../../convex/_generated/api'
 
 const SearchSchema = z.object({ redirect: z.string().url(), state: z.string().min(8) })
 
@@ -563,7 +563,12 @@ function CliLinkPage() {
   if (!isLoaded) return <p>Loading…</p>
   if (!isSignedIn) return <p>Sign in first, then re-open the link.</p>
   if (status === 'done') return <p>You can close this tab and return to the CLI.</p>
-  if (status === 'error') return <p>Linking failed. Run <code>vault login</code> again.</p>
+  if (status === 'error')
+    return (
+      <p>
+        Linking failed. Run <code>vault login</code> again.
+      </p>
+    )
   return <p>Linking your machine…</p>
 }
 ```
@@ -595,7 +600,7 @@ Headers:
 ```
 
 Response: a JSON `Client` object containing `sign_in.created_session_id` and a
-`Set-Cookie: __session=<jwt>; …`. The simpler approach is to *also* request a session
+`Set-Cookie: __session=<jwt>; …`. The simpler approach is to _also_ request a session
 token immediately, scoped to the `convex` template:
 
 ```
@@ -776,7 +781,7 @@ def whoami() -> dict[str, Any]:
 - It sends `Authorization: Bearer <jwt>` (or `Convex <admin_key>` for admin).
 - On a 4xx/5xx, it calls `r.raise_for_status()` then re-raises as a generic
   `Exception` with the form `"{status_code} {response['code']}: {response['message']}"`.
-- `ConvexError` is reserved for *application* errors thrown via `throw new ConvexError(...)`
+- `ConvexError` is reserved for _application_ errors thrown via `throw new ConvexError(...)`
   inside Convex functions — it doesn't fire on 401.
 - There's no built-in retry. The wrapper above does one retry after a forced refresh.
 
@@ -803,17 +808,17 @@ Authorization: Bearer $CLERK_SECRET_KEY
 
 Response: an array of `Session` objects. Each contains:
 
-| Field | Source |
-|---|---|
-| `id` | `sess_…` |
-| `user_id` | the Clerk user |
-| `client_id` | the Clerk Client object — different per browser/CLI machine |
-| `status` | `active` / `expired` / `revoked` / `abandoned` / `ended` / `removed` / `replaced` |
-| `last_active_at` | unix ms; updates whenever a JWT is minted from this session |
-| `created_at`, `updated_at`, `expire_at`, `abandon_at` | unix ms |
-| `latest_activity` | `SessionActivity` object — `device_type`, `is_mobile`, `browser_name`, `browser_version`, `ip_address`, `city`, `country` (geo from IP) |
-| `last_active_organization_id` | optional |
-| `actor` | impersonation marker |
+| Field                                                 | Source                                                                                                                                  |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                                  | `sess_…`                                                                                                                                |
+| `user_id`                                             | the Clerk user                                                                                                                          |
+| `client_id`                                           | the Clerk Client object — different per browser/CLI machine                                                                             |
+| `status`                                              | `active` / `expired` / `revoked` / `abandoned` / `ended` / `removed` / `replaced`                                                       |
+| `last_active_at`                                      | unix ms; updates whenever a JWT is minted from this session                                                                             |
+| `created_at`, `updated_at`, `expire_at`, `abandon_at` | unix ms                                                                                                                                 |
+| `latest_activity`                                     | `SessionActivity` object — `device_type`, `is_mobile`, `browser_name`, `browser_version`, `ip_address`, `city`, `country` (geo from IP) |
+| `last_active_organization_id`                         | optional                                                                                                                                |
+| `actor`                                               | impersonation marker                                                                                                                    |
 
 > The `latest_activity.device_type` / `browser_name` columns are populated by Clerk
 > from the User-Agent of whichever client minted the most recent token.
@@ -829,13 +834,13 @@ Clerk's session metadata is good for "where, when, what UA," but cvault may want
 human-meaningful machine label. Persist a row in
 `convex/machineActivity` (already in the schema) on every successful CLI sign-in:
 
-| Field | Value |
-|---|---|
-| `userId` | `users._id` |
-| `clerkSessionId` | `sess_…` (from the ticket exchange response) |
-| `label` | user-supplied or hostname (`saadings-macbook`) |
-| `firstSeenAt` | now |
-| `lastSeenAt` | now (updated on every Convex call via a cheap mutation, or relied-on Clerk's `last_active_at`) |
+| Field            | Value                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| `userId`         | `users._id`                                                                                    |
+| `clerkSessionId` | `sess_…` (from the ticket exchange response)                                                   |
+| `label`          | user-supplied or hostname (`saadings-macbook`)                                                 |
+| `firstSeenAt`    | now                                                                                            |
+| `lastSeenAt`     | now (updated on every Convex call via a cheap mutation, or relied-on Clerk's `last_active_at`) |
 
 The dashboard `/dashboard/machines` page then joins:
 
@@ -867,23 +872,25 @@ Returns the session object with `status: "revoked"`. After revoke:
 ```ts
 // convex/machineActivity/actions.ts (does not exist yet — example)
 import { v } from 'convex/values'
-import { authenticatedAction } from '../utils/auth' // create alongside auth* helpers
+
+import { authenticatedAction } from '../utils/auth'
+
+// create alongside auth* helpers
 
 export const revoke = authenticatedAction({
   args: { sessionId: v.string() },
   handler: async (ctx, { sessionId }) => {
     // Belt and suspenders: confirm the session belongs to this user before revoking
-    const owns = await fetch(
-      `https://api.clerk.com/v1/sessions/${sessionId}`,
-      { headers: { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}` } }
-    ).then((r) => r.json())
+    const owns = await fetch(`https://api.clerk.com/v1/sessions/${sessionId}`, {
+      headers: { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}` },
+    }).then((r) => r.json())
     if (owns.user_id !== ctx.identity.subject) {
       throw new Error('Forbidden')
     }
-    const r = await fetch(
-      `https://api.clerk.com/v1/sessions/${sessionId}/revoke`,
-      { method: 'POST', headers: { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}` } }
-    )
+    const r = await fetch(`https://api.clerk.com/v1/sessions/${sessionId}/revoke`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}` },
+    })
     if (!r.ok) throw new Error(`Clerk revoke failed: ${r.status} ${await r.text()}`)
   },
 })
@@ -917,7 +924,7 @@ Docs: <https://clerk.com/docs/reference/backend/sessions/revoke-session>,
   (we set 600s = 10 minutes). If the user closes the browser tab without
   completing, the CLI listener should time out after ~5 min and ask them to retry.
 - **State / nonce:** the `state` query param protects against an attacker tricking
-  the user into linking their browser session to *the attacker's* CLI. The CLI
+  the user into linking their browser session to _the attacker's_ CLI. The CLI
   generates a random `state`, the dashboard echoes it back in the localhost POST,
   and the CLI verifies it matches before accepting the sign-in token.
 - **127.0.0.1 vs localhost:** bind the listener to `127.0.0.1`, not `0.0.0.0`. The

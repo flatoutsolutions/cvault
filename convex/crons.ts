@@ -16,18 +16,8 @@ import { internal } from './_generated/api'
 
 const crons = cronJobs()
 
-crons.interval(
-  'refresh expiring oauth tokens',
-  { minutes: 10 },
-  internal.subscriptions.crons.refreshExpiringTokens,
-  {}
-)
+crons.interval('refresh expiring oauth tokens', { minutes: 10 }, internal.subscriptions.crons.refreshExpiringTokens, {})
 
-crons.interval(
-  'poll anthropic usage',
-  { minutes: 5 },
-  internal.subscriptions.crons.pollUsage,
-  {}
-)
+crons.interval('poll anthropic usage', { minutes: 5 }, internal.subscriptions.crons.pollUsage, {})
 
 export default crons

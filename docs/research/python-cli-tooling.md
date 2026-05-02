@@ -8,17 +8,17 @@
 
 ## TL;DR — picks at the top
 
-| Concern | Pick | Reason (one line) |
-|---|---|---|
-| Argument parser | **typer** | Type-hint-driven, generates `cvault --install-completion`, fits 8 verbs cleanly; thin layer over Click so no maturity risk. |
-| Convex SDK | **`convex` 0.7.0** (PyPI) | Only official client; sync `query/mutation/action`, `set_auth(jwt)`. No HTTP-action call (use `httpx`). |
-| Subprocess wrapper | **`subprocess.run(..., check=True, capture_output=True, text=True)`** | Stdlib, deterministic; missing-binary handled via `FileNotFoundError`. |
-| HTTP client | **`httpx` + `tenacity`** | `httpx.HTTPTransport(retries=N)` only retries connect errors — `tenacity` decorates the call for 5xx. |
-| Config dir | **`~/.vault/`** (literal, no `platformdirs`) | Spec is Mac-first v1; literal path matches §7 user expectation; `platformdirs` is a future v2 lift. |
-| Build backend | **hatchling** | Same backend `claude-swap` ships with; rock-solid for `uv tool install`. |
-| Test framework | **pytest** (mandated) | + `pytest-subprocess` for clean `claude-swap` mocking. |
-| Linter / formatter | **ruff** (linter + formatter, both) | Single tool, `astral-sh` ecosystem aligns with `uv`. |
-| Type checker | **mypy** (`--strict`) | `convex` ships only `.pyi` from `_convex` Rust ext — mypy plays cleanly; pyright's stricter inference creates noise on dynamic Convex return types. |
+| Concern            | Pick                                                                  | Reason (one line)                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Argument parser    | **typer**                                                             | Type-hint-driven, generates `cvault --install-completion`, fits 8 verbs cleanly; thin layer over Click so no maturity risk.                         |
+| Convex SDK         | **`convex` 0.7.0** (PyPI)                                             | Only official client; sync `query/mutation/action`, `set_auth(jwt)`. No HTTP-action call (use `httpx`).                                             |
+| Subprocess wrapper | **`subprocess.run(..., check=True, capture_output=True, text=True)`** | Stdlib, deterministic; missing-binary handled via `FileNotFoundError`.                                                                              |
+| HTTP client        | **`httpx` + `tenacity`**                                              | `httpx.HTTPTransport(retries=N)` only retries connect errors — `tenacity` decorates the call for 5xx.                                               |
+| Config dir         | **`~/.vault/`** (literal, no `platformdirs`)                          | Spec is Mac-first v1; literal path matches §7 user expectation; `platformdirs` is a future v2 lift.                                                 |
+| Build backend      | **hatchling**                                                         | Same backend `claude-swap` ships with; rock-solid for `uv tool install`.                                                                            |
+| Test framework     | **pytest** (mandated)                                                 | + `pytest-subprocess` for clean `claude-swap` mocking.                                                                                              |
+| Linter / formatter | **ruff** (linter + formatter, both)                                   | Single tool, `astral-sh` ecosystem aligns with `uv`.                                                                                                |
+| Type checker       | **mypy** (`--strict`)                                                 | `convex` ships only `.pyi` from `_convex` Rust ext — mypy plays cleanly; pyright's stricter inference creates noise on dynamic Convex return types. |
 
 ---
 
@@ -82,16 +82,16 @@ def main() -> None:
 
 ### Supported / not supported
 
-| Feature | Supported | Notes |
-|---|---|---|
-| Queries | yes | `client.query(name, args)` — args optional |
-| Mutations | yes | `client.mutation(name, args)` |
-| Actions | yes | `client.action(name, args)` |
-| Subscriptions | yes | `client.subscribe(name, args)` returns iterable of result snapshots; blocks until `break` |
-| HTTP actions | no | Not callable through SDK — use `httpx` direct to `https://<deployment>.convex.site/api/cli/sync` |
-| Pagination | manual | Pass `paginationOpts={"numItems": N, "cursor": cursor}`, read `result['continueCursor']` and `result['isDone']` |
-| Async API | no | Sync only. If we need async later, we wrap calls in `asyncio.to_thread`. |
-| Auth | `set_auth(jwt: str)` / `clear_auth()` / `set_admin_auth(key)` | Pass Clerk session JWT — no special validation client-side. |
+| Feature       | Supported                                                     | Notes                                                                                                           |
+| ------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Queries       | yes                                                           | `client.query(name, args)` — args optional                                                                      |
+| Mutations     | yes                                                           | `client.mutation(name, args)`                                                                                   |
+| Actions       | yes                                                           | `client.action(name, args)`                                                                                     |
+| Subscriptions | yes                                                           | `client.subscribe(name, args)` returns iterable of result snapshots; blocks until `break`                       |
+| HTTP actions  | no                                                            | Not callable through SDK — use `httpx` direct to `https://<deployment>.convex.site/api/cli/sync`                |
+| Pagination    | manual                                                        | Pass `paginationOpts={"numItems": N, "cursor": cursor}`, read `result['continueCursor']` and `result['isDone']` |
+| Async API     | no                                                            | Sync only. If we need async later, we wrap calls in `asyncio.to_thread`.                                        |
+| Auth          | `set_auth(jwt: str)` / `clear_auth()` / `set_admin_auth(key)` | Pass Clerk session JWT — no special validation client-side.                                                     |
 
 ### API surface (from `python/convex/__init__.py`)
 
@@ -846,6 +846,7 @@ def test_switch_pulls_and_imports_when_hash_mismatch(
 ### Config — see `[tool.ruff]` block in §6 above
 
 Key choices:
+
 - `line-length = 100` — slightly more than black's 88, fits modern wide editors but not rambling.
 - `target-version = "py311"` — matches our floor.
 - `select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S", "PT"]` — solid spread covering correctness, modernization, pytest hygiene, security.
@@ -867,6 +868,7 @@ Key choices:
 ### Config — see `[tool.mypy]` block in §6 above
 
 `strict = true` enables:
+
 - `disallow_untyped_defs`
 - `disallow_incomplete_defs`
 - `check_untyped_defs`

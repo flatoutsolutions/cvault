@@ -11,8 +11,8 @@
  * Mac-first per spec §2; on Windows we'd need a different perms model
  * (and Windows isn't supported in v1).
  */
-import { chmod, mkdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
+import { chmod, mkdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 

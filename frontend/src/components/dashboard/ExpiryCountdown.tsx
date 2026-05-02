@@ -9,6 +9,7 @@
  * is about to be auto-refreshed" rather than scaring them.
  */
 import { cn } from '@/lib/utils'
+
 import { formatCountdown } from './UsageBar'
 
 export type ExpiryCountdownProps = {

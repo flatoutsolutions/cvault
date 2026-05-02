@@ -13,8 +13,8 @@
 import { ConvexHttpClient } from 'convex/browser'
 import type { FunctionReference, OptionalRestArgs } from 'convex/server'
 
+import { type MintResult, mintConvexJwt } from '../auth/clerkFapi'
 import { type SessionState, writeSession } from '../auth/session'
-import { mintConvexJwt, type MintResult } from '../auth/clerkFapi'
 import { isAuthError } from './isAuthError'
 
 /**
@@ -22,18 +22,9 @@ import { isAuthError } from './isAuthError'
  * tests can inject an in-memory fake without dragging the network.
  */
 export interface ConvexHttpClientLike {
-  query<Q extends FunctionReference<'query'>>(
-    fn: Q,
-    ...args: OptionalRestArgs<Q>
-  ): Promise<Q['_returnType']>
-  mutation<M extends FunctionReference<'mutation'>>(
-    fn: M,
-    ...args: OptionalRestArgs<M>
-  ): Promise<M['_returnType']>
-  action<A extends FunctionReference<'action'>>(
-    fn: A,
-    ...args: OptionalRestArgs<A>
-  ): Promise<A['_returnType']>
+  query<Q extends FunctionReference<'query'>>(fn: Q, ...args: OptionalRestArgs<Q>): Promise<Q['_returnType']>
+  mutation<M extends FunctionReference<'mutation'>>(fn: M, ...args: OptionalRestArgs<M>): Promise<M['_returnType']>
+  action<A extends FunctionReference<'action'>>(fn: A, ...args: OptionalRestArgs<A>): Promise<A['_returnType']>
   setAuth(token: string): void
 }
 
@@ -50,11 +41,7 @@ export class VaultClient {
   private readonly refresh: RefreshJwt
   private session: SessionState
 
-  constructor(
-    session: SessionState,
-    httpClient?: ConvexHttpClientLike,
-    options: VaultClientOptions = {}
-  ) {
+  constructor(session: SessionState, httpClient?: ConvexHttpClientLike, options: VaultClientOptions = {}) {
     this.session = session
     this.http = httpClient ?? this.buildDefaultClient(session)
     this.refresh = options.refreshJwt ?? mintConvexJwt
@@ -67,10 +54,7 @@ export class VaultClient {
     return client
   }
 
-  async query<Q extends FunctionReference<'query'>>(
-    fn: Q,
-    ...args: OptionalRestArgs<Q>
-  ): Promise<Q['_returnType']> {
+  async query<Q extends FunctionReference<'query'>>(fn: Q, ...args: OptionalRestArgs<Q>): Promise<Q['_returnType']> {
     return this.callWithRetry(() => this.http.query(fn, ...args))
   }
 
@@ -81,10 +65,7 @@ export class VaultClient {
     return this.callWithRetry(() => this.http.mutation(fn, ...args))
   }
 
-  async action<A extends FunctionReference<'action'>>(
-    fn: A,
-    ...args: OptionalRestArgs<A>
-  ): Promise<A['_returnType']> {
+  async action<A extends FunctionReference<'action'>>(fn: A, ...args: OptionalRestArgs<A>): Promise<A['_returnType']> {
     return this.callWithRetry(() => this.http.action(fn, ...args))
   }
 

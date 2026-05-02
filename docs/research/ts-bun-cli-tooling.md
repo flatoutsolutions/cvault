@@ -9,19 +9,19 @@
 
 ## TL;DR — picks at the top
 
-| Concern | Pick | Reason (one line) |
-|---|---|---|
-| Argument parser | **`citty`** | Zero-dep, `defineCommand` reads as a spec, native lazy sub-command imports, recommended for Bun-first CLIs. Commander wins on maturity but Citty's structured `args` + lazy loader fit our 8 verbs and keep the binary lean. |
-| CLI runtime | **Bun ≥ 1.2** | Spec; ships `Bun.spawn`, `Bun.serve`, `bun build --compile`, native TS, `node:*` shims. |
-| Convex client | **`ConvexHttpClient`** from `convex/browser` | HTTP, not WS — short-lived CLI; passes `Authorization: Bearer <jwt>` via `setAuth`; type-safe via generated `api`. |
-| Clerk SDK | **`@clerk/backend` 3.x** for `createClerkClient` (already in monorepo `package.json`) | Backend mint of sign-in tokens / session revoke. CLI also hits Clerk **FAPI** directly via `fetch` for the ticket exchange + token refresh — no SDK exists for FAPI ticket strategy. |
-| Subprocess wrapper | **`Bun.spawn`** | Returns `Subprocess` with `.exited`, `.stdout` (`ReadableStream`), `.stdin` (FileSink), native `AbortSignal` + `timeout` support. |
-| Localhost callback | **`Bun.serve({ port: 0 })`** | Random free port returned via `server.port`; `server.stop(true)` for hard close after first valid POST. |
-| Single-binary | **`bun build --compile --minify --bytecode --sourcemap --target=...`** | Standalone executables per triple; `--bytecode` halves cold start. |
-| Distribution | **Homebrew tap (primary), GitHub Releases (binaries by triple), `bunx cvault` (Bun-equipped)** | Mac-first, native install path; releases driven by GitHub Actions matrix. |
-| Linter / formatter | **eslint + prettier** (matches monorepo) | Blueprint root already standardizes on ESLint flat config + Prettier with import sort + Tailwind plugin. Zero tooling drift inside cvault. |
-| Test framework | **Vitest 4.x** (mandated; same as Convex backend + frontend) | Run under Bun via `bunx vitest` or Node — both work. |
-| Mocking | **`vi.mock()`** module mocks; **`vi.spyOn(globalThis.Bun, 'spawn')`** for subprocess; in-memory `FakeVaultClient` for Convex. |
+| Concern            | Pick                                                                                                                          | Reason (one line)                                                                                                                                                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Argument parser    | **`citty`**                                                                                                                   | Zero-dep, `defineCommand` reads as a spec, native lazy sub-command imports, recommended for Bun-first CLIs. Commander wins on maturity but Citty's structured `args` + lazy loader fit our 8 verbs and keep the binary lean. |
+| CLI runtime        | **Bun ≥ 1.2**                                                                                                                 | Spec; ships `Bun.spawn`, `Bun.serve`, `bun build --compile`, native TS, `node:*` shims.                                                                                                                                      |
+| Convex client      | **`ConvexHttpClient`** from `convex/browser`                                                                                  | HTTP, not WS — short-lived CLI; passes `Authorization: Bearer <jwt>` via `setAuth`; type-safe via generated `api`.                                                                                                           |
+| Clerk SDK          | **`@clerk/backend` 3.x** for `createClerkClient` (already in monorepo `package.json`)                                         | Backend mint of sign-in tokens / session revoke. CLI also hits Clerk **FAPI** directly via `fetch` for the ticket exchange + token refresh — no SDK exists for FAPI ticket strategy.                                         |
+| Subprocess wrapper | **`Bun.spawn`**                                                                                                               | Returns `Subprocess` with `.exited`, `.stdout` (`ReadableStream`), `.stdin` (FileSink), native `AbortSignal` + `timeout` support.                                                                                            |
+| Localhost callback | **`Bun.serve({ port: 0 })`**                                                                                                  | Random free port returned via `server.port`; `server.stop(true)` for hard close after first valid POST.                                                                                                                      |
+| Single-binary      | **`bun build --compile --minify --bytecode --sourcemap --target=...`**                                                        | Standalone executables per triple; `--bytecode` halves cold start.                                                                                                                                                           |
+| Distribution       | **Homebrew tap (primary), GitHub Releases (binaries by triple), `bunx cvault` (Bun-equipped)**                                | Mac-first, native install path; releases driven by GitHub Actions matrix.                                                                                                                                                    |
+| Linter / formatter | **eslint + prettier** (matches monorepo)                                                                                      | Blueprint root already standardizes on ESLint flat config + Prettier with import sort + Tailwind plugin. Zero tooling drift inside cvault.                                                                                   |
+| Test framework     | **Vitest 4.x** (mandated; same as Convex backend + frontend)                                                                  | Run under Bun via `bunx vitest` or Node — both work.                                                                                                                                                                         |
+| Mocking            | **`vi.mock()`** module mocks; **`vi.spyOn(globalThis.Bun, 'spawn')`** for subprocess; in-memory `FakeVaultClient` for Convex. |
 
 ---
 
@@ -61,25 +61,25 @@ bun build --compile --minify --sourcemap --bytecode \
 
 **Flag reference (verified against Bun 1.2 docs):**
 
-| Flag | Why we set it |
-|---|---|
-| `--compile` | Produces a standalone executable (implies `--production`). |
-| `--minify` | All three (whitespace + identifiers + syntax). Bun's minifier is fast enough that we always use it for releases. |
-| `--sourcemap` | `linked` mode by default with `--compile`. Lets us decode stack traces from user reports without shipping `.map` separately. |
-| `--bytecode` | Embeds JSC bytecode → cold start ~2× faster. Cost: a few extra MB on disk. |
-| `--target=bun-<os>-<arch>` | Cross-compile target. Defaults to host. Without explicit target, the GH Actions matrix is moot. |
+| Flag                       | Why we set it                                                                                                                |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--compile`                | Produces a standalone executable (implies `--production`).                                                                   |
+| `--minify`                 | All three (whitespace + identifiers + syntax). Bun's minifier is fast enough that we always use it for releases.             |
+| `--sourcemap`              | `linked` mode by default with `--compile`. Lets us decode stack traces from user reports without shipping `.map` separately. |
+| `--bytecode`               | Embeds JSC bytecode → cold start ~2× faster. Cost: a few extra MB on disk.                                                   |
+| `--target=bun-<os>-<arch>` | Cross-compile target. Defaults to host. Without explicit target, the GH Actions matrix is moot.                              |
 
 **Optional CPU sub-targets:** `bun-linux-x64-baseline` (pre-2013 CPUs, nehalem ISA) vs `bun-linux-x64-modern` (haswell+). Default omits the suffix and uses a sensible mid-tier ISA. Skip in v1 unless a user reports an `Illegal instruction` crash.
 
 ### 1.2 Single-binary tradeoffs
 
-| Aspect | Reality |
-|---|---|
-| **Size** | `--compile` embeds the entire Bun runtime (Zig-built JSC + libuv equivalents). Per-binary size is ~95-110 MB before compression, ~50-60 MB after gzip. Homebrew bottle compression (xz) gets it down further. **Document this in the README** so users don't think it's bloated cvault code — it's the runtime. |
-| **Startup** | With `--bytecode`: ~30-50 ms cold start on Apple Silicon for a CLI of our size. Comparable to a Go binary, much faster than Python. |
+| Aspect                       | Reality                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Size**                     | `--compile` embeds the entire Bun runtime (Zig-built JSC + libuv equivalents). Per-binary size is ~95-110 MB before compression, ~50-60 MB after gzip. Homebrew bottle compression (xz) gets it down further. **Document this in the README** so users don't think it's bloated cvault code — it's the runtime.                                                                                                  |
+| **Startup**                  | With `--bytecode`: ~30-50 ms cold start on Apple Silicon for a CLI of our size. Comparable to a Go binary, much faster than Python.                                                                                                                                                                                                                                                                              |
 | **Embedded runtime caveats** | The binary IS Bun. Native modules requested at runtime (e.g. `node:fs/promises`) are resolved against the embedded runtime — no NPM postinstall step on the user's machine. **`require()` of files that weren't seen at bundle time will fail** — keep all imports static. No `await import('./foo.ts')` with a dynamic path; a static-string dynamic import is fine and is how `citty` lazy-loads sub-commands. |
-| **Code-signing on macOS** | Distributing unsigned binaries triggers Gatekeeper warning on first launch. v1 acceptance: ship unsigned, document `xattr -d com.apple.quarantine /usr/local/bin/cvault` in the README troubleshooting section. v2: pursue a Developer ID + notarization. Homebrew installs from a tap that controls the URL also avoid the quarantine flag because `brew` writes the file. |
-| **Linux glibc** | Bun's Linux binaries link against modern glibc (≥ 2.31). Old distros (CentOS 7, Ubuntu 18.04) will fail. Document the floor; users on ancient distros use `bunx cvault` instead. |
+| **Code-signing on macOS**    | Distributing unsigned binaries triggers Gatekeeper warning on first launch. v1 acceptance: ship unsigned, document `xattr -d com.apple.quarantine /usr/local/bin/cvault` in the README troubleshooting section. v2: pursue a Developer ID + notarization. Homebrew installs from a tap that controls the URL also avoid the quarantine flag because `brew` writes the file.                                      |
+| **Linux glibc**              | Bun's Linux binaries link against modern glibc (≥ 2.31). Old distros (CentOS 7, Ubuntu 18.04) will fail. Document the floor; users on ancient distros use `bunx cvault` instead.                                                                                                                                                                                                                                 |
 
 ### 1.3 `bunx cvault` mode
 
@@ -90,11 +90,13 @@ bunx cvault@latest login
 ```
 
 Mechanism:
+
 - We publish the package to npm as `cvault` (or `@stefan/cvault` if collision — pick at impl-time, npm search needed).
 - `package.json` has `"bin": { "cvault": "./dist/cli.js" }` pointing at a **non-compiled** ESM bundle (`bun build ./cli/src/index.ts --target=bun --outfile dist/cli.js --minify`).
 - bunx caches the package in `~/.bun/install/cache`, then runs the bin against the user's existing Bun runtime. Saves the ~95 MB embedded runtime.
 
 We ship **both**:
+
 - npm package → bunx + `bun add -g cvault`
 - compiled binaries → Homebrew + manual download
 
@@ -181,9 +183,9 @@ jobs:
       matrix:
         include:
           - { triple: darwin-arm64, runner: macos-14, target: bun-darwin-arm64 }
-          - { triple: darwin-x64,   runner: macos-13, target: bun-darwin-x64 }
-          - { triple: linux-x64,    runner: ubuntu-latest, target: bun-linux-x64 }
-          - { triple: linux-arm64,  runner: ubuntu-latest, target: bun-linux-arm64 }
+          - { triple: darwin-x64, runner: macos-13, target: bun-darwin-x64 }
+          - { triple: linux-x64, runner: ubuntu-latest, target: bun-linux-x64 }
+          - { triple: linux-arm64, runner: ubuntu-latest, target: bun-linux-arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -322,6 +324,7 @@ jobs:
 ```
 
 **Secrets needed in repo settings:**
+
 - `HOMEBREW_TAP_PAT` — fine-grained PAT with `contents:write` on `flatoutsolutions/homebrew-cvault`
 - `NPM_TOKEN` — npm automation token for `cvault` package
 - `CONVEX_DEPLOY_KEY` — only needed if `convex codegen` requires server access (it doesn't for type generation from local files; can omit if `convex/_generated/` is committed)
@@ -354,7 +357,7 @@ export class ClaudeSwapError extends Error {
   constructor(
     message: string,
     public readonly exitCode: number | null,
-    public readonly stderr: string,
+    public readonly stderr: string
   ) {
     super(message)
     this.name = 'ClaudeSwapError'
@@ -366,7 +369,7 @@ export class ClaudeSwapMissingError extends Error {
     super(
       `claude-swap is not installed or not on PATH. Install it with:\n` +
         `    uv tool install claude-swap\n` +
-        `Then re-run this command.`,
+        `Then re-run this command.`
     )
     this.name = 'ClaudeSwapMissingError'
   }
@@ -412,7 +415,7 @@ export function runClaudeSwap(args: readonly string[], opts: RunOptions = {}): R
     throw new ClaudeSwapError(
       `claude-swap ${args.join(' ')} exited ${proc.exitCode}\nstderr: ${stderr.trim()}`,
       proc.exitCode,
-      stderr,
+      stderr
     )
   }
 
@@ -459,7 +462,7 @@ export function exportAccount(slotOrEmail: string | number): ClaudeSwapEnvelope 
     throw new ClaudeSwapError(
       `claude-swap --export emitted non-JSON: ${err instanceof Error ? err.message : err}`,
       0,
-      '',
+      ''
     )
   }
 }
@@ -627,10 +630,7 @@ export function startCallbackServer(opts: StartCallbackOptions): CallbackHandle 
 
       // Constant-time compare to defeat timing oracles on the state nonce.
       const stateBytes = new TextEncoder().encode(state)
-      if (
-        stateBytes.byteLength !== expectedStateBytes.byteLength ||
-        !timingSafeEqual(stateBytes, expectedStateBytes)
-      ) {
+      if (stateBytes.byteLength !== expectedStateBytes.byteLength || !timingSafeEqual(stateBytes, expectedStateBytes)) {
         return new Response('state mismatch', { status: 400 })
       }
 
@@ -648,12 +648,10 @@ export function startCallbackServer(opts: StartCallbackOptions): CallbackHandle 
   // Total timeout — if the user never completes the browser flow.
   const timeout = setTimeout(
     () => {
-      rejectResult(
-        new Error('Browser sign-in timed out. Re-run `cvault login` to try again.'),
-      )
+      rejectResult(new Error('Browser sign-in timed out. Re-run `cvault login` to try again.'))
       void server.stop(true)
     },
-    opts.timeoutMs ?? 2 * 60 * 1000,
+    opts.timeoutMs ?? 2 * 60 * 1000
   )
 
   // If the result resolves naturally, clear the timeout.
@@ -672,12 +670,12 @@ export function startCallbackServer(opts: StartCallbackOptions): CallbackHandle 
 
 ### 3.2 Notes on `Bun.serve`
 
-| Detail | Reference |
-|---|---|
-| `port: 0` → random free port; read it back from `server.port` | Verified against `docs/runtime/http/server.mdx` ("Using a Random Port with Bun.serve"). Bun explicitly recommends `port: 0` over hand-rolled port pickers. |
-| `hostname: '127.0.0.1'` not `'localhost'` | per `clerk-convex-tanstack-integration.md` §7: some browsers/extensions block `localhost` from resolving to `127.0.0.1`. |
-| `await server.stop(true)` | `true` closes active connections immediately; without it, `stop()` waits for in-flight requests to finish. We use `true` after we've already returned the 200, so the queued response goes out first. |
-| `timingSafeEqual` from `node:crypto` | Bun ships `node:crypto` (verified — `docs/runtime/nodejs-compat.mdx`); `timingSafeEqual` is implemented. |
+| Detail                                                        | Reference                                                                                                                                                                                             |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `port: 0` → random free port; read it back from `server.port` | Verified against `docs/runtime/http/server.mdx` ("Using a Random Port with Bun.serve"). Bun explicitly recommends `port: 0` over hand-rolled port pickers.                                            |
+| `hostname: '127.0.0.1'` not `'localhost'`                     | per `clerk-convex-tanstack-integration.md` §7: some browsers/extensions block `localhost` from resolving to `127.0.0.1`.                                                                              |
+| `await server.stop(true)`                                     | `true` closes active connections immediately; without it, `stop()` waits for in-flight requests to finish. We use `true` after we've already returned the 200, so the queued response goes out first. |
+| `timingSafeEqual` from `node:crypto`                          | Bun ships `node:crypto` (verified — `docs/runtime/nodejs-compat.mdx`); `timingSafeEqual` is implemented.                                                                                              |
 
 ### 3.3 Wiring into the login command
 
@@ -717,7 +715,10 @@ export async function loginCommand(args: { dashboardUrl: string }): Promise<void
 
 ```ts
 import { ConvexHttpClient } from 'convex/browser'
-import { api } from '../../convex/_generated/api' // path alias makes this nicer (§7)
+
+import { api } from '../../convex/_generated/api'
+
+// path alias makes this nicer (§7)
 
 const client = new ConvexHttpClient(process.env.CVAULT_CONVEX_URL ?? 'https://beloved-mouse-707.convex.cloud')
 ```
@@ -788,6 +789,7 @@ export function isAuthError(err: unknown): boolean {
 // cli/src/convex/vaultClient.ts
 import { ConvexHttpClient } from 'convex/browser'
 import type { FunctionReference, OptionalRestArgsOrSkip } from 'convex/server'
+
 import { api } from '../../../convex/_generated/api'
 import { mintConvexJwt, readSession, writeSession } from '../auth/session'
 import { isAuthError } from './isAuthError'
@@ -796,7 +798,10 @@ import { isAuthError } from './isAuthError'
 export class VaultClient {
   private readonly http: ConvexHttpClient
 
-  constructor(public readonly deploymentUrl: string, initialJwt: string) {
+  constructor(
+    public readonly deploymentUrl: string,
+    initialJwt: string
+  ) {
     this.http = new ConvexHttpClient(deploymentUrl)
     this.http.setAuth(initialJwt)
   }
@@ -857,11 +862,11 @@ The generic types `FunctionReference<'query'>` etc. are exported from `convex/se
 
 ### 5.1 Tokens we hold
 
-| Token | TTL | Source | Rotation |
-|---|---|---|---|
-| `clerkSessionId` | n/a (id) | from ticket exchange response | never |
-| `clerkSessionToken` | 7-30 days (per Clerk session settings) | from ticket exchange response — Set-Cookie `__session` body in the FAPI response | not refreshed; expiry → re-run `cvault login` |
-| `convexJwt` | ~60 s | minted on demand from FAPI `/v1/client/sessions/<id>/tokens/convex` | every call once we're within 10 s of expiry, OR after a 401 |
+| Token               | TTL                                    | Source                                                                           | Rotation                                                    |
+| ------------------- | -------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `clerkSessionId`    | n/a (id)                               | from ticket exchange response                                                    | never                                                       |
+| `clerkSessionToken` | 7-30 days (per Clerk session settings) | from ticket exchange response — Set-Cookie `__session` body in the FAPI response | not refreshed; expiry → re-run `cvault login`               |
+| `convexJwt`         | ~60 s                                  | minted on demand from FAPI `/v1/client/sessions/<id>/tokens/convex`              | every call once we're within 10 s of expiry, OR after a 401 |
 
 ### 5.2 `mintConvexJwt`
 
@@ -906,10 +911,10 @@ export async function mintConvexJwt(session: SessionState): Promise<MintResult> 
 function decodeJwtExp(jwt: string): number {
   const [, payloadB64] = jwt.split('.')
   // base64url decode without external dep
-  const padded = payloadB64.replace(/-/g, '+').replace(/_/g, '/').padEnd(
-    payloadB64.length + ((4 - (payloadB64.length % 4)) % 4),
-    '=',
-  )
+  const padded = payloadB64
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(payloadB64.length + ((4 - (payloadB64.length % 4)) % 4), '=')
   const json = JSON.parse(atob(padded)) as { exp: number }
   return json.exp
 }
@@ -1038,9 +1043,7 @@ export async function readSession(): Promise<SessionState> {
   const stats = await file.stat()
   // file.stat() returns mode in node:fs format; mask & 0o077 must be 0
   if ((stats.mode & 0o077) !== 0) {
-    throw new Error(
-      `${SESSION_FILE} has loose permissions. Run \`chmod 600 ${SESSION_FILE}\` and retry.`,
-    )
+    throw new Error(`${SESSION_FILE} has loose permissions. Run \`chmod 600 ${SESSION_FILE}\` and retry.`)
   }
   return (await file.json()) as SessionState
 }
@@ -1064,6 +1067,7 @@ export { mintConvexJwt, ClerkSessionExpiredError } from './clerkFapi'
 ```
 
 Notes:
+
 - `Bun.$` (Bun Shell) is fine for shell-outs to `chmod` / `mv`. The atomic write pattern is `write tmp → fsync → rename`. `Bun.write` does not expose `fsync`; `mv` is atomic on the same filesystem (POSIX rename guarantee), so we get crash-consistency without an extra dep.
 - `Bun.file(...).stat()` returns `node:fs.Stats`; the `mode` field has the standard POSIX bits.
 - Perm-check on read is **mandatory** — a creds file with `0644` is leaking to other users on shared systems.
@@ -1094,14 +1098,14 @@ A future refinement: on `ClerkSessionExpiredError`, automatically re-trigger `cv
 
 ### 6.2 Reasoning
 
-| Criterion | citty | commander | Verdict |
-|---|---|---|---|
-| TypeScript ergonomics | `defineCommand({ args: { name: { type: 'positional', required: true } }, run({ args }) })` — `args` typed by the schema, no cast needed | Builder API, action callbacks need explicit typing or `@commander-js/extra-typings` add-on | citty |
-| Bundle size | Zero deps (verified — citty README, single source). One file, ~15 KB | Larger — pulls in chalk-derived help printer (commander v12 is ~80 KB before tree-shake) | citty |
-| Sub-command shape | `subCommands: { login: loginCmd, switch: switchCmd, ... }` reads as a manifest; supports lazy `() => import('./commands/switch').then(m => m.default)` for code-splitting (helps binary size) | `program.command('switch <id>').description(...).action(handler)` chained — works fine but harder to scan | citty |
-| Maturity | Used by Nuxt/UnJS ecosystem, 1k+ stars, maintained | 26k stars, oldest in the field, stable API | commander wins on raw maturity |
-| Shell completion | Not built-in (open issue) | Built-in via `program.completion()` plugin | commander wins |
-| Help quality | Auto-generated, terse | Auto-generated, more convention | tie |
+| Criterion             | citty                                                                                                                                                                                         | commander                                                                                                 | Verdict                        |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| TypeScript ergonomics | `defineCommand({ args: { name: { type: 'positional', required: true } }, run({ args }) })` — `args` typed by the schema, no cast needed                                                       | Builder API, action callbacks need explicit typing or `@commander-js/extra-typings` add-on                | citty                          |
+| Bundle size           | Zero deps (verified — citty README, single source). One file, ~15 KB                                                                                                                          | Larger — pulls in chalk-derived help printer (commander v12 is ~80 KB before tree-shake)                  | citty                          |
+| Sub-command shape     | `subCommands: { login: loginCmd, switch: switchCmd, ... }` reads as a manifest; supports lazy `() => import('./commands/switch').then(m => m.default)` for code-splitting (helps binary size) | `program.command('switch <id>').description(...).action(handler)` chained — works fine but harder to scan | citty                          |
+| Maturity              | Used by Nuxt/UnJS ecosystem, 1k+ stars, maintained                                                                                                                                            | 26k stars, oldest in the field, stable API                                                                | commander wins on raw maturity |
+| Shell completion      | Not built-in (open issue)                                                                                                                                                                     | Built-in via `program.completion()` plugin                                                                | commander wins                 |
+| Help quality          | Auto-generated, terse                                                                                                                                                                         | Auto-generated, more convention                                                                           | tie                            |
 
 **Verdict:** citty for v1. The lazy sub-command imports + zero-dep + cleaner spec read shape outweigh the lack of native shell completion. Shell completion can be hand-written later as a `cvault completion` command emitting a static bash/zsh script — implementation cost ~30 LOC.
 
@@ -1141,8 +1145,10 @@ Each command file exports a `defineCommand`-shaped value, e.g.:
 ```ts
 // cli/src/commands/switch.ts
 import { defineCommand } from 'citty'
-import { makeVaultClient, api } from '../convex/vaultClient'
-import { switchTo, importEnvelope } from '../claudeSwap'
+
+import { importEnvelope, switchTo } from '../claudeSwap'
+import { api, makeVaultClient } from '../convex/vaultClient'
+
 // ...
 
 export const switchCommand = defineCommand({
@@ -1292,6 +1298,7 @@ cvault/                                       # repo root (existing)
 ```
 
 Notes:
+
 - `convex` is a runtime dep — `ConvexHttpClient` lives in `convex/browser`.
 - `@clerk/backend` is dev-only **for the CLI** — most Clerk operations from the CLI hit FAPI directly via `fetch`. We pull `@clerk/backend` only if a future feature wants `verifyToken()` locally; currently optional. If unused at impl-time, delete it.
 - `@types/bun` is required for `Bun.spawn`, `Bun.serve`, `Bun.file`, etc. types under TypeScript.
@@ -1393,10 +1400,7 @@ In-memory fake — same shape as the real wrapper, lets command tests assert cal
 
 ```ts
 // cli/tests/fixtures/fakeVaultClient.ts
-import type {
-  FunctionReference,
-  OptionalRestArgsOrSkip,
-} from 'convex/server'
+import type { FunctionReference, OptionalRestArgsOrSkip } from 'convex/server'
 
 export class FakeVaultClient {
   queryResponses = new Map<string, unknown>()
@@ -1428,7 +1432,7 @@ export class FakeVaultClient {
   private dispatch(
     kind: 'query' | 'mutation' | 'action',
     fn: FunctionReference<'query' | 'mutation' | 'action'>,
-    args: unknown,
+    args: unknown
   ): unknown {
     // FunctionReference's runtime tag includes the dotted name in `_componentPath` /
     // `_name`; in tests we look it up by string. Convex's generated `api` proxy emits
@@ -1436,11 +1440,7 @@ export class FakeVaultClient {
     const name = String(fn)
     this.calls.push({ kind, name, args })
     const table =
-      kind === 'query'
-        ? this.queryResponses
-        : kind === 'mutation'
-          ? this.mutationResponses
-          : this.actionResponses
+      kind === 'query' ? this.queryResponses : kind === 'mutation' ? this.mutationResponses : this.actionResponses
     return table.get(name) ?? null
   }
 }
@@ -1451,6 +1451,7 @@ Then in a test, swap the wrapper:
 ```ts
 // cli/tests/commands/switch.test.ts
 import { describe, expect, it, vi } from 'vitest'
+
 import { FakeVaultClient } from '../fixtures/fakeVaultClient'
 
 vi.mock('../../src/convex/vaultClient', async (orig) => {
@@ -1471,9 +1472,7 @@ describe('cvault switch', () => {
       contentHash: 'abc123',
     })
     const { makeVaultClient } = await import('../../src/convex/vaultClient')
-    vi.mocked(makeVaultClient).mockResolvedValue(fake as unknown as Awaited<
-      ReturnType<typeof makeVaultClient>
-    >)
+    vi.mocked(makeVaultClient).mockResolvedValue(fake as unknown as Awaited<ReturnType<typeof makeVaultClient>>)
     // … run the command, assert claudeSwap.importEnvelope was called, etc.
   })
 })
@@ -1489,6 +1488,9 @@ describe('cvault switch', () => {
 // cli/tests/commands/add.test.ts
 import { describe, expect, it, vi } from 'vitest'
 
+import { addAccountInteractive, exportAccount, status } from '../../src/claudeSwap'
+import singleAccountEnvelope from '../fixtures/envelopes/singleAccount'
+
 vi.mock('../../src/claudeSwap', () => ({
   runClaudeSwap: vi.fn(),
   exportAccount: vi.fn(),
@@ -1499,9 +1501,6 @@ vi.mock('../../src/claudeSwap', () => ({
   status: vi.fn(),
   addAccountInteractive: vi.fn().mockResolvedValue(undefined),
 }))
-
-import { addAccountInteractive, exportAccount, status } from '../../src/claudeSwap'
-import singleAccountEnvelope from '../fixtures/envelopes/singleAccount'
 
 describe('cvault add', () => {
   it('runs interactive add then exports the new slot', async () => {
@@ -1540,6 +1539,7 @@ describe('runClaudeSwap', () => {
 ```ts
 // cli/tests/auth/callbackServer.test.ts
 import { describe, expect, it } from 'vitest'
+
 import { startCallbackServer } from '../../src/auth/callbackServer'
 
 describe('startCallbackServer', () => {
@@ -1582,7 +1582,7 @@ describe('startCallbackServer', () => {
 import type { ClaudeSwapEnvelope } from '../../../src/claudeSwap'
 
 export default function singleAccountEnvelope(
-  overrides: Partial<ClaudeSwapEnvelope['accounts'][number]> = {},
+  overrides: Partial<ClaudeSwapEnvelope['accounts'][number]> = {}
 ): ClaudeSwapEnvelope {
   return {
     version: 1,
@@ -1608,7 +1608,11 @@ export default function singleAccountEnvelope(
             subscriptionType: 'max',
           },
         },
-        config: { oauthAccount: { /* slim Claude config */ } },
+        config: {
+          oauthAccount: {
+            /* slim Claude config */
+          },
+        },
         ...overrides,
       },
     ],

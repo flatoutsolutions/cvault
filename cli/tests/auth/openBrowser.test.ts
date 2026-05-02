@@ -19,10 +19,7 @@ interface FakeProc {
   exited: Promise<number>
 }
 
-function stubSpawn(
-  exitCode: number,
-  calls: SpawnCall[]
-): { restore: () => void } {
+function stubSpawn(exitCode: number, calls: SpawnCall[]): { restore: () => void } {
   const spy = vi.spyOn(Bun, 'spawn').mockImplementation(((opts: SpawnOpts) => {
     calls.push({ cmd: opts.cmd })
     return { exited: Promise.resolve(exitCode) } as FakeProc

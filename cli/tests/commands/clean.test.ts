@@ -5,24 +5,23 @@
  * `~/.vault/last-hash-*.txt` cache. Preserves `~/.vault/session.json`
  * (the CLI stays signed in) and the Convex-side vault.
  */
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ClaudeSwapMissingError, purge } from '../../src/claudeSwap'
+import { runClean } from '../../src/commands/clean'
+
 vi.mock('../../src/claudeSwap', async () => {
-  const actual =
-    await vi.importActual<typeof import('../../src/claudeSwap')>('../../src/claudeSwap')
+  const actual = await vi.importActual<typeof import('../../src/claudeSwap')>('../../src/claudeSwap')
   return {
     ...actual,
     purge: vi.fn(),
   }
 })
-
-import { ClaudeSwapMissingError, purge } from '../../src/claudeSwap'
-import { runClean } from '../../src/commands/clean'
 
 let tempHome: string
 let originalHome: string | undefined
@@ -53,8 +52,8 @@ function fakeIo(answer: string): {
   const written: string[] = []
   const input = Readable.from([`${answer}\n`])
   const output = new Writable({
-    write(chunk, _enc, cb) {
-      written.push(chunk.toString())
+    write(chunk: Buffer | string, _enc, cb) {
+      written.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'))
       cb()
     },
   })
@@ -66,7 +65,7 @@ describe('runClean', () => {
     vi.mocked(purge).mockImplementationOnce(() => undefined)
     // Seed hash files (and one unrelated file we should NOT touch).
     const vaultPath = join(tempHome, '.vault')
-    require('node:fs').mkdirSync(vaultPath, { recursive: true })
+    mkdirSync(vaultPath, { recursive: true })
     writeFileSync(join(vaultPath, 'last-hash-a@b.com.txt'), 'h1')
     writeFileSync(join(vaultPath, 'last-hash-c@d.com.txt'), 'h2')
     writeFileSync(join(vaultPath, 'session.json'), '{"keep":true}')
@@ -88,7 +87,7 @@ describe('runClean', () => {
 
   it('aborts on a "no" answer without touching anything', async () => {
     const vaultPath = join(tempHome, '.vault')
-    require('node:fs').mkdirSync(vaultPath, { recursive: true })
+    mkdirSync(vaultPath, { recursive: true })
     writeFileSync(join(vaultPath, 'last-hash-a@b.com.txt'), 'h1')
 
     const io = fakeIo('n')
@@ -115,7 +114,7 @@ describe('runClean', () => {
       throw new ClaudeSwapMissingError()
     })
     const vaultPath = join(tempHome, '.vault')
-    require('node:fs').mkdirSync(vaultPath, { recursive: true })
+    mkdirSync(vaultPath, { recursive: true })
     writeFileSync(join(vaultPath, 'last-hash-a@b.com.txt'), 'h1')
 
     const summary = await runClean({ yes: true })

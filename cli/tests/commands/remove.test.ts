@@ -12,6 +12,10 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import { removeAccount } from '../../src/claudeSwap'
+import { runRemove } from '../../src/commands/remove'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+
 vi.mock('../../src/claudeSwap', () => ({
   removeAccount: vi.fn(),
 }))
@@ -20,10 +24,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { removeAccount } from '../../src/claudeSwap'
-import { runRemove } from '../../src/commands/remove'
-import { makeVaultClient } from '../../src/convex/vaultClient'
 
 describe('runRemove', () => {
   it('calls Convex softRemove first, then claude-swap remove-account', async () => {
@@ -59,12 +59,10 @@ describe('runRemove', () => {
 
   it('looks up email by slot when given a numeric arg (calls list query first)', async () => {
     const client = {
-      query: vi
-        .fn()
-        .mockResolvedValueOnce([
-          { slot: 1, email: 'a@b.com' },
-          { slot: 2, email: 'c@d.com' },
-        ]),
+      query: vi.fn().mockResolvedValueOnce([
+        { slot: 1, email: 'a@b.com' },
+        { slot: 2, email: 'c@d.com' },
+      ]),
       mutation: vi.fn().mockResolvedValueOnce(null),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)

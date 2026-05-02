@@ -14,8 +14,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { api, internal } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
 import { __setAnthropicFetch, __setRandomBytesForTest } from './anthropic'
 
 const ORIGINAL_KEY = process.env.VAULT_AES_KEY
@@ -146,9 +146,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     const inserted = await seedSubscription(t)
     const before = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
 
-    __setAnthropicFetch(
-      makeFetchStub({ status: 503, body: { error: 'service_unavailable' } })
-    )
+    __setAnthropicFetch(makeFetchStub({ status: 503, body: { error: 'service_unavailable' } }))
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: inserted.subId,
@@ -196,9 +194,9 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
   it('rejects requestRefresh from an unauthenticated caller', async () => {
     const t = vault()
     const inserted = await seedSubscription(t)
-    await expect(
-      t.action(api.subscriptions.actions.requestRefresh, { subId: inserted.subId })
-    ).rejects.toThrow(/authenticated/i)
+    await expect(t.action(api.subscriptions.actions.requestRefresh, { subId: inserted.subId })).rejects.toThrow(
+      /authenticated/i
+    )
   })
 
   it('rejects requestRefresh when the caller does not own the sub', async () => {
@@ -246,9 +244,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
       subId: inserted.subId,
     })
 
-    const rows = await t.run(
-      async (ctx) => await ctx.db.query('machineActivity').collect()
-    )
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     const refreshRow = rows.find((r) => r.action === 'refresh')
     expect(refreshRow).toBeDefined()
     expect(refreshRow?.subscriptionId).toEqual(inserted.subId)
@@ -295,21 +291,17 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
       },
     })
     const { ciphertext, nonce } = encrypt(plaintext)
-    const inserted = await t
-      .withIdentity(TEST_IDENTITY)
-      .mutation(api.subscriptions.mutations.upsert, {
-        email: 'stale@example.com',
-        ciphertext,
-        nonce,
-        expiresAt: expiredAt,
-        subscriptionType: 'max',
-        rateLimitTier: 'tier1',
-      })
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'stale@example.com',
+      ciphertext,
+      nonce,
+      expiresAt: expiredAt,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
 
     // Anthropic returns 503 — refresh fails transiently.
-    __setAnthropicFetch(
-      makeFetchStub({ status: 503, body: { error: 'service_unavailable' } })
-    )
+    __setAnthropicFetch(makeFetchStub({ status: 503, body: { error: 'service_unavailable' } }))
 
     // pullForSwitch must NOT return the stale plaintext to the CLI; it
     // should throw a REFRESH_FAILED-shaped error so the CLI can surface
@@ -323,14 +315,10 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
 
     // Sanity: the sub row's expiresAt was NOT advanced (refresh failed),
     // and the refreshLog has a failure row for the onUse trigger.
-    const after = await t.run(
-      async (ctx) => await ctx.db.get('subscriptions', inserted.subId)
-    )
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
     expect(after?.expiresAt).toBe(expiredAt)
     const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
-    expect(logs.some((l) => l.outcome === 'failure' && l.triggeredBy === 'onUse')).toBe(
-      true
-    )
+    expect(logs.some((l) => l.outcome === 'failure' && l.triggeredBy === 'onUse')).toBe(true)
   })
 
   it('releases the lease and logs failure when decrypt throws on tampered ciphertext', async () => {
@@ -365,9 +353,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
 
     // The lease MUST be released so subsequent attempts don't have to
     // wait 30 seconds.
-    const after = await t.run(
-      async (ctx) => await ctx.db.get('subscriptions', inserted.subId)
-    )
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
     expect(after?.refreshLeaseHolder).toBeUndefined()
     expect(after?.refreshLeaseUntil).toBeUndefined()
 
@@ -408,10 +394,10 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     })
 
     // Try to acquire the lease right away — it must succeed (no 30s TTL wait).
-    const acq = await t.mutation(
-      internal.subscriptions.mutations.tryAcquireRefreshLease,
-      { subId: inserted.subId, holderToken: 'next-attempt' }
-    )
+    const acq = await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'next-attempt',
+    })
     expect(acq.acquired).toBe(true)
   })
 
@@ -425,8 +411,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
         status: 401,
         body: {
           error: 'invalid_grant',
-          error_description:
-            'Refresh token sk-ant-ort01-LEAKED-TOKEN-XXXXXXXXXXXXXXXXXX is dead',
+          error_description: 'Refresh token sk-ant-ort01-LEAKED-TOKEN-XXXXXXXXXXXXXXXXXX is dead',
         },
       })
     )

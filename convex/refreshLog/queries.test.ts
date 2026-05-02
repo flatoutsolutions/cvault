@@ -3,8 +3,8 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { api, internal } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
 
 describe('refreshLog.queries.recentForUser', () => {
   it('returns log rows for the authenticated user newest-first', async () => {
@@ -46,7 +46,7 @@ describe('refreshLog.queries.recentForUser', () => {
     expect(rows.map((r) => r.outcome)).toEqual(['failure', 'success'])
   })
 
-  it('does not return another user\'s rows', async () => {
+  it("does not return another user's rows", async () => {
     const t = vault()
     const aliceId = await seedUser(t)
     // Bob: a different identity entirely.

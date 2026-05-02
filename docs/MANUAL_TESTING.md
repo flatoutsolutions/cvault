@@ -131,7 +131,7 @@ End state: dashboard renders, CLI binary builds, login persists session, empty l
 In a second terminal:
 
 - [ ] `cd cli && bun build --compile --target=bun-darwin-arm64 ./src/index.ts --outfile cvault`
-  (use `bun-darwin-x64` if Intel, `bun-linux-x64` if Linux — but v1 is Mac-first)
+      (use `bun-darwin-x64` if Intel, `bun-linux-x64` if Linux — but v1 is Mac-first)
 - [ ] Confirm a `cli/cvault` binary appears, ~50-100MB
 - [ ] `cd cli && ./cvault --version` prints a version string (the value comes from `package.json`)
 
@@ -210,7 +210,7 @@ If you only have one sub, switching is a no-op-ish exercise but still proves the
 
 If you only have one Anthropic test account, skip this and use the multi-machine test ([§4](#4-multi-machine-test)) to exercise switching.
 
-- [ ] In Claude Code, log out and log in with a *second* test Anthropic account
+- [ ] In Claude Code, log out and log in with a _second_ test Anthropic account
 - [ ] `./cvault add` — should land as slot 2
 - [ ] Dashboard now shows two cards
 - [ ] `./cvault list` shows both subs
@@ -275,7 +275,7 @@ On the second machine (per [§1.8](#18-a-second-machine-or-vm-or-alt-user-ready)
 
 ### 4.4 Add a sub on machine 1, immediately use on machine 2
 
-- [ ] On machine 1: log into a *new* Anthropic test account in Claude Code, run `./cvault add`
+- [ ] On machine 1: log into a _new_ Anthropic test account in Claude Code, run `./cvault add`
 - [ ] On machine 2 (without re-running sync): `./cvault list` should show the new sub (the dashboard query is live; the CLI list query is per-call)
 - [ ] On machine 2: `./cvault switch <new-slot>`
 - [ ] CLI hash-mismatches (machine 2 has no local hash for this email yet), pulls from Convex, imports, switches
@@ -325,6 +325,7 @@ The cleanest way to simulate without burning a real Anthropic refresh token:
 - [ ] **Verify no plaintext leaks** in the error message — search for `sk-ant-`, `accessToken`, `refreshToken` in the CLI's stderr; should not appear
 
 > **Note (security finding M1):** The current backend does NOT wrap `decrypt()` in try/catch in `refreshOAuthToken` and `fetchUsageForSub` (per security-findings.md M1). After the fix-builder lands the M1 patch, also verify:
+>
 > - [ ] `refreshLog` row inserted with `outcome: 'failure'` and a redacted error
 > - [ ] Sub's `refreshLeaseUntil` is not stuck (lease released cleanly)
 
@@ -387,7 +388,7 @@ A user must not be able to revoke another user's Clerk session via `api.cli.acti
 - [ ] As user A (your primary), open the Convex dashboard → **Functions** → `api.cli.actions.revokeSession` → run with `{ clerkSessionId: "<user-B-session-id>" }`
 - [ ] Expected: action rejects with an ownership / not-found error
 - [ ] User B's session is **not** revoked (verify on user B's dashboard)
-- [ ] Then verify the legitimate path works: revoke one of your *own* sessions; expected to succeed and the revoked machine's next CLI call returns 401 → triggers re-auth flow
+- [ ] Then verify the legitimate path works: revoke one of your _own_ sessions; expected to succeed and the revoked machine's next CLI call returns 401 → triggers re-auth flow
 
 ### 6.3 Force Refresh button is wired (post-fix)
 
@@ -408,14 +409,14 @@ Pre-fix, `refresh` failed with "Could not find function" because `refreshOAuthTo
 
 ### 6.5 (Optional) Other findings to spot-check
 
-| Finding | Sev | Spot check |
-|---|---|---|
-| M1 — decrypt try/catch | Med | Already covered by §5.3 |
-| M2 — `Promise.allSettled` in crons | Med | Inspect `convex/subscriptions/crons.ts` source post-fix; one bad sub doesn't fail the whole cron run |
+| Finding                                          | Sev | Spot check                                                                                                                     |
+| ------------------------------------------------ | --- | ------------------------------------------------------------------------------------------------------------------------------ |
+| M1 — decrypt try/catch                           | Med | Already covered by §5.3                                                                                                        |
+| M2 — `Promise.allSettled` in crons               | Med | Inspect `convex/subscriptions/crons.ts` source post-fix; one bad sub doesn't fail the whole cron run                           |
 | M3 — bulk `/api/cli/sync` rate limit + audit row | Med | After fix, run `./cvault sync --all` then check `machineActivity` for a row with `action: 'pull'` and the bulk-sync session id |
-| M4 — `machineActivity` rows for all mutations | Med | After `./cvault add` / `remove` / `refresh`, a corresponding row should appear in `machineActivity` with the right action |
-| L1 — `getClerkSessionId` helper | Low | Code review only; no UI surface |
-| L4 — token regex prefix class | Low | If Anthropic ever issues uppercase-prefixed tokens, redaction must still apply |
+| M4 — `machineActivity` rows for all mutations    | Med | After `./cvault add` / `remove` / `refresh`, a corresponding row should appear in `machineActivity` with the right action      |
+| L1 — `getClerkSessionId` helper                  | Low | Code review only; no UI surface                                                                                                |
+| L4 — token regex prefix class                    | Low | If Anthropic ever issues uppercase-prefixed tokens, redaction must still apply                                                 |
 
 ---
 

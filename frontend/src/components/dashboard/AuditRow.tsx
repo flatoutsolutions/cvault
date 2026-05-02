@@ -85,9 +85,7 @@ export function AuditRow({ row }: AuditRowProps) {
         >
           {row.kind === 'refresh' ? 'refresh' : row.action}
         </span>
-        <span className="text-muted-foreground text-xs">
-          {row.kind === 'refresh' ? row.triggeredBy : 'cli'}
-        </span>
+        <span className="text-muted-foreground text-xs">{row.kind === 'refresh' ? row.triggeredBy : 'cli'}</span>
       </div>
 
       {/* Outcome (refresh) or session (activity) */}

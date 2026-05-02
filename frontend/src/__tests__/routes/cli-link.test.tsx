@@ -26,8 +26,16 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Import AFTER mocks so the component picks up the stubbed hooks.
+// eslint-disable-next-line import/first
+import { CliLinkPage } from '../../routes/cli/link'
+
 const startLinkMock = vi.fn()
-const userState = { isLoaded: true, isSignedIn: true, user: { primaryEmailAddress: { emailAddress: 'alice@example.com' } } }
+const userState = {
+  isLoaded: true,
+  isSignedIn: true,
+  user: { primaryEmailAddress: { emailAddress: 'alice@example.com' } },
+}
 
 vi.mock('@clerk/tanstack-react-start', () => ({
   useUser: () => userState,
@@ -48,10 +56,6 @@ vi.mock('@tanstack/react-router', async () => {
     }),
   }
 })
-
-// Import AFTER mocks so the component picks up the stubbed hooks.
-// eslint-disable-next-line import/first
-import { CliLinkPage } from '../../routes/cli/link'
 
 describe('/cli/link', () => {
   const fetchMock = vi.fn()
@@ -192,4 +196,3 @@ describe('/cli/link redirect host validation', () => {
     })
   }
 })
-

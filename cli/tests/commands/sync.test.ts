@@ -16,6 +16,10 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { importEnvelope } from '../../src/claudeSwap'
+import { runSync } from '../../src/commands/sync'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+
 vi.mock('../../src/claudeSwap', () => ({
   importEnvelope: vi.fn(),
 }))
@@ -24,10 +28,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { importEnvelope } from '../../src/claudeSwap'
-import { makeVaultClient } from '../../src/convex/vaultClient'
-import { runSync } from '../../src/commands/sync'
 
 const SAMPLE_BLOB = JSON.stringify({
   claudeAiOauth: {

@@ -10,6 +10,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// eslint-disable-next-line import/first
+import { SubsPage } from '../../routes/dashboard/index'
+
 const useQueryMock = vi.fn()
 const mutationsByName = new Map<string, ReturnType<typeof vi.fn>>()
 const actionsByName = new Map<string, ReturnType<typeof vi.fn>>()
@@ -54,9 +57,6 @@ vi.mock('convex/react', () => ({
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
 }))
-
-// eslint-disable-next-line import/first
-import { SubsPage } from '../../routes/dashboard/index'
 
 function makeSub(overrides: Record<string, unknown> = {}) {
   const now = Date.now()
@@ -127,9 +127,7 @@ describe('/dashboard sub list', () => {
     await waitFor(() => {
       const calls = Array.from(mutationsByName.values()).flatMap((m) => m.mock.calls)
       expect(
-        calls.some(
-          (args) => args[0] !== undefined && (args[0] as { email?: string }).email === 'alice@example.com'
-        )
+        calls.some((args) => args[0] !== undefined && (args[0] as { email?: string }).email === 'alice@example.com')
       ).toBe(true)
     })
   })
@@ -154,21 +152,14 @@ describe('/dashboard sub list', () => {
     await waitFor(() => {
       const calls = Array.from(actionsByName.values()).flatMap((m) => m.mock.calls)
       expect(
-        calls.some(
-          (args) =>
-            args[0] !== undefined &&
-            (args[0] as { subId?: string }).subId === 'sub_target'
-        )
+        calls.some((args) => args[0] !== undefined && (args[0] as { subId?: string }).subId === 'sub_target')
       ).toBe(true)
     })
 
     // The request must NOT be a console-only no-op: the action mock
     // must have actually been invoked. Sanity-check that at least one
     // action mock recorded a call.
-    const totalActionCalls = Array.from(actionsByName.values()).reduce(
-      (sum, m) => sum + m.mock.calls.length,
-      0
-    )
+    const totalActionCalls = Array.from(actionsByName.values()).reduce((sum, m) => sum + m.mock.calls.length, 0)
     expect(totalActionCalls).toBeGreaterThan(0)
   })
 })

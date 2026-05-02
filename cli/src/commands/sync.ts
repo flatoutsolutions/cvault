@@ -14,11 +14,11 @@
  * No `--switch-to` at the end — the user picks the active sub
  * afterward via `cvault switch`.
  */
+import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
-import { api } from '@cvault/convex/api'
 import { importEnvelope } from '../claudeSwap'
-import { makeVaultClient, type VaultClient } from '../convex/vaultClient'
+import { type VaultClient, makeVaultClient } from '../convex/vaultClient'
 import { buildSingleAccountEnvelope } from '../envelope'
 import { lastHashPath, writeSecret } from '../paths'
 

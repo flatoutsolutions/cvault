@@ -11,15 +11,15 @@
 
 Per `superpowers:verification-before-completion`, I re-ran every gate the team-lead claimed and quote actual outputs.
 
-| Command | Result |
-|---|---|
-| `yarn test` (root) | `Test Files 23 passed (23)`, `Tests 122 passed (122)`, duration 2.10s. **CONFIRMED.** |
-| `yarn lint:check` | exit 0, no output. **CONFIRMED.** |
-| `npx convex dev --once --typecheck enable` | `Convex functions ready! (4.36s)`, exit 0. **CONFIRMED.** |
-| `npx tsc --noEmit -p tsconfig.app.json` | exit 0, no output. **CONFIRMED.** |
+| Command                                                                                                     | Result                                                                                |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `yarn test` (root)                                                                                          | `Test Files 23 passed (23)`, `Tests 122 passed (122)`, duration 2.10s. **CONFIRMED.** |
+| `yarn lint:check`                                                                                           | exit 0, no output. **CONFIRMED.**                                                     |
+| `npx convex dev --once --typecheck enable`                                                                  | `Convex functions ready! (4.36s)`, exit 0. **CONFIRMED.**                             |
+| `npx tsc --noEmit -p tsconfig.app.json`                                                                     | exit 0, no output. **CONFIRMED.**                                                     |
 | `cd cli && bunx --bun vitest run` (yarn rejects cli/ as non-workspace, used the underlying script directly) | `Test Files 18 passed (18)`, `Tests 117 passed (117)`, duration 377ms. **CONFIRMED.** |
-| `cd cli && bunx tsc --noEmit` | exit 0. **CONFIRMED.** |
-| `cd cli && bun build --compile --target=bun-darwin-arm64 ./src/index.ts --outfile /tmp/cvault-test-build` | 38 modules, 95ms compile, 59 MB binary. **CONFIRMED.** |
+| `cd cli && bunx tsc --noEmit`                                                                               | exit 0. **CONFIRMED.**                                                                |
+| `cd cli && bun build --compile --target=bun-darwin-arm64 ./src/index.ts --outfile /tmp/cvault-test-build`   | 38 modules, 95ms compile, 59 MB binary. **CONFIRMED.**                                |
 
 The team-lead's headline numbers and gates are honest. What follows is everything those gates do not catch.
 
@@ -27,11 +27,11 @@ The team-lead's headline numbers and gates are honest. What follows is everythin
 
 ## 1. Summary
 
-| Severity | Count |
-|---|---|
-| Critical | 2 |
-| Important | 8 |
-| Suggestion | 7 |
+| Severity   | Count |
+| ---------- | ----- |
+| Critical   | 2     |
+| Important  | 8     |
+| Suggestion | 7     |
 
 **Overall recommendation: REQUEST CHANGES.**
 
@@ -66,10 +66,10 @@ await client.action(ref, { slotOrEmail: opts.slotOrEmail } as never)
 
 Backend exports (`convex/subscriptions/actions.ts`):
 
-| Export | Type | Args |
-|---|---|---|
-| `requestRefresh` | `authenticatedAction` | `{ subId: v.id('subscriptions') }` |
-| `refreshOAuthToken` | `internalAction` (cron only) | `{ subId, triggeredBy }` |
+| Export              | Type                         | Args                               |
+| ------------------- | ---------------------------- | ---------------------------------- |
+| `requestRefresh`    | `authenticatedAction`        | `{ subId: v.id('subscriptions') }` |
+| `refreshOAuthToken` | `internalAction` (cron only) | `{ subId, triggeredBy }`           |
 
 There is no `refreshOAuthTokenForUser`. There is also no overload accepting `slotOrEmail`. So `cvault refresh 1` will land at Convex as `function not found`, return an error, and exit non-zero. The unit test for this command (`cli/tests/commands/refresh.test.ts`) does not catch it because the test stubs `client.action` and only inspects the args object — the action ref name and the backend's existence are never checked.
 
@@ -78,11 +78,14 @@ This is a hard regression against spec §7 ("`cvault refresh [slot]` — Trigger
 **Fix:**
 
 1. Replace the string-keyed proxy in `cli/src/commands/refresh.ts` with the typed reference:
+
    ```ts
    import { api } from '../../../convex/_generated/api'
+
    // ...
    await client.action(api.subscriptions.actions.requestRefresh, { subId })
    ```
+
 2. Resolve `slotOrEmail` to a `subId` first (mirror what `cli/src/commands/remove.ts:resolveEmail` does, but resolve to `_id`). The spec says CLI accepts slot|email; the backend wants `subId` because action-level ownership re-verification is by id.
 3. Update `cli/tests/commands/refresh.test.ts` to assert the ref is `api.subscriptions.actions.requestRefresh` and the arg is `{ subId }`. Add a scenario test that runs `runRefresh()` against `convex-test`'s in-process vault to catch this class of contract drift in CI.
 
@@ -105,7 +108,9 @@ const handleForceRefresh = async ({ email }: { email: string }) => {
       '[cvault] Force Refresh: api.subscriptions.actions.refreshOAuthToken is currently internal-only. Backend agent will expose a public wrapper soon.'
     )
     await new Promise((res) => setTimeout(res, 250))
-  } finally { /* ... */ }
+  } finally {
+    /* ... */
+  }
 }
 ```
 
@@ -120,8 +125,11 @@ const requestRefresh = useAction(api.subscriptions.actions.requestRefresh)
 // ...
 const handleForceRefresh = async ({ subId }: { subId: Id<'subscriptions'> }) => {
   setRefreshingBySubId((prev) => ({ ...prev, [subId]: true }))
-  try { await requestRefresh({ subId }) }
-  finally { /* clear */ }
+  try {
+    await requestRefresh({ subId })
+  } finally {
+    /* clear */
+  }
 }
 ```
 
@@ -151,7 +159,9 @@ const SearchSchema = z.object({
         const u = new URL(s)
         if (u.protocol !== 'http:') return false
         return u.hostname === '127.0.0.1' || u.hostname === '[::1]' || u.hostname === 'localhost'
-      } catch { return false }
+      } catch {
+        return false
+      }
     },
     { message: 'redirect must be an http://127.0.0.1:<port>/ URL' }
   ),
@@ -208,6 +218,7 @@ The mutation signature includes `rawIp: v.optional(v.string())` which it SHA-256
 **Files:** `cli/src/commands/{add,list,refresh,remove,status,switch,sync}.ts`
 
 Every CLI command builds an action ref like:
+
 ```ts
 const ref = {
   _name: 'subscriptions/actions:pullForSwitch',
@@ -300,6 +311,7 @@ Pre-existing observation, not a code issue. The README is comprehensive but curr
 ### D1 — Anthropic 400 invalid_grant → reloginRequired (in addition to 401)
 
 **File:** `convex/subscriptions/actions.ts:251-264`. **Justified.** The OAuth research brief documents that providers commonly return 400 with `invalid_grant`. Spec §10 mentioned only 401. The implementation correctly:
+
 - Treats 400 OR 401 with parsed JSON `error: 'invalid_grant'` → reloginRequired.
 - Treats bare 401 (non-JSON body) → reloginRequired conservatively.
 - Treats bare 400 (non-JSON body) → ordinary failure.
@@ -329,18 +341,23 @@ Justified — Vitest 4 deprecated `environmentMatchGlobs`, and the multi-runtime
 ## 6. Section-by-section spec adherence
 
 ### §3 Architecture: CLEAN
+
 All four source-of-truth lines match: Convex tables, Convex functions, HTTP `/api/cli/sync`, crons (10m + 5m). Trust model and stack align with spec. The CLI shells to `claude-swap` exclusively for Keychain access (verified: no `keytar`/`node-keychain` deps). Pull-on-use semantics in `cvault switch` match spec.
 
 ### §4 Schema: CLEAN
+
 All three new tables (`subscriptions`, `refreshLog`, `machineActivity`) match the spec exactly: field names, types, indexes, and validators.
 
 ### §5 Functions: MOSTLY CLEAN; gap C1
+
 The function surface is implemented. `requestRefresh` (D4) covers the spec's "public-callable refresh" intent. `upsertFromPlaintext` (D3) covers `upsert({email, plaintextBlob, slot?})`. The only spec-vs-impl mismatch on the function surface is C1's `cvault refresh` mis-named call. All cron-scheduled functions are `internalAction` per spec.
 
 ### §6 Encryption envelope: CLEAN
+
 All invariants satisfied: 32-byte AES-256-GCM key from `VAULT_AES_KEY` env var, fresh 12-byte nonce per write, auth-tag verification, plaintext only inside Node actions, no plaintext in `machineActivity` or `refreshLog`. Token regex applied. `cli/src/render/redact.ts` matches the convex regex (single-source). Tests cover roundtrip + tampered-ciphertext + tampered-nonce + missing-key + wrong-key-length.
 
 ### §7 CLI: BROKEN ON REFRESH; rest works
+
 - `login`: implemented end-to-end with browser-assisted Clerk sign-in, callback server bound 127.0.0.1, timing-safe state comparison, 2-min hard timeout.
 - `add`: implemented; uses `upsertFromPlaintext` action correctly via string-keyed ref (unit tests assert arg shape).
 - `list`, `switch`, `remove`, `status`, `sync`: implemented; all use string-keyed refs (I6) but the names happen to match backend exports.
@@ -349,13 +366,16 @@ All invariants satisfied: 32-byte AES-256-GCM key from `VAULT_AES_KEY` env var, 
 - `~/.vault/` perms: dir 0700, files 0600, atomic write via temp-rename, perms-checked on read. Verified in `cli/src/paths.ts`.
 
 ### §8 Dashboard: BROKEN ON FORCE REFRESH; rest works
+
 - `/dashboard`: sub list cards, usage bars, expiry, last refresh, relogin badge — all wired. Force Refresh BROKEN (C2). Rename + Remove work.
 - `/dashboard/audit`: merged feed with subEmail/session/outcome filters. Wired against `refreshLog.queries.recentForUser` + `machineActivity.queries.recentForUser`. Rendering correct.
 - `/dashboard/machines`: distinct sessions list with revoke action. Wired against `cli.actions.revokeSession`. Works.
 - `/dashboard/settings`: v2 placeholder cards (rotate key, export backup, notifications) + help links. Matches spec §8 deferred-feature placeholders.
 
 ### §9 Refresh race protection: CLEAN
+
 Lease mechanism implemented as spec, with strong invariants:
+
 - `tryAcquireRefreshLease` is a single Convex mutation (atomic by definition).
 - TTL check correct.
 - `releaseRefreshLease` no-ops on holder mismatch (defensive).
@@ -367,6 +387,7 @@ Lease mechanism implemented as spec, with strong invariants:
 Tests cover all five behaviors.
 
 ### §10 Error handling: MOSTLY CLEAN; gaps I2 + I3
+
 - 400/401 invalid_grant → reloginRequired: covered (D1).
 - 5xx / network → failure with lease released: covered.
 - Lease loss → sleep 1s, re-query, abort: covered.
@@ -376,6 +397,7 @@ Tests cover all five behaviors.
 - Cron per-sub failure → masking via Promise.all: gap (I3).
 
 ### §11 Testing: ADEQUATE; gap on scenario tests
+
 - Convex backend: 70 tests across 13 files, well-distributed across spec invariants.
 - CLI: 117 tests across 18 files; coverage is broad but stubs out the typed API (see C1 / I6 — contract drift slips through).
 - Frontend: 52 tests across 11 files; `useQuery` and `useMutation` are stubbed.
@@ -383,17 +405,20 @@ Tests cover all five behaviors.
 - Scenario test (`__scenarios__/refreshCycle.scenario.ts` per spec §11): NOT IMPLEMENTED. Directory `convex/__tests__/scenario/` is empty (S3).
 
 ### §12 Security: CLEAN at the layer audited; gap I1 in frontend
+
 The Convex backend security posture matches `docs/research/security-findings.md`'s clean assessment. Plaintext refresh tokens never persist in `refreshLog`/`machineActivity`. AES-GCM properly used. User isolation enforced on every read/write. Cron jobs are auth-isolated. CLI session JSON mode 0600 + atomic write. Localhost callback bound to 127.0.0.1.
 
 The single security regression is the `/cli/link` redirect host validation (I1).
 
 ### §13 Deployment: NOT FULLY VERIFIABLE
+
 - Convex env vars (`VAULT_AES_KEY`, `CLERK_*`): documented but actual prod state can't be checked from code alone.
 - CI workflow `.github/workflows/release-cli.yml`: not read in this review (CLI agent's notes confirm codesign + matrix build are wired).
 - Frontend Cloudflare Pages: pre-existing Blueprint workflow, not cvault-specific.
 - Spec §13 references "PyPI publish" which is stale (the CLI pivoted to Bun on 2026-05-02 per spec §15). The spec § needs updating.
 
 ### §14 Open items: APPROPRIATE
+
 The deferred items (live scenario test, watch daemon, encrypted backup, refresh-failure notifications, key rotation, rate limiting, multi-org sharing) are all reasonable v2 punts.
 
 The two items I'd reconsider for v1: rate limiting on `requestRefresh` and `/api/cli/sync` (S5), and a one-test scaffold for the scenario test even if gated (S3).
@@ -420,20 +445,23 @@ Crediting work the team got right:
 **REQUEST CHANGES.** Two critical contracts (C1 + C2) are broken; one high-severity security finding (I1) materially undermines the CLI auth flow's stated invariant. Each of these is small to fix (≤30 LOC each) but they cannot ship as v1.
 
 Required before v1:
+
 - C1: wire `cvault refresh` to `api.subscriptions.actions.requestRefresh` with `{subId}` args. Update test to assert the typed ref.
 - C2: wire dashboard "Force Refresh" to `useAction(api.subscriptions.actions.requestRefresh)` with `{subId}`. Update test to assert dispatch.
 - I1: tighten `/cli/link` `redirect` to localhost-only.
 - I6: replace the string-keyed Convex refs in CLI with typed `api` references — this is what would have caught C1 in CI. Add a path alias on `cli/tsconfig.json` so the CLI imports `convex/_generated/api`.
 
 Strongly recommended before v1:
+
 - I2: try/catch decrypt + log corrupt-cred failure.
 - I3: switch crons to `Promise.allSettled`.
 - I4: record `machineActivity` from the missing public mutations/actions and the `/api/cli/sync` HTTP route.
 
 Acceptable to defer to v1.1:
+
 - I5 (becomes a no-op once I4 lands).
 - I7, I8.
-- All S* items.
+- All S\* items.
 
 Once C1, C2, I1, and I6 are fixed and tested, the project meets the spec's v1 bar.
 

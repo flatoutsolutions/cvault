@@ -97,24 +97,32 @@ import { v } from 'convex/values'
 
 export const subscriptionsSchema = defineTable({
   userId: v.id('users'),
-  email: v.string(),                 // Anthropic account email
-  slot: v.number(),                  // 1..N per user, ordering
-  label: v.optional(v.string()),     // user nickname
-  ciphertext: v.bytes(),             // AES-256-GCM(claudeAiOauth JSON)
-  nonce: v.bytes(),                  // 12-byte GCM nonce
-  expiresAt: v.number(),             // accessToken expiry, ms epoch
+  email: v.string(), // Anthropic account email
+  slot: v.number(), // 1..N per user, ordering
+  label: v.optional(v.string()), // user nickname
+  ciphertext: v.bytes(), // AES-256-GCM(claudeAiOauth JSON)
+  nonce: v.bytes(), // 12-byte GCM nonce
+  expiresAt: v.number(), // accessToken expiry, ms epoch
   refreshExpiresAt: v.optional(v.number()),
-  subscriptionType: v.string(),      // "max" | "pro"
+  subscriptionType: v.string(), // "max" | "pro"
   rateLimitTier: v.string(),
   lastRefreshedAt: v.number(),
   refreshLeaseHolder: v.optional(v.string()),
   refreshLeaseUntil: v.optional(v.number()),
-  usage5h: v.optional(v.object({
-    pct: v.number(), resetsAt: v.number(), fetchedAt: v.number(),
-  })),
-  usage7d: v.optional(v.object({
-    pct: v.number(), resetsAt: v.number(), fetchedAt: v.number(),
-  })),
+  usage5h: v.optional(
+    v.object({
+      pct: v.number(),
+      resetsAt: v.number(),
+      fetchedAt: v.number(),
+    })
+  ),
+  usage7d: v.optional(
+    v.object({
+      pct: v.number(),
+      resetsAt: v.number(),
+      fetchedAt: v.number(),
+    })
+  ),
   removedAt: v.optional(v.number()),
 })
   .index('byUserAndSlot', ['userId', 'slot'])
@@ -143,13 +151,10 @@ export const refreshLogSchema = defineTable({
 export const machineActivitySchema = defineTable({
   userId: v.id('users'),
   clerkSessionId: v.string(),
-  action: v.union(
-    v.literal('switch'), v.literal('add'), v.literal('pull'),
-    v.literal('remove'), v.literal('refresh'),
-  ),
+  action: v.union(v.literal('switch'), v.literal('add'), v.literal('pull'), v.literal('remove'), v.literal('refresh')),
   subscriptionId: v.optional(v.id('subscriptions')),
   at: v.number(),
-  ipHash: v.optional(v.string()),    // SHA-256, 8-char prefix
+  ipHash: v.optional(v.string()), // SHA-256, 8-char prefix
 })
   .index('byUserAndAt', ['userId', 'at'])
   .index('byUserAndSessionAndAt', ['userId', 'clerkSessionId', 'at'])
@@ -157,15 +162,15 @@ export const machineActivitySchema = defineTable({
 
 ### Index rationale
 
-| Index | Query supported |
-|---|---|
-| `subscriptions.byUserAndSlot` | List user's subs sorted by slot; switch by slot; prefix-only `eq(userId)` queries |
-| `subscriptions.byUserAndEmail` | Switch by email; dedup check on `add` |
-| `subscriptions.byExpiry` | Cron scan for expiring tokens (`lt(expiresAt, now+15m)`) |
-| `refreshLog.bySubscriptionAndAt` | Per-sub history in audit UI |
-| `refreshLog.byUserAndAt` | Combined audit feed |
-| `machineActivity.byUserAndAt` | Recent activity dashboard |
-| `machineActivity.byUserAndSessionAndAt` | Per-machine drilldown |
+| Index                                   | Query supported                                                                   |
+| --------------------------------------- | --------------------------------------------------------------------------------- |
+| `subscriptions.byUserAndSlot`           | List user's subs sorted by slot; switch by slot; prefix-only `eq(userId)` queries |
+| `subscriptions.byUserAndEmail`          | Switch by email; dedup check on `add`                                             |
+| `subscriptions.byExpiry`                | Cron scan for expiring tokens (`lt(expiresAt, now+15m)`)                          |
+| `refreshLog.bySubscriptionAndAt`        | Per-sub history in audit UI                                                       |
+| `refreshLog.byUserAndAt`                | Combined audit feed                                                               |
+| `machineActivity.byUserAndAt`           | Recent activity dashboard                                                         |
+| `machineActivity.byUserAndSessionAndAt` | Per-machine drilldown                                                             |
 
 `removedAt` filtering happens in handlers (low cardinality of soft deletes does not justify dedicated index). Nested `usage*.fetchedAt` is not indexable; the per-user fanout for usage cron is acceptable at < 20 subs realistic.
 
@@ -241,16 +246,16 @@ All cron-scheduled functions are `internalAction` (per Convex essentials: never 
 
 ### Commands
 
-| Command | Purpose |
-|---|---|
-| `cvault login` | Browser → Clerk → persists session JSON |
-| `cvault add` | Captures current Claude Code login via `claude-swap --add-account` + `--export -`, uploads to Convex |
-| `cvault list` | Renders table from Convex query: slot, email, label, 5h%, 7d%, expires, last refresh, active marker |
+| Command                       | Purpose                                                                                                         |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `cvault login`                | Browser → Clerk → persists session JSON                                                                         |
+| `cvault add`                  | Captures current Claude Code login via `claude-swap --add-account` + `--export -`, uploads to Convex            |
+| `cvault list`                 | Renders table from Convex query: slot, email, label, 5h%, 7d%, expires, last refresh, active marker             |
 | `cvault switch <slot\|email>` | Pull-on-use: fetch from Convex, hash-compare, `claude-swap --import -` if newer, then `claude-swap --switch-to` |
-| `cvault refresh [slot]` | Triggers Convex `refreshOAuthToken` action manually |
-| `cvault remove <slot\|email>` | Soft-deletes in Convex, runs `claude-swap --remove-account` locally |
-| `cvault status` | Combines local `claude-swap --status` + Convex view for active sub |
-| `cvault sync --all` | Bootstrap on new machine: pulls every sub, imports each into Keychain |
+| `cvault refresh [slot]`       | Triggers Convex `refreshOAuthToken` action manually                                                             |
+| `cvault remove <slot\|email>` | Soft-deletes in Convex, runs `claude-swap --remove-account` locally                                             |
+| `cvault status`               | Combines local `claude-swap --status` + Convex view for active sub                                              |
+| `cvault sync --all`           | Bootstrap on new machine: pulls every sub, imports each into Keychain                                           |
 
 ### Pull-on-use semantics (`switch`)
 
@@ -269,13 +274,13 @@ All cron-scheduled functions are `internalAction` (per Convex essentials: never 
 
 ## 8. Web dashboard (TanStack Start)
 
-| Route | Purpose |
-|---|---|
-| `/` | Redirect to `/dashboard` if authed, else Clerk sign-in |
-| `/dashboard` | Sub list cards w/ usage bars, expiry, last refresh, relogin badge; per-card actions: Force Refresh, Rename, Remove |
-| `/dashboard/audit` | Merged feed of `refreshLog` + `machineActivity`, filterable |
-| `/dashboard/machines` | Active Clerk sessions w/ last seen, IP hash; "Revoke" calls Clerk API |
-| `/dashboard/settings` | Help links, deferred-feature placeholders (rotate key, export backup) |
+| Route                 | Purpose                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `/`                   | Redirect to `/dashboard` if authed, else Clerk sign-in                                                             |
+| `/dashboard`          | Sub list cards w/ usage bars, expiry, last refresh, relogin badge; per-card actions: Force Refresh, Rename, Remove |
+| `/dashboard/audit`    | Merged feed of `refreshLog` + `machineActivity`, filterable                                                        |
+| `/dashboard/machines` | Active Clerk sessions w/ last seen, IP hash; "Revoke" calls Clerk API                                              |
+| `/dashboard/settings` | Help links, deferred-feature placeholders (rotate key, export backup)                                              |
 
 All Convex calls via authenticated query/mutation wrappers from Blueprint (`authenticatedQuery`, `authenticatedMutation`).
 
@@ -307,24 +312,24 @@ The `refreshOAuthToken` action calls this first. Loser sleeps 1 second, re-queri
 
 ### Convex side
 
-| Failure | Response |
-|---|---|
+| Failure                                    | Response                                                                                   |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | Anthropic refresh 401 (refresh_token dead) | Patch `refreshExpiresAt=now`; log `reloginRequired`; surface in `list` w/ `⚠ relogin` flag |
-| Anthropic refresh 5xx / network | Log `failure`; cron retries next tick; no exponential backoff in v1 |
-| Lease loss | Sleep 1s, re-query; if still expired, log + abort |
-| Anthropic usage 429 | Skip cycle, retry next 5m |
-| Decrypt failure (GCM auth tag) | Throw, log error w/ subId; surface as "creds corrupt — re-add" |
-| Action timeout | Lease TTL (30s) auto-expires; next cron picks up |
+| Anthropic refresh 5xx / network            | Log `failure`; cron retries next tick; no exponential backoff in v1                        |
+| Lease loss                                 | Sleep 1s, re-query; if still expired, log + abort                                          |
+| Anthropic usage 429                        | Skip cycle, retry next 5m                                                                  |
+| Decrypt failure (GCM auth tag)             | Throw, log error w/ subId; surface as "creds corrupt — re-add"                             |
+| Action timeout                             | Lease TTL (30s) auto-expires; next cron picks up                                           |
 
 ### CLI side
 
-| Failure | Response |
-|---|---|
-| Convex unreachable | Degrade to local `claude-swap`, print warning |
-| Stale local Keychain | Pull-on-use auto-applies before switch |
-| `claude-swap` missing | Exit w/ install hint |
-| Clerk session expired | Browser re-auth, retry |
-| Empty Keychain on `add` | "log into Claude Code first, then re-run" |
+| Failure                 | Response                                      |
+| ----------------------- | --------------------------------------------- |
+| Convex unreachable      | Degrade to local `claude-swap`, print warning |
+| Stale local Keychain    | Pull-on-use auto-applies before switch        |
+| `claude-swap` missing   | Exit w/ install hint                          |
+| Clerk session expired   | Browser re-auth, retry                        |
+| Empty Keychain on `add` | "log into Claude Code first, then re-run"     |
 
 ---
 
@@ -373,16 +378,16 @@ Mocking: `VaultClient` interface abstracts Convex calls; `FakeVaultClient` for u
 
 ## 12. Security posture
 
-| Layer | Control |
-|---|---|
-| Auth | Clerk (TOTP/passkeys per existing Clerk config) |
-| In-transit | TLS via Convex Cloud + Cloudflare Pages |
-| At-rest | AES-256-GCM, master key in Convex env (not in code) |
-| Logs | Token-shaped substrings stripped via regex |
-| CLI session | Clerk session token in `~/.vault/session.json` (mode 0600), refreshed via Clerk SDK |
-| IP collection | SHA-256 hashed, 8-char prefix; raw IP never stored |
+| Layer             | Control                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Auth              | Clerk (TOTP/passkeys per existing Clerk config)                                                                    |
+| In-transit        | TLS via Convex Cloud + Cloudflare Pages                                                                            |
+| At-rest           | AES-256-GCM, master key in Convex env (not in code)                                                                |
+| Logs              | Token-shaped substrings stripped via regex                                                                         |
+| CLI session       | Clerk session token in `~/.vault/session.json` (mode 0600), refreshed via Clerk SDK                                |
+| IP collection     | SHA-256 hashed, 8-char prefix; raw IP never stored                                                                 |
 | Function exposure | All public mutations/queries via Blueprint `authenticatedQuery`/`authenticatedMutation`; cron-only via `internal*` |
-| Rate limit | Clerk sign-in throttling; per-user mutation rate limit deferred to v2 (convex-helpers) |
+| Rate limit        | Clerk sign-in throttling; per-user mutation rate limit deferred to v2 (convex-helpers)                             |
 
 ---
 
@@ -409,15 +414,15 @@ Mocking: `VaultClient` interface abstracts Convex calls; `FakeVaultClient` for u
 
 ## 15. Decision log
 
-| Decision | Choice | Reason |
-|---|---|---|
-| Sharing model | Single user, multi-sub, multi-machine | Avoids ToS violation of pool-sharing |
-| Relationship to `claude-swap` | Wrap (not replace, not fork) | Vendor handles Keychain; `vault` adds sync layer |
-| Backend stack | Blueprint 2.0 (Convex + Clerk + CFP + TanStack Start) | User preference; Convex realtime + atomic mutations fit refresh race protection |
-| Refresh strategy | Convex scheduled action | Race-free, no leader, machines stay simple |
-| Auth model | Clerk only, no per-device tokens | Clerk already manages sessions per machine |
-| Add flow | Local-first via wrapped `claude-swap` | Anthropic OAuth client closed; no MITM viable |
-| Local sync | Pull-on-use, no daemon | YAGNI; daemons rot |
-| CLI runtime | TypeScript on Bun (pivot 2026-05-02) | Stack consistency (one language across CLI + backend + frontend); Convex TS SDK is canonical (Python `convex` 0.7.0 is sync-only, no HTTP-action helpers, no subscriptions); generated types via `convex/_generated/api` removes drift; `bun build --compile` ships single static binary |
-| CLI distribution | `bun build --compile` → Homebrew tap + GitHub Releases | Single binary, no runtime dep on user machine; `bunx cvault` for Bun-equipped users |
-| CLI auth flow | Browser-assisted Clerk sign-in token + ticket exchange via localhost callback | Per `clerk-convex-tanstack-integration` brief: Clerk has no native device flow for own-app sessions; sign-in token + ticket is the de-facto equivalent; token never hits URL bar / referer (POST'd from dashboard to `127.0.0.1:<port>`) |
+| Decision                      | Choice                                                                        | Reason                                                                                                                                                                                                                                                                                   |
+| ----------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sharing model                 | Single user, multi-sub, multi-machine                                         | Avoids ToS violation of pool-sharing                                                                                                                                                                                                                                                     |
+| Relationship to `claude-swap` | Wrap (not replace, not fork)                                                  | Vendor handles Keychain; `vault` adds sync layer                                                                                                                                                                                                                                         |
+| Backend stack                 | Blueprint 2.0 (Convex + Clerk + CFP + TanStack Start)                         | User preference; Convex realtime + atomic mutations fit refresh race protection                                                                                                                                                                                                          |
+| Refresh strategy              | Convex scheduled action                                                       | Race-free, no leader, machines stay simple                                                                                                                                                                                                                                               |
+| Auth model                    | Clerk only, no per-device tokens                                              | Clerk already manages sessions per machine                                                                                                                                                                                                                                               |
+| Add flow                      | Local-first via wrapped `claude-swap`                                         | Anthropic OAuth client closed; no MITM viable                                                                                                                                                                                                                                            |
+| Local sync                    | Pull-on-use, no daemon                                                        | YAGNI; daemons rot                                                                                                                                                                                                                                                                       |
+| CLI runtime                   | TypeScript on Bun (pivot 2026-05-02)                                          | Stack consistency (one language across CLI + backend + frontend); Convex TS SDK is canonical (Python `convex` 0.7.0 is sync-only, no HTTP-action helpers, no subscriptions); generated types via `convex/_generated/api` removes drift; `bun build --compile` ships single static binary |
+| CLI distribution              | `bun build --compile` → Homebrew tap + GitHub Releases                        | Single binary, no runtime dep on user machine; `bunx cvault` for Bun-equipped users                                                                                                                                                                                                      |
+| CLI auth flow                 | Browser-assisted Clerk sign-in token + ticket exchange via localhost callback | Per `clerk-convex-tanstack-integration` brief: Clerk has no native device flow for own-app sessions; sign-in token + ticket is the de-facto equivalent; token never hits URL bar / referer (POST'd from dashboard to `127.0.0.1:<port>`)                                                 |

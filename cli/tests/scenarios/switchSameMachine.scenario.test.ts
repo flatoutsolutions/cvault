@@ -27,10 +27,23 @@
  */
 import { writeFileSync } from 'node:fs'
 
+import { api } from '@cvault/convex/api'
+import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getFunctionName } from 'convex/server'
-import { api } from '@cvault/convex/api'
+import { importEnvelope, switchTo } from '../../src/claudeSwap'
+import { runSwitch } from '../../src/commands/switch'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+import { ensureVaultDir, lastHashPath } from '../../src/paths'
+import {
+  SAMPLE_OAUTH_BLOB,
+  cleanupTempHome,
+  createFakeVaultClient,
+  getCall,
+  makeSub,
+  refName,
+  setupTempHome,
+} from './_helpers'
 
 vi.mock('../../src/claudeSwap', () => ({
   importEnvelope: vi.fn(),
@@ -41,20 +54,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
   VaultClient: class {},
 }))
-
-import { importEnvelope, switchTo } from '../../src/claudeSwap'
-import { runSwitch } from '../../src/commands/switch'
-import { makeVaultClient } from '../../src/convex/vaultClient'
-import { ensureVaultDir, lastHashPath } from '../../src/paths'
-import {
-  cleanupTempHome,
-  createFakeVaultClient,
-  getCall,
-  makeSub,
-  refName,
-  SAMPLE_OAUTH_BLOB,
-  setupTempHome,
-} from './_helpers'
 
 let tempHome: string
 
@@ -88,9 +87,7 @@ describe('Scenario #4 — Switch on the same machine (hash matches)', () => {
     // Dispatch: typed pullForSwitch ref.
     expect(fake.action).toHaveBeenCalledOnce()
     const call = getCall(fake.action, 0)
-    expect(refName(call.ref)).toBe(
-      getFunctionName(api.subscriptions.actions.pullForSwitch)
-    )
+    expect(refName(call.ref)).toBe(getFunctionName(api.subscriptions.actions.pullForSwitch))
     expect(call.args?.slotOrEmail).toBe('1')
 
     // Hash matched -> no claude-swap --import -.
@@ -126,9 +123,7 @@ describe('Scenario #4 — Switch on the same machine (hash matches)', () => {
     const env = vi.mocked(importEnvelope).mock.calls[0]?.[0]
     expect(env?.accounts[0]?.email).toBe('fresh@b.com')
     // The envelope carries the OAuth blob the fake handed back.
-    expect(env?.accounts[0]?.credentials.claudeAiOauth.accessToken).toBe(
-      'sk-ant-oat01-AAAAAAAAAAAAAAAAAAAA'
-    )
+    expect(env?.accounts[0]?.credentials.claudeAiOauth.accessToken).toBe('sk-ant-oat01-AAAAAAAAAAAAAAAAAAAA')
     expect(switchTo).toHaveBeenCalledWith(2)
   })
 })

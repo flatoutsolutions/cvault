@@ -11,13 +11,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  NotLoggedInError,
-  readSession,
-  sessionFilePath,
-  writeSession,
-  type SessionState,
-} from '../../src/auth/session'
+import { NotLoggedInError, type SessionState, readSession, sessionFilePath, writeSession } from '../../src/auth/session'
 
 let tempHome: string
 let originalHome: string | undefined

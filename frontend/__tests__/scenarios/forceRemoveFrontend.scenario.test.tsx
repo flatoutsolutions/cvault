@@ -26,9 +26,12 @@
  * A separate `it.todo` reserves the explicit confirmation-required test
  * for when that UX lands.
  */
-import { getFunctionName } from 'convex/server'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// eslint-disable-next-line import/first
+import { SubsPage } from '../../src/routes/dashboard/index'
 
 const useQueryMock = vi.fn()
 const renameMock = vi.fn().mockResolvedValue(null)
@@ -67,9 +70,6 @@ vi.mock('convex/react', () => ({
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
 }))
-
-// eslint-disable-next-line import/first
-import { SubsPage } from '../../src/routes/dashboard/index'
 
 function makeSub(overrides: Record<string, unknown> = {}) {
   const now = Date.now()
@@ -149,9 +149,7 @@ describe('scenario / force remove (frontend)', () => {
     // While in-flight, the button shows "Removing…" and is disabled. This
     // is the user-visible signal that the click was registered.
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /removing/i }).hasAttribute('disabled')).toBe(
-        true
-      )
+      expect(screen.getByRole('button', { name: /removing/i }).hasAttribute('disabled')).toBe(true)
     })
 
     resolveRemove?.()
@@ -214,7 +212,5 @@ describe('scenario / force remove (frontend)', () => {
   // SubscriptionCard dispatches directly on click without an intermediate
   // confirm dialog. Once that UX lands (likely a `<Dialog>` like the
   // Rename flow already uses), wire this assertion against it.
-  it.todo(
-    'shows a confirm dialog before dispatching softRemove and only fires after explicit confirmation'
-  )
+  it.todo('shows a confirm dialog before dispatching softRemove and only fires after explicit confirmation')
 })

@@ -13,28 +13,28 @@ for is shipped + tested.
 
 ### What's in place
 
-| Domain | Public + internal functions |
-|---|---|
-| `subscriptions/queries` | `listForUser`, `getMetaByEmail` |
-| `subscriptions/mutations` | `upsert` (ciphertext path), `softRemove`, `rename`, `tryAcquireRefreshLease`, `releaseRefreshLease`, `commitRefreshedTokens`, `patchUsage`, `markReloginRequired`, `upsertEncrypted` (internal, called by `upsertFromPlaintext`) |
-| `subscriptions/actions` | `pullForSwitch`, `requestRefresh`, **`upsertFromPlaintext`** (public, server-side encrypt for `cvault add`), `refreshOAuthToken` (internal), `fetchUsageForSub` (internal) |
-| `subscriptions/internalReads` | `getSubscriptionRaw`, `getSubscriptionForActor`, `getSubscriptionByIdForActor`, `findExpiringSubs`, `listAllActiveSubIds` |
-| `subscriptions/crons` | `refreshExpiringTokens`, `pollUsage` |
-| `subscriptions/crypto` | `encrypt`, `decrypt` (Node, AES-256-GCM, master key from `VAULT_AES_KEY` env) |
-| `subscriptions/redact` | `redactTokens` (sk-ant-* shape -> `<redacted>`) |
-| `subscriptions/anthropic` | `refreshAccessToken`, `fetchUsage`, `generateHolderToken` (with `__setAnthropicFetch` test seam) |
-| `refreshLog/mutations` | `insert` (internal) |
-| `refreshLog/queries` | `recentForUser`, `recentForSubscription` |
-| `machineActivity/mutations` | `record` (internal; SHA-256 hashes raw IPs to 8-char prefix) |
-| `machineActivity/queries` | `recentForUser`, `recentForSession`, `distinctSessionsForUser` |
-| `cli/actions` | `startLink` (mints Clerk sign-in token), `revokeSession` (calls Clerk `/v1/sessions/<id>/revoke`) |
-| `cli/syncAction` | `buildBundleForUser` (internal Node action; powers `/api/cli/sync`) |
-| `cli/internalReads` | `listSubsRawForUser` |
-| `cli/httpSync` | GET `/api/cli/sync` HTTP route (auth, then delegates to syncAction) |
-| `cli/clerk` | `mintSignInToken`, `revokeClerkSession` (with `__setClerkFetch` test seam) |
-| `crons.ts` | Schedule: `refreshExpiringTokens` every 10 min, `pollUsage` every 5 min |
-| `utils/auth` | `authenticatedQuery/Mutation/Action` + `getIdentity(ctx)` helper |
-| `utils/users` | `getCurrentUserOrThrowFromIdentity`, `getCurrentUserOrNullFromIdentity` |
+| Domain                        | Public + internal functions                                                                                                                                                                                                      |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `subscriptions/queries`       | `listForUser`, `getMetaByEmail`                                                                                                                                                                                                  |
+| `subscriptions/mutations`     | `upsert` (ciphertext path), `softRemove`, `rename`, `tryAcquireRefreshLease`, `releaseRefreshLease`, `commitRefreshedTokens`, `patchUsage`, `markReloginRequired`, `upsertEncrypted` (internal, called by `upsertFromPlaintext`) |
+| `subscriptions/actions`       | `pullForSwitch`, `requestRefresh`, **`upsertFromPlaintext`** (public, server-side encrypt for `cvault add`), `refreshOAuthToken` (internal), `fetchUsageForSub` (internal)                                                       |
+| `subscriptions/internalReads` | `getSubscriptionRaw`, `getSubscriptionForActor`, `getSubscriptionByIdForActor`, `findExpiringSubs`, `listAllActiveSubIds`                                                                                                        |
+| `subscriptions/crons`         | `refreshExpiringTokens`, `pollUsage`                                                                                                                                                                                             |
+| `subscriptions/crypto`        | `encrypt`, `decrypt` (Node, AES-256-GCM, master key from `VAULT_AES_KEY` env)                                                                                                                                                    |
+| `subscriptions/redact`        | `redactTokens` (sk-ant-\* shape -> `<redacted>`)                                                                                                                                                                                 |
+| `subscriptions/anthropic`     | `refreshAccessToken`, `fetchUsage`, `generateHolderToken` (with `__setAnthropicFetch` test seam)                                                                                                                                 |
+| `refreshLog/mutations`        | `insert` (internal)                                                                                                                                                                                                              |
+| `refreshLog/queries`          | `recentForUser`, `recentForSubscription`                                                                                                                                                                                         |
+| `machineActivity/mutations`   | `record` (internal; SHA-256 hashes raw IPs to 8-char prefix)                                                                                                                                                                     |
+| `machineActivity/queries`     | `recentForUser`, `recentForSession`, `distinctSessionsForUser`                                                                                                                                                                   |
+| `cli/actions`                 | `startLink` (mints Clerk sign-in token), `revokeSession` (calls Clerk `/v1/sessions/<id>/revoke`)                                                                                                                                |
+| `cli/syncAction`              | `buildBundleForUser` (internal Node action; powers `/api/cli/sync`)                                                                                                                                                              |
+| `cli/internalReads`           | `listSubsRawForUser`                                                                                                                                                                                                             |
+| `cli/httpSync`                | GET `/api/cli/sync` HTTP route (auth, then delegates to syncAction)                                                                                                                                                              |
+| `cli/clerk`                   | `mintSignInToken`, `revokeClerkSession` (with `__setClerkFetch` test seam)                                                                                                                                                       |
+| `crons.ts`                    | Schedule: `refreshExpiringTokens` every 10 min, `pollUsage` every 5 min                                                                                                                                                          |
+| `utils/auth`                  | `authenticatedQuery/Mutation/Action` + `getIdentity(ctx)` helper                                                                                                                                                                 |
+| `utils/users`                 | `getCurrentUserOrThrowFromIdentity`, `getCurrentUserOrNullFromIdentity`                                                                                                                                                          |
 
 ### Tests
 
@@ -43,21 +43,21 @@ across 13 files passing**.
 
 Coverage by file:
 
-| Test file | Tests |
-|---|---|
-| `subscriptions/queries.test.ts` | 6 |
-| `subscriptions/mutations.test.ts` | 14 |
-| `subscriptions/refresh.test.ts` | 8 |
-| `subscriptions/usage.test.ts` | 3 |
-| `subscriptions/crons.test.ts` | 5 |
-| `subscriptions/upsertFromPlaintext.test.ts` | 3 |
-| `subscriptions/crypto.node.test.ts` | 7 |
-| `subscriptions/redact.test.ts` | 5 |
-| `refreshLog/queries.test.ts` | 2 |
-| `machineActivity/mutations.test.ts` | 4 |
-| `cli/actions.test.ts` | 6 |
-| `__tests__/httpSync.test.ts` | 3 |
-| `utils/auth.test.ts` | 4 |
+| Test file                                   | Tests |
+| ------------------------------------------- | ----- |
+| `subscriptions/queries.test.ts`             | 6     |
+| `subscriptions/mutations.test.ts`           | 14    |
+| `subscriptions/refresh.test.ts`             | 8     |
+| `subscriptions/usage.test.ts`               | 3     |
+| `subscriptions/crons.test.ts`               | 5     |
+| `subscriptions/upsertFromPlaintext.test.ts` | 3     |
+| `subscriptions/crypto.node.test.ts`         | 7     |
+| `subscriptions/redact.test.ts`              | 5     |
+| `refreshLog/queries.test.ts`                | 2     |
+| `machineActivity/mutations.test.ts`         | 4     |
+| `cli/actions.test.ts`                       | 6     |
+| `__tests__/httpSync.test.ts`                | 3     |
+| `utils/auth.test.ts`                        | 4     |
 
 ### Lint, typecheck
 
@@ -168,6 +168,7 @@ export default defineConfig(({ mode }) => {
 ```
 
 What this adds:
+
 1. `vite-tsconfig-paths` plugin so `@/components/...` aliases resolve in
    tests (matches what `frontend/vite.config.ts` already does for the app).
 2. `['frontend/**', 'jsdom']` env so Testing Library has DOM APIs.
@@ -182,6 +183,7 @@ afterEach is a no-op for non-RTL tests.
 `jsdom` is already in `devDependencies`. No new installs needed.
 
 ### Once root vitest.config.ts has the three lines above, please delete
+
 `vitest.frontend.config.ts` from the repo root. It's a temporary workaround.
 
 ---
@@ -233,27 +235,28 @@ The frontend is wired against this surface. Items marked **GAP** still need
 backend work; the page either falls back gracefully or shows a placeholder.
 Search the frontend tree for `PENDING:` for exact call sites.
 
-| Surface | Status | Why dashboard needs it |
-|---|---|---|
-| `api.subscriptions.queries.listForUser` | DONE | `/dashboard` sub list cards |
-| `api.subscriptions.mutations.softRemove` | DONE | "Remove" per-card action |
-| `api.subscriptions.mutations.rename` | DONE | "Rename" per-card action |
-| `api.subscriptions.actions.refreshOAuthToken` | **GAP — currently `internalAction`** | "Force Refresh" button needs a public callable. Either expose a public wrapper or wrap the existing impl in an `authenticatedAction` that re-checks ownership. Spec §5 lists this under `subscriptions/actions.ts` as public-facing. UI currently `console.warn`s and disables the button briefly until you land it. |
-| `api.refreshLog.queries.recentForUser` | DONE | `/dashboard/audit` merged feed |
-| `api.machineActivity.queries.recentForUser` | DONE | `/dashboard/audit` merged feed |
-| `api.machineActivity.queries.distinctSessionsForUser` | DONE | `/dashboard/machines` list |
-| `api.cli.actions.startLink` | DONE | `/cli/link` callback page |
-| `api.cli.actions.revokeSession` | DONE | `/dashboard/machines` "Revoke" button (you named it `cli.revokeSession`, not `machines.revoke` — frontend code matches your name) |
+| Surface                                               | Status                               | Why dashboard needs it                                                                                                                                                                                                                                                                                               |
+| ----------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.subscriptions.queries.listForUser`               | DONE                                 | `/dashboard` sub list cards                                                                                                                                                                                                                                                                                          |
+| `api.subscriptions.mutations.softRemove`              | DONE                                 | "Remove" per-card action                                                                                                                                                                                                                                                                                             |
+| `api.subscriptions.mutations.rename`                  | DONE                                 | "Rename" per-card action                                                                                                                                                                                                                                                                                             |
+| `api.subscriptions.actions.refreshOAuthToken`         | **GAP — currently `internalAction`** | "Force Refresh" button needs a public callable. Either expose a public wrapper or wrap the existing impl in an `authenticatedAction` that re-checks ownership. Spec §5 lists this under `subscriptions/actions.ts` as public-facing. UI currently `console.warn`s and disables the button briefly until you land it. |
+| `api.refreshLog.queries.recentForUser`                | DONE                                 | `/dashboard/audit` merged feed                                                                                                                                                                                                                                                                                       |
+| `api.machineActivity.queries.recentForUser`           | DONE                                 | `/dashboard/audit` merged feed                                                                                                                                                                                                                                                                                       |
+| `api.machineActivity.queries.distinctSessionsForUser` | DONE                                 | `/dashboard/machines` list                                                                                                                                                                                                                                                                                           |
+| `api.cli.actions.startLink`                           | DONE                                 | `/cli/link` callback page                                                                                                                                                                                                                                                                                            |
+| `api.cli.actions.revokeSession`                       | DONE                                 | `/dashboard/machines` "Revoke" button (you named it `cli.revokeSession`, not `machines.revoke` — frontend code matches your name)                                                                                                                                                                                    |
 
 ### Backend type errors
 
 `yarn tsc --noEmit -p tsconfig.app.json` reports 12 type errors, all in
 `convex/`:
+
 - `convex/utils/auth.ts` — the `authenticatedQuery`/`Mutation`/`Action`
   builders typecast via `as QueryBuilder<DataModel, 'public'>` etc., which
   loses the `ctx.identity` extension. Every domain handler that calls
   `ctx.identity.subject` triggers `Property 'identity' does not exist on
-  type 'GenericQueryCtx<…>'`.
+type 'GenericQueryCtx<…>'`.
 - Affected: `cli/actions.ts`, `cli/syncAction.ts`, `machineActivity/queries.ts`,
   `refreshLog/queries.ts`, `subscriptions/actions.ts`, `subscriptions/mutations.ts`,
   `subscriptions/queries.ts`.
@@ -302,14 +305,14 @@ functions are referenced via string-keyed action refs with `// PENDING:`
 markers in CLI source (search the `cli/src` tree for `PENDING:` to find
 each call site).
 
-| Surface | Status | Why CLI needs it |
-|---|---|---|
-| `api.subscriptions.queries.listForUser` | DONE | `cvault list`, `cvault sync --all` |
-| `api.subscriptions.queries.getMetaByEmail` | DONE | `cvault status` |
-| `api.subscriptions.mutations.softRemove` | DONE | `cvault remove` step 1 |
-| `api.subscriptions.actions.pullForSwitch` | DONE | `cvault switch`, `cvault sync --all` |
-| `api.subscriptions.actions.upsertFromPlaintext` | **GAP** | `cvault add`. Spec §5 says `upsert({email, plaintextBlob, slot?})` — server-side encrypt with `VAULT_AES_KEY`, then call internal `commitFresh` mutation. Today's `subscriptions.mutations.upsert` takes `ciphertext: v.bytes()` + `nonce: v.bytes()` directly, which the CLI cannot generate without the AES key. Need a public `'use node'` action that encrypts + delegates. |
-| `api.subscriptions.actions.refreshOAuthTokenForUser` | **GAP** | `cvault refresh`. Today `refreshOAuthToken` is `internalAction` only. Either move to public-callable, or add a public wrapper that re-checks ownership (`getCurrentUserOrThrowFromIdentity`) and delegates to the internal one. |
+| Surface                                              | Status  | Why CLI needs it                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.subscriptions.queries.listForUser`              | DONE    | `cvault list`, `cvault sync --all`                                                                                                                                                                                                                                                                                                                                              |
+| `api.subscriptions.queries.getMetaByEmail`           | DONE    | `cvault status`                                                                                                                                                                                                                                                                                                                                                                 |
+| `api.subscriptions.mutations.softRemove`             | DONE    | `cvault remove` step 1                                                                                                                                                                                                                                                                                                                                                          |
+| `api.subscriptions.actions.pullForSwitch`            | DONE    | `cvault switch`, `cvault sync --all`                                                                                                                                                                                                                                                                                                                                            |
+| `api.subscriptions.actions.upsertFromPlaintext`      | **GAP** | `cvault add`. Spec §5 says `upsert({email, plaintextBlob, slot?})` — server-side encrypt with `VAULT_AES_KEY`, then call internal `commitFresh` mutation. Today's `subscriptions.mutations.upsert` takes `ciphertext: v.bytes()` + `nonce: v.bytes()` directly, which the CLI cannot generate without the AES key. Need a public `'use node'` action that encrypts + delegates. |
+| `api.subscriptions.actions.refreshOAuthTokenForUser` | **GAP** | `cvault refresh`. Today `refreshOAuthToken` is `internalAction` only. Either move to public-callable, or add a public wrapper that re-checks ownership (`getCurrentUserOrThrowFromIdentity`) and delegates to the internal one.                                                                                                                                                 |
 
 Until those land, the affected commands fail with "Could not find function" from Convex.
 
@@ -340,7 +343,8 @@ tests pass `eslint cli/src cli/tests` cleanly with the existing rule set.
 The release-cli workflow's lint step now runs `yarn lint:check` (which
 exercises the root config) instead of `bunx biome check`. Biome is not
 installed in this monorepo and the brief explicitly recommends ESLint
-+ Prettier.
+
+- Prettier.
 
 ### Module mock state in Vitest 4
 
@@ -369,15 +373,15 @@ re-run at completion; quoted output below.
 
 ### Verification gates (final, all green)
 
-| Gate | Command | Result |
-|---|---|---|
-| Root tests | `yarn test` | `Test Files 27 passed (27)`, `Tests 170 passed (170) | 2 todo (172)` |
-| CLI tests | `cd cli && bunx --bun vitest run` | `Test Files 25 passed (25)`, `Tests 138 passed (138)` |
-| Lint | `yarn lint:check` | exit 0, no output |
-| Convex push | `npx convex dev --once --typecheck enable` | `Convex functions ready! (4.96s)` |
-| Frontend typecheck | `npx tsc --noEmit -p tsconfig.app.json` | exit 0, no output |
-| CLI typecheck | `cd cli && bunx tsc --noEmit` | exit 0, no output |
-| CLI compile | `bun build --compile --target=bun-darwin-arm64 …` | `[21ms] bundle 57 modules`, `[89ms] compile` |
+| Gate               | Command                                           | Result                                                |
+| ------------------ | ------------------------------------------------- | ----------------------------------------------------- | ------------- |
+| Root tests         | `yarn test`                                       | `Test Files 27 passed (27)`, `Tests 170 passed (170)  | 2 todo (172)` |
+| CLI tests          | `cd cli && bunx --bun vitest run`                 | `Test Files 25 passed (25)`, `Tests 138 passed (138)` |
+| Lint               | `yarn lint:check`                                 | exit 0, no output                                     |
+| Convex push        | `npx convex dev --once --typecheck enable`        | `Convex functions ready! (4.96s)`                     |
+| Frontend typecheck | `npx tsc --noEmit -p tsconfig.app.json`           | exit 0, no output                                     |
+| CLI typecheck      | `cd cli && bunx tsc --noEmit`                     | exit 0, no output                                     |
+| CLI compile        | `bun build --compile --target=bun-darwin-arm64 …` | `[21ms] bundle 57 modules`, `[89ms] compile`          |
 
 Baseline before fixes: 122 root tests, 117 CLI tests. Net delta: +48 root
 (scenario harness + new behavioral coverage), +21 CLI (refresh resolves
@@ -393,10 +397,11 @@ revoking and throws `NOT_FOUND` (deliberately conflated with
 "session-not-found" to avoid leaking session-existence to a probing
 attacker) when `lookup.userId !== identity.subject`. Tests:
 `convex/cli/actions.test.ts:111-194` — happy path + cross-user rejection
-+ Clerk 404 rejection. Cross-user test confirms the revoke endpoint is
-NEVER hit when ownership fails. (`api.users.actions.getIdByExternalId`
-internalQuery added at `convex/users/actions.ts:79-86` so the action can
-write its own `machineActivity` audit row from the Node runtime.)
+
+- Clerk 404 rejection. Cross-user test confirms the revoke endpoint is
+  NEVER hit when ownership fails. (`api.users.actions.getIdByExternalId`
+  internalQuery added at `convex/users/actions.ts:79-86` so the action can
+  write its own `machineActivity` audit row from the Node runtime.)
 
 **C2 — `cvault refresh` wire mismatch (SUPER C1)**
 Fixed at `cli/src/commands/refresh.ts`. The CLI now resolves `slot|email`
@@ -504,7 +509,7 @@ Critical/High fixes:
   table indexed `byUserAndKey`. The mutation is internal; the HTTP
   handler at `convex/cli/httpSync.ts` calls
   `internal.rateLimit.mutations.consume` with `capacity:10,
-  windowMs:3600_000`. 11th request returns 429 with
+windowMs:3600_000`. 11th request returns 429 with
   `Retry-After` header and `retryAfterMs` in body. Test:
   `convex/__tests__/httpSync.test.ts:147-201`.
 - **M3 — `machineActivity` rows on softRemove / rename /
@@ -529,12 +534,12 @@ Critical/High fixes:
 Per coordinator instruction, the following are explicitly deferred and
 should be picked up by a separate agent:
 
-| Finding | Reason for deferral |
-|---|---|
-| **M5 — `rawIp` schema/mutation cleanup** | The `rawIp` parameter is now USED by `/api/cli/sync` (above). The audit's recommendation was "remove from schema" but the current state is "schema unchanged, mutation accepts rawIp, only HTTP route passes it" — which is how the spec intends the audit feature to work. No revert needed; just verify that the schema-vs-spec drift the audit flagged is actually resolved. |
-| **M6 — Clerk webhook `v.any()` validators** | Pre-existing Blueprint code in `convex/users/actions.ts:14`, `convex/organizations/actions.ts:18`, `convex/organizationMembers/actions.ts:28,47`. Replacing requires either a tight `v.object({…})` matching the subset of `UserJSON`/`OrganizationJSON` the handlers read, or extracting the strict shape from `@clerk/backend`'s types. Out of cvault's territory; deferred to a Blueprint-aware agent. |
-| **Terminology — `pullForSwitch` action='pull' vs spec's 'switch'** | Spec §4 lists both `'pull'` and `'switch'` literals in the action enum. Implementation uses `'pull'` for server-side pulls and the new `'switch'` literal is unused. Decision: leave both literals; the CLI may emit a separate `'switch'` row from `claude-swap --switch-to` in v2. No code change needed; spec already covers both. |
-| **Spec amendment — 400 invalid_grant + EOPT note in CLI tsconfig** | Spec §10 should be amended to acknowledge the documented 400-also-means-reloginRequired path that landed via OAuth research brief, AND the rationale for dropping `exactOptionalPropertyTypes` from CLI tsconfig (path alias forces single-source-of-typecheck-rules). |
+| Finding                                                            | Reason for deferral                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **M5 — `rawIp` schema/mutation cleanup**                           | The `rawIp` parameter is now USED by `/api/cli/sync` (above). The audit's recommendation was "remove from schema" but the current state is "schema unchanged, mutation accepts rawIp, only HTTP route passes it" — which is how the spec intends the audit feature to work. No revert needed; just verify that the schema-vs-spec drift the audit flagged is actually resolved.                           |
+| **M6 — Clerk webhook `v.any()` validators**                        | Pre-existing Blueprint code in `convex/users/actions.ts:14`, `convex/organizations/actions.ts:18`, `convex/organizationMembers/actions.ts:28,47`. Replacing requires either a tight `v.object({…})` matching the subset of `UserJSON`/`OrganizationJSON` the handlers read, or extracting the strict shape from `@clerk/backend`'s types. Out of cvault's territory; deferred to a Blueprint-aware agent. |
+| **Terminology — `pullForSwitch` action='pull' vs spec's 'switch'** | Spec §4 lists both `'pull'` and `'switch'` literals in the action enum. Implementation uses `'pull'` for server-side pulls and the new `'switch'` literal is unused. Decision: leave both literals; the CLI may emit a separate `'switch'` row from `claude-swap --switch-to` in v2. No code change needed; spec already covers both.                                                                     |
+| **Spec amendment — 400 invalid_grant + EOPT note in CLI tsconfig** | Spec §10 should be amended to acknowledge the documented 400-also-means-reloginRequired path that landed via OAuth research brief, AND the rationale for dropping `exactOptionalPropertyTypes` from CLI tsconfig (path alias forces single-source-of-typecheck-rules).                                                                                                                                    |
 
 ### New issues surfaced during the fix work
 
@@ -551,7 +556,7 @@ should be picked up by a separate agent:
 2. **Frontend scenario tests had stale Proxy-aware ref helpers.** The
    team-lead-added scenario test files
    (`frontend/__tests__/scenarios/{forceRefresh, forceRemoveFrontend,
-   reloginBadge, revokeMachine}.scenario.test.tsx`) used a `refName()`
+reloginBadge, revokeMachine}.scenario.test.tsx`) used a `refName()`
    helper that read `_name`/`_functionPath` directly off the Proxy.
    With the typed `api.x.y.z` references those properties return more
    Proxies, breaking `name.includes(...)` checks. Fixed (likely by an

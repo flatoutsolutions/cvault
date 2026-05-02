@@ -17,9 +17,9 @@
  *   - Convex unreachable → fall back to local `claude-swap --switch-to`
  *     directly with a printed warning (per spec §7).
  */
+import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
-import { api } from '@cvault/convex/api'
 import { importEnvelope, switchTo } from '../claudeSwap'
 import { makeVaultClient } from '../convex/vaultClient'
 import { buildSingleAccountEnvelope } from '../envelope'

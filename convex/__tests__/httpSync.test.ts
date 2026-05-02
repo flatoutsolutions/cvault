@@ -10,8 +10,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { api } from '../_generated/api'
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api } from '../_generated/api'
 import { __setAnthropicFetch } from '../subscriptions/anthropic'
 
 const ORIGINAL_KEY = process.env.VAULT_AES_KEY
@@ -36,7 +36,7 @@ describe('GET /api/cli/sync', () => {
     expect(resp.status).toBe(401)
   })
 
-  it('returns the caller\'s active subs as plaintext bundle when authenticated', async () => {
+  it("returns the caller's active subs as plaintext bundle when authenticated", async () => {
     const t = vault()
     await seedUser(t)
 
@@ -85,10 +85,10 @@ describe('GET /api/cli/sync', () => {
     __setAnthropicFetch(
       vi.fn(() =>
         Promise.resolve(
-          new Response(
-            JSON.stringify({ access_token: 'X', expires_in: 3600 }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } }
-          )
+          new Response(JSON.stringify({ access_token: 'X', expires_in: 3600 }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
         )
       )
     )
@@ -133,9 +133,7 @@ describe('GET /api/cli/sync', () => {
     })
     expect(resp.status).toBe(200)
 
-    const rows = await t.run(async (ctx) =>
-      await ctx.db.query('machineActivity').collect()
-    )
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     // Bulk-pull is currently logged as a single 'pull' row per call.
     const pullRow = rows.find((r) => r.action === 'pull')
     expect(pullRow).toBeDefined()

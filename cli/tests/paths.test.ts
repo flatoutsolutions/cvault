@@ -10,14 +10,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  ensureVaultDir,
-  lastHashPath,
-  readSecret,
-  vaultDir,
-  vaultFile,
-  writeSecret,
-} from '../src/paths'
+import { ensureVaultDir, lastHashPath, readSecret, vaultDir, vaultFile, writeSecret } from '../src/paths'
 
 let tempHome: string
 let originalHome: string | undefined
@@ -107,15 +100,11 @@ describe('readSecret with loose perms', () => {
 
 describe('lastHashPath', () => {
   it('returns ~/.vault/last-hash-{email}.txt for safe emails', () => {
-    expect(lastHashPath('user@example.com')).toBe(
-      join(tempHome, '.vault', 'last-hash-user@example.com.txt')
-    )
+    expect(lastHashPath('user@example.com')).toBe(join(tempHome, '.vault', 'last-hash-user@example.com.txt'))
   })
 
   it('strips path traversal characters from the email', () => {
-    expect(lastHashPath('../etc/passwd')).toBe(
-      join(tempHome, '.vault', 'last-hash-__etc_passwd.txt')
-    )
+    expect(lastHashPath('../etc/passwd')).toBe(join(tempHome, '.vault', 'last-hash-__etc_passwd.txt'))
     expect(lastHashPath('a/b@c')).toBe(join(tempHome, '.vault', 'last-hash-a_b@c.txt'))
   })
 })

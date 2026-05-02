@@ -20,9 +20,12 @@
  * happy path the row leaves the list; in the rejected path the inline
  * error renders. Both branches are asserted below.)
  */
-import { getFunctionName } from 'convex/server'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// eslint-disable-next-line import/first
+import { MachinesPage } from '../../src/routes/dashboard/machines'
 
 let sessionsResult: unknown = undefined
 const revokeMock = vi.fn()
@@ -56,9 +59,6 @@ vi.mock('convex/react', () => ({
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
 }))
-
-// eslint-disable-next-line import/first
-import { MachinesPage } from '../../src/routes/dashboard/machines'
 
 function makeSession(overrides: Record<string, unknown> = {}) {
   const now = Date.now()
@@ -123,9 +123,7 @@ describe('scenario / revoke machine', () => {
     fireEvent.click(revokeBtn)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /revoking/i }).hasAttribute('disabled')).toBe(
-        true
-      )
+      expect(screen.getByRole('button', { name: /revoking/i }).hasAttribute('disabled')).toBe(true)
     })
 
     resolveRevoke?.()

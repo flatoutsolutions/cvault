@@ -19,7 +19,7 @@ name: Release CLI
 # Quoted "on" because some YAML 1.1 parsers (Ruby psych, older yamllint)
 # coerce the bare key to boolean `true`. GitHub Actions tolerates either,
 # but the quoted form is unambiguous everywhere.
-"on":
+'on':
   push:
     tags:
       # Semver-tagged CLI releases: cli-v0.1.0, cli-v1.2.3, cli-v2.0.0-rc.1, ...

@@ -13,6 +13,10 @@
 import type { FunctionReference } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { SessionState } from '../../src/auth/session'
+import { isAuthError } from '../../src/convex/isAuthError'
+import { VaultClient } from '../../src/convex/vaultClient'
+
 // CRITICAL: VaultClient.refreshAuth() persists the refreshed session to
 // `~/.vault/session.json` via writeSession. Without this mock the tests
 // would clobber the developer's REAL session file every time the
@@ -21,18 +25,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // observed on a developer's machine). The mock must be hoisted by vitest
 // (`vi.mock` runs before the import below).
 vi.mock('../../src/auth/session', async () => {
-  const actual = await vi.importActual<typeof import('../../src/auth/session')>(
-    '../../src/auth/session'
-  )
+  const actual = await vi.importActual<typeof import('../../src/auth/session')>('../../src/auth/session')
   return {
     ...actual,
     writeSession: vi.fn().mockResolvedValue(undefined),
   }
 })
-
-import { isAuthError } from '../../src/convex/isAuthError'
-import { VaultClient } from '../../src/convex/vaultClient'
-import type { SessionState } from '../../src/auth/session'
 
 const sampleSession: SessionState = {
   version: 1,
@@ -64,9 +62,7 @@ const fakeMutation = ((): FunctionReference<'mutation'> => {
     {},
     {
       get: (_t, prop) =>
-        prop === Symbol.toPrimitive || prop === 'toString'
-          ? () => 'subscriptions/mutations:softRemove'
-          : undefined,
+        prop === Symbol.toPrimitive || prop === 'toString' ? () => 'subscriptions/mutations:softRemove' : undefined,
     }
   ) as FunctionReference<'mutation'>
 })()
@@ -76,9 +72,7 @@ const fakeAction = ((): FunctionReference<'action'> => {
     {},
     {
       get: (_t, prop) =>
-        prop === Symbol.toPrimitive || prop === 'toString'
-          ? () => 'subscriptions/actions:pullForSwitch'
-          : undefined,
+        prop === Symbol.toPrimitive || prop === 'toString' ? () => 'subscriptions/actions:pullForSwitch' : undefined,
     }
   ) as FunctionReference<'action'>
 })()
@@ -100,16 +94,8 @@ describe('isAuthError', () => {
   // the cached 60-second convex JWT becomes a hard error the moment it
   // lapses (verified end-to-end against the live deployment).
   it('matches Convex InvalidAuthHeader / could-not-parse-JWT errors', () => {
-    expect(
-      isAuthError(
-        new Error(
-          '{"code":"InvalidAuthHeader","message":"Could not parse JWT payload."}'
-        )
-      )
-    ).toBe(true)
-    expect(
-      isAuthError(new Error('InvalidAuthToken: signature verification failed'))
-    ).toBe(true)
+    expect(isAuthError(new Error('{"code":"InvalidAuthHeader","message":"Could not parse JWT payload."}'))).toBe(true)
+    expect(isAuthError(new Error('InvalidAuthToken: signature verification failed'))).toBe(true)
   })
 
   it('does not match unrelated errors', () => {
@@ -184,9 +170,7 @@ describe('VaultClient', () => {
   })
 
   it('retries once on auth error after refreshing the JWT', async () => {
-    queryStub
-      .mockRejectedValueOnce(new Error('401 Unauthenticated'))
-      .mockResolvedValueOnce(['sub1'])
+    queryStub.mockRejectedValueOnce(new Error('401 Unauthenticated')).mockResolvedValueOnce(['sub1'])
 
     // Stub mintConvexJwt by injecting a custom refresher.
     const refresher = vi.fn().mockResolvedValueOnce({

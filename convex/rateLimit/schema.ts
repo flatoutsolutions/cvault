@@ -23,5 +23,4 @@ export const rateLimitSchema = defineTable({
   tokens: v.number(),
   /** Wall-clock ms of the current window's start. */
   windowStart: v.number(),
-})
-  .index('byUserAndKey', ['userId', 'key'])
+}).index('byUserAndKey', ['userId', 'key'])

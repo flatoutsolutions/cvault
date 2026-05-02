@@ -6,8 +6,8 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { api } from '../_generated/api'
 import { TEST_IDENTITY, vault } from '../__tests__/helpers'
+import { api } from '../_generated/api'
 
 describe('authenticated wrappers', () => {
   describe('authenticatedQuery', () => {
@@ -36,9 +36,9 @@ describe('authenticated wrappers', () => {
   describe('authenticatedMutation', () => {
     it('throws when called without a Clerk identity', async () => {
       const t = vault()
-      await expect(
-        t.mutation(api.subscriptions.mutations.softRemove, { email: 'x@example.com' })
-      ).rejects.toThrow(/authenticated/i)
+      await expect(t.mutation(api.subscriptions.mutations.softRemove, { email: 'x@example.com' })).rejects.toThrow(
+        /authenticated/i
+      )
     })
   })
 
@@ -46,9 +46,9 @@ describe('authenticated wrappers', () => {
     it('throws when called without a Clerk identity', async () => {
       const t = vault()
       // pullForSwitch is the only public action that uses authenticatedAction.
-      await expect(
-        t.action(api.subscriptions.actions.pullForSwitch, { slotOrEmail: 'x@example.com' })
-      ).rejects.toThrow(/authenticated/i)
+      await expect(t.action(api.subscriptions.actions.pullForSwitch, { slotOrEmail: 'x@example.com' })).rejects.toThrow(
+        /authenticated/i
+      )
     })
   })
 })

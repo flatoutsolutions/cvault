@@ -13,12 +13,13 @@
  * action-state plumbing; this file owns the Convex calls + per-card
  * pending-state map keyed by email.
  */
-import { useAction, useMutation, useQuery } from 'convex/react'
 import { createFileRoute } from '@tanstack/react-router'
+import { useAction, useMutation, useQuery } from 'convex/react'
 import { useState } from 'react'
 
 import { SubscriptionCard } from '@/components/dashboard/SubscriptionCard'
 import { Skeleton } from '@/components/ui/skeleton'
+
 import { api } from '../../../../convex/_generated/api'
 
 export const Route = createFileRoute('/dashboard/')({
@@ -114,8 +115,8 @@ export function SubsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Subscriptions</h1>
         <p className="text-muted-foreground text-sm">
-          {subs.length.toString()} active{' '}
-          {subs.length === 1 ? 'subscription' : 'subscriptions'} across all your machines.
+          {subs.length.toString()} active {subs.length === 1 ? 'subscription' : 'subscriptions'} across all your
+          machines.
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -147,8 +148,8 @@ function EmptyState() {
     <div className="bg-card border-border flex flex-col items-center gap-3 rounded-lg border p-12 text-center">
       <h1 className="text-xl font-semibold">No subscriptions yet</h1>
       <p className="text-muted-foreground max-w-md text-sm">
-        Run <code className="bg-muted rounded px-1 py-0.5 font-mono">cvault add</code> on a machine
-        that's already logged into Claude Code to import an Anthropic account into the vault.
+        Run <code className="bg-muted rounded px-1 py-0.5 font-mono">cvault add</code> on a machine that's already
+        logged into Claude Code to import an Anthropic account into the vault.
       </p>
     </div>
   )

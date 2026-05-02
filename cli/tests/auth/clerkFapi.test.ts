@@ -67,8 +67,7 @@ describe('decodeJwtExp', () => {
   })
 
   it('throws on a malformed JWT', () => {
-    expect(() => decodeJwtExp('not.a.jwt-because-the-middle-is-not-base64url'))
-      .toThrow()
+    expect(() => decodeJwtExp('not.a.jwt-because-the-middle-is-not-base64url')).toThrow()
   })
 })
 

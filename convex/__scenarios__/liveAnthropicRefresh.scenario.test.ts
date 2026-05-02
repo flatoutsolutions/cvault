@@ -28,8 +28,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { internal } from '../_generated/api'
 import { TEST_IDENTITY, vault } from '../__tests__/helpers'
+import { internal } from '../_generated/api'
 import { seedSubscription, withVaultKey } from './_helpers.scenario'
 
 const LIVE_REFRESH_TOKEN = process.env.VAULT_TEST_REFRESH_TOKEN
@@ -54,13 +54,10 @@ describe('scenario: live Anthropic OAuth refresh', () => {
   // the title-builder eagerly; a guarded `it` keeps the test name visible
   // without ever instantiating any state when the env is missing.
   if (!LIVE_REFRESH_TOKEN) {
-    it.skip(
-      'live refresh roundtrip — set VAULT_TEST_REFRESH_TOKEN=<refresh_token from ~/.claude/.credentials.json> to enable',
-      () => {
-        // Intentionally empty — body never runs. The test name itself
-        // documents how to enable.
-      }
-    )
+    it.skip('live refresh roundtrip — set VAULT_TEST_REFRESH_TOKEN=<refresh_token from ~/.claude/.credentials.json> to enable', () => {
+      // Intentionally empty — body never runs. The test name itself
+      // documents how to enable.
+    })
     return
   }
 
@@ -94,9 +91,7 @@ describe('scenario: live Anthropic OAuth refresh', () => {
     })
     expect(before).not.toBeNull()
     const beforeExpiresAt = before?.expiresAt ?? 0
-    const beforeCiphertextHex = Buffer.from(
-      before?.ciphertext ?? new ArrayBuffer(0)
-    ).toString('hex')
+    const beforeCiphertextHex = Buffer.from(before?.ciphertext ?? new ArrayBuffer(0)).toString('hex')
 
     // Drive the real refresh. NO __setAnthropicFetch — we want the actual
     // network call. This is the whole point of the scenario.
@@ -117,9 +112,7 @@ describe('scenario: live Anthropic OAuth refresh', () => {
     expect(afterExpiresAt).toBeGreaterThan(Date.now() + 60 * 60 * 1000)
 
     // Ciphertext rotated (fresh nonce + new plaintext means new bytes).
-    const afterCiphertextHex = Buffer.from(
-      after?.ciphertext ?? new ArrayBuffer(0)
-    ).toString('hex')
+    const afterCiphertextHex = Buffer.from(after?.ciphertext ?? new ArrayBuffer(0)).toString('hex')
     expect(afterCiphertextHex).not.toBe(beforeCiphertextHex)
 
     // Decrypt the new ciphertext and confirm the access token differs from
@@ -127,10 +120,7 @@ describe('scenario: live Anthropic OAuth refresh', () => {
     // node'` module and we want the test runner to load it lazily under
     // Node, matching how the action loads it.
     const { decrypt } = await import('../subscriptions/crypto')
-    const newPlaintext = decrypt(
-      after?.ciphertext ?? new ArrayBuffer(0),
-      after?.nonce ?? new ArrayBuffer(0)
-    )
+    const newPlaintext = decrypt(after?.ciphertext ?? new ArrayBuffer(0), after?.nonce ?? new ArrayBuffer(0))
     type OAuthBlob = {
       claudeAiOauth?: {
         accessToken?: string

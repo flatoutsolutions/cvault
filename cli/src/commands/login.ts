@@ -15,8 +15,9 @@
  *   4. We exchange the ticket for a long-lived Clerk session via FAPI
  *   5. Persist `~/.vault/session.json`
  */
-import { defineCommand } from 'citty'
 import { randomUUID } from 'node:crypto'
+
+import { defineCommand } from 'citty'
 
 import { api } from '../../../convex/_generated/api'
 import { startCallbackServer } from '../auth/callbackServer'
@@ -74,9 +75,7 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
       signInToken,
       frontendApiUrl: opts.frontendApiUrl,
       convexUrl: opts.convexUrl,
-      ...(opts.dashboardOrigin !== undefined
-        ? { dashboardOrigin: opts.dashboardOrigin }
-        : {}),
+      ...(opts.dashboardOrigin !== undefined ? { dashboardOrigin: opts.dashboardOrigin } : {}),
     })
   } catch (err) {
     // Make sure the callback server is fully torn down even on exchange failure.

@@ -13,6 +13,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// eslint-disable-next-line import/first
+import { AuditPage } from '../../routes/dashboard/audit'
+
 /**
  * Convex function-reference identity is opaque (Proxy), so instead of
  * pattern-matching the path, we route by call order. The audit page
@@ -47,9 +50,6 @@ vi.mock('convex/react', () => ({
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
 }))
-
-// eslint-disable-next-line import/first
-import { AuditPage } from '../../routes/dashboard/audit'
 
 describe('/dashboard/audit', () => {
   beforeEach(() => {
@@ -101,9 +101,7 @@ describe('/dashboard/audit', () => {
         ipHash: 'a1b2c3d4',
       },
     ])
-    setQueryReturn('subscriptions', [
-      { _id: 'sub_1', email: 'alice@example.com', slot: 1 },
-    ])
+    setQueryReturn('subscriptions', [{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
     const { container } = render(<AuditPage />)
     const rows = Array.from(container.querySelectorAll('[data-slot="audit-row"]'))
     expect(rows).toHaveLength(2)

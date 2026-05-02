@@ -57,25 +57,17 @@ function pickString(...candidates: Array<unknown>): string | undefined {
 export function resolveConfig(): RuntimeConfig {
   const file = readConfigFile()
 
-  const convexUrl = pickString(
-    process.env.CVAULT_CONVEX_URL,
-    process.env.VITE_CONVEX_URL,
-    file.convexUrl
-  )
+  const convexUrl = pickString(process.env.CVAULT_CONVEX_URL, process.env.VITE_CONVEX_URL, file.convexUrl)
   const frontendApiUrl = pickString(
     process.env.CVAULT_FRONTEND_API_URL,
     process.env.CLERK_FRONTEND_API_URL,
     file.frontendApiUrl
   )
-  const dashboardUrl = pickString(
-    process.env.CVAULT_DASHBOARD_URL,
-    file.dashboardUrl
-  )
+  const dashboardUrl = pickString(process.env.CVAULT_DASHBOARD_URL, file.dashboardUrl)
 
   const missing: string[] = []
   if (!convexUrl) missing.push('CVAULT_CONVEX_URL (or VITE_CONVEX_URL in repo .env.local)')
-  if (!frontendApiUrl)
-    missing.push('CVAULT_FRONTEND_API_URL (or CLERK_FRONTEND_API_URL in repo .env.local)')
+  if (!frontendApiUrl) missing.push('CVAULT_FRONTEND_API_URL (or CLERK_FRONTEND_API_URL in repo .env.local)')
   if (!dashboardUrl) missing.push('CVAULT_DASHBOARD_URL')
 
   if (!convexUrl || !frontendApiUrl || !dashboardUrl) {
