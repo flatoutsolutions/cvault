@@ -53,7 +53,20 @@ describe('renderSubsTable', () => {
     expect(out).toContain('7D')
     expect(out).toContain('EXPIRES')
     expect(out).toContain('LAST REFRESH')
+    expect(out).toContain('STORED')
     expect(out).toContain('alice@x.com')
+  })
+
+  it('marks STORED as `local` for the active sub and `cloud` for vault-only subs', () => {
+    const out = renderSubsTable(
+      [row({ slot: 1, email: 'a@b.com', isActive: true }), row({ slot: 2, email: 'c@d.com', isActive: false })],
+      NOW
+    )
+    const lines = out.split('\n')
+    const aLine = lines.find((l) => l.includes('a@b.com'))
+    const cLine = lines.find((l) => l.includes('c@d.com'))
+    expect(aLine).toContain('local')
+    expect(cLine).toContain('cloud')
   })
 
   it('marks the active sub with a dot prefix', () => {

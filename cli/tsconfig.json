@@ -25,6 +25,6 @@
     "noEmit": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*", "tests/**/*", "vitest.config.ts"],
+  "include": ["src/**/*", "tests/**/*", "scripts/**/*", "vitest.config.ts"],
   "exclude": ["dist", "node_modules"]
 }
