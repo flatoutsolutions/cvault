@@ -26,7 +26,12 @@ export interface SubRow {
   isActive: boolean
 }
 
-const HEADERS = ['SLOT', 'EMAIL', 'LABEL', '5H', '7D', 'EXPIRES', 'LAST REFRESH', 'STATUS'] as const
+// STORED tells the user where each credential lives. `local` means a copy
+// is on this machine's Keychain (and therefore is the currently-active
+// Claude Code login — native is single-slot). `cloud` means the row is in
+// the vault but the credential is not on this machine; `cvault switch
+// <slot|email>` will pull + import it.
+const HEADERS = ['SLOT', 'EMAIL', 'LABEL', '5H', '7D', 'EXPIRES', 'LAST REFRESH', 'STORED', 'STATUS'] as const
 
 /**
  * Format a future or past timestamp relative to `now` ms.
@@ -79,6 +84,7 @@ export function renderSubsTable(rows: SubRow[], now: number = Date.now()): strin
     const slotCell = `${r.isActive ? '*' : ' '} ${String(r.slot)}`
     const reloginRequired = r.refreshExpiresAt !== undefined && r.refreshExpiresAt <= now
     const statusCell = reloginRequired ? '⚠ relogin' : 'ok'
+    const storedCell = r.isActive ? 'local' : 'cloud'
     return [
       slotCell,
       r.email,
@@ -87,6 +93,7 @@ export function renderSubsTable(rows: SubRow[], now: number = Date.now()): strin
       pct(r.usage7dPct),
       formatRelativeMs(r.expiresAt, now),
       formatRelativeMs(r.lastRefreshedAt, now),
+      storedCell,
       statusCell,
     ]
   })

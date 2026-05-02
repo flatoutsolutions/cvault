@@ -1,2 +1,7 @@
 
 .env.local
+
+# scripts/build.ts rewrites this file with the build-host's URLs before
+# `bun build --compile`, then resets it on exit. The committed copy is
+# the empty-defaults placeholder; subsequent regenerations are noise.
+src/buildInfo.ts

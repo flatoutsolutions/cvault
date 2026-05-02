@@ -10,15 +10,20 @@
  *   3. `~/.vault/config.json` — for users who installed via Homebrew and
  *      don't run from the repo. Plain JSON: `{convexUrl, frontendApiUrl,
  *      dashboardUrl}`. Optional file; missing keys fall through.
+ *   4. `BUILD_DEFAULTS` from `buildInfo.ts` — values baked into the
+ *      compiled binary by `scripts/build.ts` at release time. Empty
+ *      strings (the dev-mode default) fall through to the throw.
  *
- * No bundled defaults. Missing required fields → throw a clear error so
- * the user knows exactly which value to set.
+ * Missing required fields → throw a clear error so the user knows
+ * exactly which value to set.
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §7 + §13.
  */
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+
+import { BUILD_DEFAULTS } from './buildInfo'
 
 export interface RuntimeConfig {
   /** Convex deployment base URL. */
@@ -57,13 +62,19 @@ function pickString(...candidates: Array<unknown>): string | undefined {
 export function resolveConfig(): RuntimeConfig {
   const file = readConfigFile()
 
-  const convexUrl = pickString(process.env.CVAULT_CONVEX_URL, process.env.VITE_CONVEX_URL, file.convexUrl)
+  const convexUrl = pickString(
+    process.env.CVAULT_CONVEX_URL,
+    process.env.VITE_CONVEX_URL,
+    file.convexUrl,
+    BUILD_DEFAULTS.convexUrl
+  )
   const frontendApiUrl = pickString(
     process.env.CVAULT_FRONTEND_API_URL,
     process.env.CLERK_FRONTEND_API_URL,
-    file.frontendApiUrl
+    file.frontendApiUrl,
+    BUILD_DEFAULTS.frontendApiUrl
   )
-  const dashboardUrl = pickString(process.env.CVAULT_DASHBOARD_URL, file.dashboardUrl)
+  const dashboardUrl = pickString(process.env.CVAULT_DASHBOARD_URL, file.dashboardUrl, BUILD_DEFAULTS.dashboardUrl)
 
   const missing: string[] = []
   if (!convexUrl) missing.push('CVAULT_CONVEX_URL (or VITE_CONVEX_URL in repo .env.local)')
@@ -78,7 +89,10 @@ export function resolveConfig(): RuntimeConfig {
         `  - Export as shell env vars (recommended for installed binary)\n` +
         `  - Create ${CONFIG_PATH} with JSON: ` +
         `{ "convexUrl": "...", "frontendApiUrl": "...", "dashboardUrl": "..." }\n` +
-        `  - Run from the cvault repo root where Bun auto-loads .env.local`
+        `  - Run from the cvault repo root where Bun auto-loads .env.local\n` +
+        `  - Build a binary with values baked into the binary at build time ` +
+        `(set CVAULT_*_URL or VITE/CLERK fallback env vars before running ` +
+        `\`bun run scripts/build.ts <target>\`)`
     )
   }
 
