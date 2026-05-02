@@ -1,17 +1,18 @@
 /**
- * `addAccountInteractive` — spawn `claude` (the Claude Code CLI) so the
- * user can complete the OAuth flow.
+ * `addAccountInteractive` — drive the Claude Code OAuth flow so cvault
+ * can capture the resulting credentials.
  *
- * This replaces `claude-swap --add-account`. The recipe is identical:
- *   1. Banner from cvault explaining what's about to happen.
- *   2. Spawn `claude` with `stdio: 'inherit'` so the user sees the OAuth
- *      prompt and can paste the token / hit return.
- *   3. After `claude` exits 0, the local credentials store has the new
- *      tokens and `~/.claude.json` has the new `oauthAccount`. The caller
- *      (cvault add) then runs `buildEnvelope` to capture what was just
- *      written.
+ * Implementation: spawn `claude auth login` (NOT bare `claude`). The bare
+ * command opens an interactive TUI session that does not trigger an OAuth
+ * exchange — it just shows the chat UI; the user sees "Not logged in"
+ * indefinitely. `claude auth login` is the documented entry point that
+ * runs the OAuth flow end to end and exits 0 once credentials land in the
+ * Keychain + `~/.claude.json` `oauthAccount`. cvault then reads both via
+ * `buildEnvelope`.
  *
- * No timeout — the user controls when this finishes (Ctrl-C aborts).
+ * `stdio: 'inherit'` so the user sees the prompt and can paste the OAuth
+ * code / press enter. No timeout — user controls when it finishes
+ * (Ctrl-C aborts the spawn).
  */
 import { ClaudeCliMissingError } from './errors'
 
@@ -33,7 +34,7 @@ export async function addAccountInteractive(): Promise<void> {
   let proc
   try {
     proc = Bun.spawn({
-      cmd: [CLAUDE_BIN],
+      cmd: [CLAUDE_BIN, 'auth', 'login'],
       stdin: 'inherit',
       stdout: 'inherit',
       stderr: 'inherit',
@@ -46,6 +47,6 @@ export async function addAccountInteractive(): Promise<void> {
   }
   const exitCode = await proc.exited
   if (exitCode !== 0) {
-    throw new Error(`\`claude\` exited ${String(exitCode)} during interactive OAuth flow`)
+    throw new Error(`\`claude auth login\` exited ${String(exitCode)} during interactive OAuth flow`)
   }
 }

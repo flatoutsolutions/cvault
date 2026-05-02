@@ -138,9 +138,17 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
   }
 
   if (existing && existing.removedAt !== undefined) {
+    // Reviving a tombstoned row: re-allocate to the lowest free slot
+    // instead of preserving the tombstoned slot. Otherwise removing
+    // slots 1+2 then re-adding email-from-slot-2 would silently revive
+    // at slot 2 and leave slot 1 hole — confusing for users who expect
+    // dense slot numbers.
+    const allSubsForRevive = await ctx.db.query('subscriptions').collect()
+    const reviveSlot = nextFreeSlot(allSubsForRevive)
     await ctx.db.patch('subscriptions', existing._id, {
       ciphertext: input.ciphertext,
       nonce: input.nonce,
+      slot: reviveSlot,
       expiresAt: input.expiresAt,
       refreshExpiresAt: input.refreshExpiresAt,
       subscriptionType: input.subscriptionType,
@@ -149,7 +157,7 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
       removedAt: undefined,
       ...(input.label !== undefined ? { label: input.label } : {}),
     })
-    return { subId: existing._id, userId: input.userId, slot: existing.slot, created: false }
+    return { subId: existing._id, userId: input.userId, slot: reviveSlot, created: false }
   }
 
   // Slot space is global across all subs.

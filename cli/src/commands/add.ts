@@ -1,90 +1,57 @@
 /**
  * `cvault add` — capture the currently-active Claude Code login and ship
- * it to the Convex vault.
+ * it to the Convex vault. Non-destructive: reads what's already on disk;
+ * does NOT spawn `claude auth login` or modify the Keychain.
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §7.
  *
  * Flow:
- *   1. Detect any pre-existing active account; prompt for confirmation
- *      before overwriting (unless `--force` is passed).
- *   2. Spawn `claude` (the Claude Code CLI) interactively so the user
- *      can complete the OAuth flow in their terminal.
- *   3. Read the active credentials + `~/.claude.json` to capture the
- *      new account's OAuth blob + metadata.
- *   4. POST to Convex via `subscriptions.actions.upsertFromPlaintext`.
+ *   1. Read the active credentials + `~/.claude.json` `oauthAccount`.
+ *   2. If nothing is active, error with a hint to run `claude auth login`
+ *      first. We deliberately do not spawn `claude` ourselves — `add`
+ *      means "snapshot what I have"; users who want a fresh login can
+ *      run it explicitly. (cvault-1's earlier rewrite spawned `claude`
+ *      and replaced the existing cred, which surprised users on a
+ *      machine where the active sub was the one they wanted to capture.)
+ *   3. POST plaintext + metadata to Convex via
+ *      `subscriptions.actions.upsertFromPlaintext`. The action encrypts
+ *      server-side under VAULT_AES_KEY; the CLI never sees the master key.
  *
- * The Convex action encrypts the plaintext blob server-side using the
- * master key in `VAULT_AES_KEY`. The CLI never sees the master key.
- *
- * Note: native has exactly one active credential at a time. There is no
- * per-slot pool, so the new envelope's slot is always 1 locally. The
- * vault-side slot is owned by Convex and returned in the upsert result.
+ * Native has exactly one active credential at a time, so there's no slot
+ * lookup — Convex owns the vault slot and returns it from upsert.
  */
-import { createInterface } from 'node:readline/promises'
-
 import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
 import { makeVaultClient } from '../convex/vaultClient'
-import { addAccountInteractive, exportAccount, getActiveAccount } from '../credentials'
+import { exportAccount, getActiveAccount } from '../credentials'
 
 export interface RunAddOptions {
   /** Optional human label to assign to the new sub. */
   label?: string
-  /** Skip the "you already have an active account" overwrite prompt. */
-  force?: boolean
-  /** Override stdin/stdout for tests. Defaults to `process.std{in,out}`. */
-  io?: { input: NodeJS.ReadableStream; output: NodeJS.WritableStream }
-}
-
-/**
- * If an account is already active locally, prompt the user before
- * overwriting it. The OAuth flow `claude` runs replaces the Keychain
- * entry + the `oauthAccount` slice in `~/.claude.json`, so silent
- * overwrite is a footgun for users who forgot they had a sub captured.
- */
-async function confirmOverwrite(io: NonNullable<RunAddOptions['io']>, activeEmail: string): Promise<boolean> {
-  const rl = createInterface({ input: io.input, output: io.output })
-  try {
-    const answer = await rl.question(
-      `An account for ${activeEmail} is currently active on this machine.\n` +
-        `Adding will replace it. Continue? [y/N] `
-    )
-    return /^y(es)?$/i.test(answer.trim())
-  } finally {
-    rl.close()
-  }
 }
 
 export async function runAdd(opts: RunAddOptions): Promise<void> {
-  // Phase 0 — overwrite guard.
-  if (opts.force !== true) {
-    const active = getActiveAccount()
-    if (active !== null) {
-      const io = opts.io ?? { input: process.stdin, output: process.stdout }
-      const ok = await confirmOverwrite(io, active.email)
-      if (!ok) {
-        console.log('Aborted.')
-        return
-      }
-    }
+  // Verify there IS an active credential to capture. If not, bail with a
+  // clear hint instead of silently uploading an empty record (or
+  // surprising the user by spawning `claude auth login`).
+  const active = getActiveAccount()
+  if (active === null) {
+    throw new Error(
+      'No active Claude Code account on this machine.\n' +
+        'Run `claude auth login` to sign in, then re-run `cvault add`.'
+    )
   }
 
-  console.log('Capturing the currently-active Claude Code login...')
-  console.log('The interactive flow will replace the active credentials with the new sub.\n')
+  console.log(`Capturing active Claude Code login for ${active.email}...`)
 
-  // Phase 1 — interactive add. `claude` prompts the user.
-  await addAccountInteractive()
-
-  // Phase 2 — read the freshly-written credentials + claude.json. On
-  // native there's exactly one active account, so we don't need a slot
-  // lookup; `exportAccount` builds a single-account envelope from the
-  // active state. The slot arg to `exportAccount` is ignored; we keep
-  // `1` as a placeholder for the legacy signature.
+  // Build a single-account envelope from the on-disk state. `exportAccount`
+  // returns whatever `claude` already wrote to the Keychain + claude.json.
+  // No subprocess spawn, no destructive op.
   const envelope = exportAccount(1)
   const account = envelope.accounts[0]
   if (!account) {
-    throw new Error(`buildEnvelope returned no account after \`claude\` exit`)
+    throw new Error('buildEnvelope returned no account from the active credentials')
   }
 
   const oauth = account.credentials.claudeAiOauth
@@ -118,24 +85,18 @@ export async function runAdd(opts: RunAddOptions): Promise<void> {
 }
 
 export const addCommand = defineCommand({
-  meta: { name: 'add', description: 'Capture the active Claude Code login.' },
+  meta: {
+    name: 'add',
+    description: 'Snapshot the active Claude Code login and upload it to the vault.',
+  },
   args: {
     label: {
       type: 'string',
       description: 'Optional nickname for this account in `cvault list`.',
       required: false,
     },
-    force: {
-      type: 'boolean',
-      description: 'Skip the overwrite-prompt for an existing active account.',
-      required: false,
-      default: false,
-    },
   },
   async run({ args }) {
-    await runAdd({
-      ...(args.label !== undefined ? { label: args.label } : {}),
-      ...(args.force === true ? { force: true } : {}),
-    })
+    await runAdd(args.label !== undefined ? { label: args.label } : {})
   },
 })

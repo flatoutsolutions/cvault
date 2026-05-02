@@ -147,6 +147,48 @@ describe('subscriptions.mutations.upsert', () => {
     })
     expect(c.slot).toBe(2)
   })
+
+  it('reviving a tombstoned email picks the lowest free slot, not the original slot', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    // Live: slot 1=a, slot 2=b.
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'a@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'b@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    // Soft-remove BOTH so slots 1 + 2 are tombstoned.
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'a@example.com',
+    })
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'b@example.com',
+    })
+    // Re-add `b` — same email, so the tombstoned row is revived. We want
+    // it to land at slot 1 (lowest free among live rows = none) rather
+    // than the previously-held slot 2.
+    const reborn = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'b@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    expect(reborn.slot).toBe(1)
+  })
 })
 
 describe('subscriptions.mutations.softRemove', () => {
