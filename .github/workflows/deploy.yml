@@ -49,13 +49,19 @@ jobs:
           VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
           VITE_APP_TITLE: ${{ vars.VITE_APP_TITLE }}
         run: |
-          # CONVEX_DEPLOY_KEY may be unset on a fresh repo; the URL fallback
-          # keeps the bundle build working until prod secrets are wired.
+          # When secrets aren't configured (fresh repo), substitute
+          # placeholders so the env-validation in frontend/src/lib/env.ts
+          # passes and the bundle still compiles. The artifact is fine to
+          # ship to deploy-frontend gating; that job is itself gated on
+          # vars.HAS_CLOUDFLARE_API_TOKEN.
           if [ -n "$CONVEX_DEPLOY_KEY" ]; then
             DEPLOY_NAME=$(echo "$CONVEX_DEPLOY_KEY" | sed 's/.*:\(.*\)|.*/\1/')
             export VITE_CONVEX_URL="https://${DEPLOY_NAME}.convex.cloud"
           else
             export VITE_CONVEX_URL="https://placeholder.convex.cloud"
+          fi
+          if [ -z "$VITE_CLERK_PUBLISHABLE_KEY" ]; then
+            export VITE_CLERK_PUBLISHABLE_KEY="pk_test_placeholder"
           fi
           echo "Building with VITE_CONVEX_URL: $VITE_CONVEX_URL (NODE_ENV=$NODE_ENV)"
           yarn build
