@@ -4,34 +4,27 @@ import type { ClaudeSwapEnvelope } from './native/envelope'
 import { applyEnvelope, buildEnvelope, clearActive as nativeClearActive } from './native/envelope'
 
 /**
- * Façade for the active Claude Code credentials, backed by the native
- * module under `cli/src/native/`.
+ * Façade for the active Claude Code credentials.
  *
- * cvault used to shell out to `claude-swap` (Python) for every Keychain
- * op. As of 2026-05-02 the project owns the Keychain ops directly (zero
- * ext deps, single-binary install). This file is the migration's
- * outward-facing surface — command files import from here, and the legacy
- * verb names (`exportAccount`, `importEnvelope`, `switchTo`, …) are
- * preserved as thin wrappers around the native primitives so commands and
- * scenario tests don't have to know which subsystem stores credentials.
+ * Command files (`add.ts`, `switch.ts`, etc.) import their verbs
+ * (`exportAccount`, `importEnvelope`, `removeAccount`, `purge`,
+ * `getActiveAccount`, …) from here so they stay decoupled from where
+ * credentials are actually stored. The implementations live under
+ * `cli/src/native/`:
  *
- * Mapping (legacy claude-swap → native primitive):
- *   - `exportAccount(slot)` → `buildEnvelope({ number: slot })`
- *   - `exportAll()` → same as `exportAccount` (single-account on native)
- *   - `importEnvelope(env)` → `applyEnvelope(env)`
- *   - `switchTo(slot)` → no-op (on native, the active credentials *are*
- *     whatever was last imported; there is no per-slot backup pool)
- *   - `removeAccount(slot)` → `clearActive()` (wipes keychain + claude.json)
- *   - `purge()` → same as `removeAccount` on native
- *   - `status()` — synthesized from the active oauthAccount in claude.json
- *   - `addAccountInteractive()` → spawns `claude` directly
- *   - `ClaudeSwapError` / `ClaudeSwapMissingError` — re-exported from the
- *     native error classes (`NativeKeychainError`, `ClaudeCliMissingError`)
- *     so existing `instanceof` narrowing keeps working.
+ *   - `keychain.ts` (macOS via `security`)
+ *   - `credentialsFile.ts` (Linux/WSL via `~/.claude/.credentials.json`)
+ *   - `claudeConfig.ts` (`~/.claude.json` `oauthAccount` slice)
+ *   - `envelope.ts` (build/apply Convex envelopes; cross-process locked)
+ *   - `claudeCli.ts` (spawn `claude` interactively for OAuth)
  *
- * The `ClaudeSwapAccount` / `ClaudeSwapEnvelope` type names are preserved
- * verbatim because they identify the wire-format envelope Convex stores;
- * renaming would force a coordinated backend + CLI deploy.
+ * The `ClaudeSwapAccount` / `ClaudeSwapEnvelope` type names AND the
+ * `ClaudeSwapError` / `ClaudeSwapMissingError` re-exports are preserved
+ * verbatim from the legacy claude-swap-backed era. Rationale: the
+ * envelope shape is the wire format Convex stores, and changing the
+ * names would force a coordinated backend + CLI deploy. The errors are
+ * aliases for `NativeKeychainError` / `ClaudeCliMissingError` so
+ * existing `instanceof` narrowing in caller code keeps working.
  */
 export {
   applyEnvelope,
@@ -47,63 +40,65 @@ export {
 } from './native/errors'
 
 /**
- * Slot number cvault used to encode in `claude-swap`'s sequence file.
- * On native there's only one active account at a time, so we always
- * report slot 1. The value is irrelevant to functionality — callers parse
- * the email out of `status()` for routing.
+ * Native has exactly one active credential on a machine at any time;
+ * the slot number in synthesized envelopes is always 1. Callers must
+ * route by email, not slot.
  */
 const NATIVE_SLOT = 1
 
 /**
- * Legacy: `claude-swap --export - --account <slot> --full`.
- *
- * On native, `slotOrEmail` is ignored — there is exactly one active
- * account on the machine. The arg is preserved in the signature so command
- * code (`add.ts`) doesn't have to change yet.
+ * Capture the currently-active credentials + `~/.claude.json` slice as
+ * an envelope ready to ship to Convex. The `slotOrEmail` arg is
+ * intentionally ignored — it exists so command-side code can keep its
+ * signature stable across the migration. On native there is exactly one
+ * active account on this machine.
  */
 export function exportAccount(_slotOrEmail: string | number): ClaudeSwapEnvelope {
   return buildEnvelope({ number: NATIVE_SLOT })
 }
 
-/** Legacy: `claude-swap --export -`. Same as `exportAccount` on native. */
+/** Same single-account envelope as `exportAccount` (no multi-account on native). */
 export function exportAll(): ClaudeSwapEnvelope {
   return buildEnvelope({ number: NATIVE_SLOT })
 }
 
 /**
- * Legacy: `claude-swap --import - [--force]`. The `force` flag is unused
- * on native (we always overwrite the active credentials). Returns a
- * Promise because native `applyEnvelope` acquires a cross-process lock
- * before its read-modify-write cycle.
+ * Apply an envelope: write the credentials store + the `oauthAccount`
+ * slice in `~/.claude.json`. The `force` flag is accepted for back-compat
+ * with the legacy verb signature but is unused — native always
+ * overwrites the active credentials. Returns a Promise because the
+ * underlying `applyEnvelope` acquires a cross-process file lock before
+ * its read-modify-write cycle.
  */
 export async function importEnvelope(envelope: ClaudeSwapEnvelope, _force = false): Promise<void> {
   await applyEnvelope(envelope)
 }
 
 /**
- * Legacy: `claude-swap --switch-to <id>`. On native this is a no-op
- * because the active credentials *are* whatever was last imported — there
- * is no per-slot backup pool. Callers (`switch.ts`, `sync.ts`) call this
- * after `importEnvelope` so the post-condition is already satisfied.
+ * No-op on native: the active credentials *are* whatever was last
+ * imported. The verb is retained so callers (`switch.ts`, `sync.ts`)
+ * can keep their post-import sequence unchanged from the legacy era;
+ * the post-condition (active sub = imported sub) is already satisfied
+ * by `importEnvelope`.
  */
 export function switchTo(_slotOrEmail: string | number): void {
   // intentionally empty on native
 }
 
 /**
- * Legacy: `claude-swap --remove-account <id>`. On native this clears the
- * Keychain entry + the `oauthAccount` slice in `~/.claude.json`. There's
- * no per-slot pool to renumber. Returns a Promise because native
- * `clearActive` acquires the same lock as `applyEnvelope`.
+ * Clear the active credentials store + the `oauthAccount` slice in
+ * `~/.claude.json`. The `slotOrEmail` arg is ignored — there is exactly
+ * one active credential on the machine and clearing is unconditional.
+ * Returns a Promise because the underlying `clearActive` acquires the
+ * same file lock as `applyEnvelope`.
  */
 export async function removeAccount(_slotOrEmail: string | number): Promise<void> {
   await nativeClearActive()
 }
 
 /**
- * Legacy: `claude-swap --purge`. On native we have no concept of "every
- * managed account" — there is exactly one active account. Equivalent to
- * `removeAccount`.
+ * Synonym for `removeAccount` — clears the single active credential.
+ * Used by `cvault clean` for naming clarity ("purge everything local").
  */
 export async function purge(): Promise<void> {
   await nativeClearActive()

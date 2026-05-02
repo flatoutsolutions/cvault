@@ -108,16 +108,23 @@ export function buildEnvelope(opts: BuildEnvelopeOptions): ClaudeSwapEnvelope {
   const oauthAccount = cfg?.oauthAccount
   if (oauthAccount === undefined || typeof oauthAccount.emailAddress !== 'string') {
     throw new Error(
-      `~/.claude.json has no \`oauthAccount.emailAddress\`. ` + `Run \`claude\` once to populate it, then retry.`
+      `~/.claude.json has no \`oauthAccount.emailAddress\`. ` +
+        `Either run \`claude\` once on this machine to populate it, ` +
+        `or run \`cvault sync\` to pull a previously-captured account from the vault.`
     )
   }
+
+  // L4j: single `now` for both `exportedAt` and `account.added` so the
+  // two timestamps are always identical for a given build call (avoids
+  // a sub-millisecond skew that has bitten downstream sorts elsewhere).
+  const now = new Date().toISOString()
 
   const account: ClaudeSwapAccount = {
     number: opts.number,
     email: oauthAccount.emailAddress,
     uuid: typeof oauthAccount.accountUuid === 'string' ? oauthAccount.accountUuid : ZERO_UUID,
     organizationName: typeof oauthAccount.organizationName === 'string' ? oauthAccount.organizationName : '',
-    added: new Date().toISOString(),
+    added: now,
     credentials,
     config: { oauthAccount },
   }
@@ -127,7 +134,7 @@ export function buildEnvelope(opts: BuildEnvelopeOptions): ClaudeSwapEnvelope {
 
   return {
     version: 1,
-    exportedAt: new Date().toISOString(),
+    exportedAt: now,
     exportedFrom: getPlatform(),
     swapVersion: SWAP_VERSION,
     encrypted: false,
