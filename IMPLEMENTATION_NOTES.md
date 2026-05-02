@@ -93,9 +93,59 @@ directly via a native TypeScript module under `cli/src/native/`.
 
 ### Test counts
 
-`cd cli && bunx --bun vitest run` — **240 passing across 37 files** (2
+`cd cli && bunx --bun vitest run` — **253 passing across 37 files** (2
 integration tests skipped behind `CVAULT_E2E_KEYCHAIN=1`). Baseline
 before this migration: 150 tests across 27 files.
+
+### Round 2 review-driven fixes (2026-05-02 second pass)
+
+After dual review (local + superpowers), the following landed:
+
+- **R1: symmetric rollback in `applyEnvelope`** — the prior rollback
+  only restored credentials, not the `oauthAccount` slice. If
+  `writeOauthAccount` partially succeeded (rename done, chmod throws),
+  the user ended up half-rotated. Now rolls back BOTH halves to the
+  pre-call snapshot. Two new tests pin this: one with a prior
+  oauthAccount (restored to it) and one without (cleared).
+- **R2: case-insensitive email compare** in `cvault remove` and
+  `cvault list`. Anthropic SMTP is case-insensitive; Clerk normalizes
+  inconsistently. Added `.toLowerCase()` on both sides. Tests cover
+  both directions (active=mixed/vault=lower and vice versa).
+- **R3: keychain S1 trade-off — decision = Option B** (honest
+  argv-form + README "Security model" section). bun:ffi to
+  `SecKeychainAddGenericPassword` works mechanically (verified during
+  build), but items written by the cvault binary have a different
+  Keychain ACL than items written by `/usr/bin/security` or by Claude
+  Code. Cross-binary reads then trigger SecurityAgent prompts every
+  time — unacceptable UX. Staying inside `/usr/bin/security` for both
+  read and write keeps all cvault-managed items under the same
+  Apple-signed binary's ACL. README's new "Security model" section
+  documents the argv leak window and the single-user-developer-machine
+  threat model.
+- **L4 nits** that landed:
+  - Pid-liveness probe in `lock.ts` via `process.kill(pid, 0)` —
+    breaks the lock early when holder pid is dead even if mtime is
+    fresh (handles networked-FS mtime lag).
+  - Cross-process lock test (spawns a real second `bun` process,
+    confirms mutual exclusion across process boundaries).
+  - Stronger H2 concurrent-applyEnvelope test asserts non-interleaving
+    via enter/exit event tracking — not just "both completed."
+  - Platform guard at top of `runSecurity` in `keychain.ts` —
+    defense-in-depth on top of `credentialStore.ts` dispatch.
+  - `getActiveAccount` docstring clarifies `null` is ONLY genuine
+    "not signed in"; keychain failures throw and propagate.
+  - Dropped redundant post-rename chmod in both `credentialsFile.ts`
+    and `claudeConfig.ts` (POSIX rename preserves perms on same fs).
+  - Deleted dead `ClaudeSwapMissingError` branch in `clean.ts` (purge
+    no longer shells out, so that error is unreachable from there).
+  - Pruned legacy `claude-swap` references in `credentials.ts`
+    docstrings — narrate present behavior, not history.
+  - Improved `buildEnvelope` error message to mention `cvault sync`.
+  - `redactTokens` over `security` stderr in error messages
+    (defense-in-depth — scrubs OAuth-token-shaped substrings if a
+    buggy `security` build ever echoed input).
+  - Single `now` for `exportedAt` + `account.added` to avoid
+    sub-millisecond skew.
 
 ### Open follow-ups
 
