@@ -7,7 +7,13 @@ import tseslint from 'typescript-eslint'
 
 export default defineConfig([
   {
-    ignores: ['dist', 'frontend/dist', 'cli/dist', 'convex/_generated', '.yarn', '.agents'],
+    // cli/ has its own bun-managed install with @types/bun on the path so
+    // `Bun.serve` etc resolve. Root yarn install (used by CI lint) does
+    // NOT have that — it would tree-shake @types/bun and emit a wave of
+    // "Unsafe call/member access" errors on otherwise correct CLI code.
+    // The cli package has its own typecheck + lint step in release-cli.yml,
+    // so excluding it from root lint is safe.
+    ignores: ['dist', 'frontend/dist', 'cli/**', 'convex/_generated', '.yarn', '.agents'],
   },
   {
     files: ['**/*.{js,mjs,cjs,ts,tsx,mts,cts}'],
