@@ -724,3 +724,46 @@ reloginBadge, revokeMachine}.scenario.test.tsx`) used a `refName()`
    source-code regressions.
 
 ---
+
+## 2026-05-02 — audit pagination + cross-tenant scoping (commit 86eefd2)
+
+Paper trail for the changes I (cli-debug) made in commit 86eefd2.
+That commit accidentally bundled cvault-1's `claude-swap` →
+keychain-native rewrite (the section above) with my own changes,
+because I ran `git add -A` in a shared worktree without checking the
+diff. Listing here so future blame readers can disentangle the two.
+
+### What this slice changed
+
+| File | Change |
+| --- | --- |
+| `convex/machineActivity/queries.ts` | `recentForUser` + `recentForSession` switched to `paginationOpts`; `distinctSessionsForUser` now scopes to caller via `byUserAndAt` (was global scan + cross-tenant leak). |
+| `convex/refreshLog/queries.ts` | `recentForUser` + `recentForSubscription` switched to `paginationOpts`; ownership check on the per-sub variant. |
+| `frontend/src/routes/dashboard/audit.tsx` | Adopted `usePaginatedQuery` for both feeds, added `Load more` button, kept skeleton only for first-page load. |
+| `convex/machineActivity/mutations.test.ts` | Updated query callsites to pass `paginationOpts`. |
+| `convex/refreshLog/queries.test.ts` | Same. |
+| `frontend/src/__tests__/routes/audit.test.tsx` | Mock now covers both `useQuery` and `usePaginatedQuery`. |
+
+### Why
+
+`machineActivity` and `refreshLog` are append-only — one row per
+`add` / `switch` / `refresh` / `pull` / `remove` / `login`. The prior
+`take(100)` capped audit history at 100 entries silently. Paginating
+with a 50-row initial page lets the dashboard scroll the full
+history without paying a `.collect()`.
+
+`distinctSessionsForUser` was reading the global `machineActivity`
+table to find sessions for the *current* user — both a data leak
+(returned other users' rows) and an O(N_global) scan. `recentForSession`
+had a similar leak via filter-on-clerkSessionId; now uses the existing
+`byUserAndSessionAndAt` composite index.
+
+### Coordination lesson
+
+Bundling was my mistake (per cccollab discussion). Future shared-worktree
+work: stage explicit files only (no `git add -A`), check
+`git diff --cached --stat` line count before commit, and run
+`git ls-files --others --exclude-standard` to surface anyone else's WIP
+in the tree.
+
+---
