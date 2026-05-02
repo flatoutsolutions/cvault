@@ -89,23 +89,17 @@ class Cvault < Formula
 
   # ---------------------------------------------------------------------------
   # Caveats — printed once after `brew install` and on every `brew info cvault`.
-  # Used to flag the runtime dependency on `claude-swap`, which Brew cannot
-  # install for us (it lives on PyPI, installed via `uv tool`).
+  # First-time setup hint for new installs.
   # ---------------------------------------------------------------------------
   def caveats
     <<~EOS
-      cvault wraps `claude-swap` to manage local Mac Keychain entries.
-      Install it separately before running `cvault add`:
-
-          uv tool install claude-swap
-
-      Project: https://github.com/realiti4/claude-swap
-
       First-time setup:
 
           cvault login        # browser-assisted Clerk sign-in
           cvault add          # capture the currently-active Claude Code login
           cvault list         # verify it landed in the vault
+
+      `cvault add` requires the `claude` CLI on PATH (Claude Code itself).
     EOS
   end
 end

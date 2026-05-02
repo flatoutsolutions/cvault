@@ -40,10 +40,10 @@ describe('refreshLog.queries.recentForUser', () => {
       at: 2000,
     })
 
-    const rows = await t.withIdentity(TEST_IDENTITY).query(api.refreshLog.queries.recentForUser, {
-      limit: 10,
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.refreshLog.queries.recentForUser, {
+      paginationOpts: { numItems: 10, cursor: null },
     })
-    expect(rows.map((r) => r.outcome)).toEqual(['failure', 'success'])
+    expect(result.page.map((r) => r.outcome)).toEqual(['failure', 'success'])
   })
 
   it("does not return another user's rows", async () => {
@@ -81,9 +81,9 @@ describe('refreshLog.queries.recentForUser', () => {
     })
 
     void aliceId
-    const rows = await t.withIdentity(TEST_IDENTITY).query(api.refreshLog.queries.recentForUser, {
-      limit: 10,
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.refreshLog.queries.recentForUser, {
+      paginationOpts: { numItems: 10, cursor: null },
     })
-    expect(rows).toHaveLength(0)
+    expect(result.page).toHaveLength(0)
   })
 })

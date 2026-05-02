@@ -22,12 +22,12 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { importEnvelope, switchTo } from '../../src/claudeSwap'
 import { runSwitch } from '../../src/commands/switch'
 import { makeVaultClient } from '../../src/convex/vaultClient'
+import { importEnvelope, switchTo } from '../../src/credentials'
 import { ensureVaultDir, lastHashPath } from '../../src/paths'
 
-vi.mock('../../src/claudeSwap', () => ({
+vi.mock('../../src/credentials', () => ({
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
 }))
@@ -76,7 +76,7 @@ function setupClientReturning(blob: string, contentHash: string): FakeClient {
 }
 
 describe('runSwitch — fresh switch (no local hash)', () => {
-  it('pulls, imports, writes hash, and switches', async () => {
+  it('pulls, imports, and writes hash (switchTo is no longer called)', async () => {
     setupClientReturning(SAMPLE_BLOB, 'hash-abc')
 
     await runSwitch({ slotOrEmail: '1' })
@@ -86,7 +86,8 @@ describe('runSwitch — fresh switch (no local hash)', () => {
     expect(env?.accounts[0]?.email).toBe('a@b.com')
     expect(env?.accounts[0]?.credentials.claudeAiOauth.accessToken).toBe('sk-ant-oat01-abc')
 
-    expect(switchTo).toHaveBeenCalledWith(1)
+    // On native, the import IS the switch — no separate `switchTo` step.
+    expect(switchTo).not.toHaveBeenCalled()
 
     // Hash file was written
     await ensureVaultDir()
@@ -107,7 +108,8 @@ describe('runSwitch — hash match', () => {
     await runSwitch({ slotOrEmail: 'a@b.com' })
 
     expect(importEnvelope).not.toHaveBeenCalled()
-    expect(switchTo).toHaveBeenCalledWith(1)
+    // Hash matched → no work to do; switchTo isn't called either.
+    expect(switchTo).not.toHaveBeenCalled()
   })
 })
 
@@ -123,32 +125,32 @@ describe('runSwitch — hash mismatch', () => {
     await runSwitch({ slotOrEmail: 'a@b.com' })
 
     expect(importEnvelope).toHaveBeenCalledOnce()
-    expect(switchTo).toHaveBeenCalledWith(1)
+    // No separate switchTo call on native.
+    expect(switchTo).not.toHaveBeenCalled()
     expect(readFileSync(path, 'utf8')).toBe('hash-new')
   })
 })
 
-describe('runSwitch — offline degradation', () => {
-  it('falls back to local switchTo when Convex is unreachable', async () => {
+describe('runSwitch — offline behavior (fail loud — M6)', () => {
+  it('throws an OfflineError when Convex is unreachable (DNS failure)', async () => {
     vi.mocked(makeVaultClient).mockRejectedValueOnce(
       new Error('fetch failed: getaddrinfo ENOTFOUND beloved-mouse-707.convex.cloud')
     )
 
-    await runSwitch({ slotOrEmail: '2' })
+    await expect(runSwitch({ slotOrEmail: '2' })).rejects.toThrow(/Convex.*unreachable|cannot rotate/i)
 
-    expect(switchTo).toHaveBeenCalledWith('2')
     expect(importEnvelope).not.toHaveBeenCalled()
+    expect(switchTo).not.toHaveBeenCalled()
   })
 
-  it('falls back to local switchTo when the Convex action call rejects with network error', async () => {
+  it('throws an OfflineError when the Convex action call rejects with a network error', async () => {
     const client = {
       action: vi.fn().mockRejectedValueOnce(new Error('fetch failed: connection refused')),
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
 
-    await runSwitch({ slotOrEmail: '2' })
-
-    expect(switchTo).toHaveBeenCalledWith('2')
+    await expect(runSwitch({ slotOrEmail: '2' })).rejects.toThrow(/Convex.*unreachable|cannot rotate/i)
+    expect(importEnvelope).not.toHaveBeenCalled()
   })
 
   it('does not swallow non-network errors from Convex', async () => {

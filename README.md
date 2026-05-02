@@ -2,7 +2,24 @@
 
 Centralized Claude Code credential vault. Sync Claude subscriptions across machines, auto-refresh tokens, view usage from one dashboard.
 
-Wraps [`claude-swap`](https://github.com/realiti4/claude-swap) with a Convex-backed sync layer.
+cvault reads/writes Claude Code's macOS Keychain entry (and the Linux/WSL credentials file) directly via a native TypeScript module — no Python or other runtime dependencies.
+
+---
+
+## Security model
+
+cvault is intended for **single-user developer machines** (your personal Mac).
+
+On macOS, the CLI calls `/usr/bin/security` to read/write the Claude Code Keychain item. The write path passes the OAuth blob via argv, which means it is briefly visible via `ps auxww` to processes running as the same user during the call (typically tens of milliseconds). Other users on the system cannot see it; macOS process accounting requires the same UID or root to read another process's argv.
+
+Why argv and not a "safer" form:
+
+- **stdin-prompt form** (`security add-generic-password -w` with no value, blob piped on stdin) silently truncates at 128 bytes — Claude Code's OAuth blob is 180-300 bytes. Pinned by the integration test.
+- **`bun:ffi` to `SecKeychainAddGenericPassword`** works mechanically, but items written by the cvault binary have a different Keychain ACL than items written by `/usr/bin/security` or by Claude Code itself. Cross-binary reads then trigger a SecurityAgent prompt every time, which is unacceptable UX. Verified empirically during build.
+
+**Do not run cvault on shared/multi-tenant machines** (shared CI runners, build farms, classroom Macs, or any machine where another user has shell access as your UID). The argv leak is acceptable on a personal box but not in a multi-tenant context.
+
+On Linux/WSL, credentials live in `~/.claude/.credentials.json` with mode 0600 (file system permissions are the only enforcement; same caveats apply to multi-tenant systems).
 
 ---
 
@@ -11,7 +28,7 @@ Wraps [`claude-swap`](https://github.com/realiti4/claude-swap) with a Convex-bac
 ### 1. Prerequisites
 
 - Node 22+, [Yarn 4](https://yarnpkg.com/), [Bun](https://bun.sh/) ≥ 1.2
-- [`claude-swap`](https://github.com/realiti4/claude-swap) installed (`uv tool install claude-swap`)
+- The `claude` CLI (Claude Code) on `PATH` — required for `cvault add` (interactive OAuth flow)
 - Clerk + Convex accounts
 
 ### 2. Clone + install
@@ -76,7 +93,7 @@ bun run src/index.ts -- status
 bun run src/index.ts -- refresh <slot|email>
 bun run src/index.ts -- remove <slot|email>
 bun run src/index.ts -- sync --all          # bootstrap on a new machine
-bun run src/index.ts -- clean               # wipe local Keychain + last-hash cache
+bun run src/index.ts -- clean               # clear active credentials + last-hash cache
                                             # (server vault + login preserved; --yes to skip prompt)
 ```
 

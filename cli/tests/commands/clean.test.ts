@@ -12,11 +12,11 @@ import { Readable, Writable } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ClaudeSwapMissingError, purge } from '../../src/claudeSwap'
 import { runClean } from '../../src/commands/clean'
+import { purge } from '../../src/credentials'
 
-vi.mock('../../src/claudeSwap', async () => {
-  const actual = await vi.importActual<typeof import('../../src/claudeSwap')>('../../src/claudeSwap')
+vi.mock('../../src/credentials', async () => {
+  const actual = await vi.importActual<typeof import('../../src/credentials')>('../../src/credentials')
   return {
     ...actual,
     purge: vi.fn(),
@@ -62,7 +62,7 @@ function fakeIo(answer: string): {
 
 describe('runClean', () => {
   it('purges every claude-swap account and the last-hash files when confirmed', async () => {
-    vi.mocked(purge).mockImplementationOnce(() => undefined)
+    vi.mocked(purge).mockResolvedValueOnce(undefined)
     // Seed hash files (and one unrelated file we should NOT touch).
     const vaultPath = join(tempHome, '.vault')
     mkdirSync(vaultPath, { recursive: true })
@@ -101,7 +101,7 @@ describe('runClean', () => {
   })
 
   it('skips the prompt with `yes: true`', async () => {
-    vi.mocked(purge).mockImplementationOnce(() => undefined)
+    vi.mocked(purge).mockResolvedValueOnce(undefined)
 
     const summary = await runClean({ yes: true })
 
@@ -109,10 +109,12 @@ describe('runClean', () => {
     expect(summary.keychainPurged).toBe(true)
   })
 
-  it('continues when claude-swap is missing — still clears hash files', async () => {
-    vi.mocked(purge).mockImplementationOnce(() => {
-      throw new ClaudeSwapMissingError()
-    })
+  it('continues when the keychain wipe fails — still clears hash files', async () => {
+    // L4f: the legacy ClaudeSwapMissingError branch is gone (purge no
+    // longer shells out to a separate binary). Any purge failure is
+    // now a generic Error from the keychain delete path; clean still
+    // clears hash files so the user gets a partial recovery.
+    vi.mocked(purge).mockRejectedValueOnce(new Error('keychain access denied'))
     const vaultPath = join(tempHome, '.vault')
     mkdirSync(vaultPath, { recursive: true })
     writeFileSync(join(vaultPath, 'last-hash-a@b.com.txt'), 'h1')
@@ -123,10 +125,8 @@ describe('runClean', () => {
     expect(summary.hashFilesRemoved).toBe(1)
   })
 
-  it('reports keychainPurged=false when claude-swap --purge errors', async () => {
-    vi.mocked(purge).mockImplementationOnce(() => {
-      throw new Error('keychain locked')
-    })
+  it('reports keychainPurged=false when purge errors', async () => {
+    vi.mocked(purge).mockRejectedValueOnce(new Error('keychain locked'))
 
     const summary = await runClean({ yes: true })
 

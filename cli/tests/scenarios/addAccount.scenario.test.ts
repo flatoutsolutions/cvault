@@ -6,40 +6,38 @@
  *  + §6 (encryption envelope) + §7 (`cvault add`).
  *
  * What this scenario covers end-to-end:
- *  - `runAdd` invokes `claude-swap --add-account`, then `--status` to
- *    learn the new active slot, then `--export -` to capture credentials
+ *  - `runAdd` spawns `claude` interactively for OAuth, then captures the
+ *    new credentials + claude.json natively into an envelope.
  *  - The captured plaintext blob is dispatched to the typed
- *    `api.subscriptions.actions.upsertFromPlaintext` action
+ *    `api.subscriptions.actions.upsertFromPlaintext` action.
  *  - The dispatched payload contains:
  *      * the parsed email
  *      * the JSON-stringified `claudeAiOauth` blob (no extra wrappers)
  *      * `expiresAt`, `subscriptionType`, `rateLimitTier`, optional `label`
  *  - A follow-up `runList` reads the newly-stored sub back via
- *    `listForUser` (round-trip wire shape — strips ciphertext / nonce)
+ *    `listForUser` (round-trip wire shape — strips ciphertext / nonce).
  *  - The fake backend's stored row never contains the AES master key and
- *    its `plaintextBlob` deserializes to the same OAuth tokens we sent
+ *    its `plaintextBlob` deserializes to the same OAuth tokens we sent.
  *
  * What's stubbed:
- *  - `claude-swap` subprocess — we never spawn the real binary
- *  - `makeVaultClient` — wired to the in-memory `FakeVaultClient` whose
- *    handlers mirror the real Convex behavior closely enough that the
- *    follow-up `cvault list` call returns the row we just inserted
+ *  - The interactive `claude` spawn — we never start the real binary.
+ *  - `makeVaultClient` — wired to the in-memory `FakeVaultClient`.
  */
 import { api } from '@cvault/convex/api'
 import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { addAccountInteractive, exportAccount, status } from '../../src/claudeSwap'
 import { runAdd } from '../../src/commands/add'
 import { runList } from '../../src/commands/list'
 import { makeVaultClient } from '../../src/convex/vaultClient'
+import { addAccountInteractive, exportAccount, getActiveAccount } from '../../src/credentials'
 import { singleAccountEnvelope } from '../fixtures/envelopes/singleAccount'
 import { cleanupTempHome, createFakeVaultClient, getCall, refName, setupTempHome } from './_helpers'
 
-vi.mock('../../src/claudeSwap', () => ({
+vi.mock('../../src/credentials', () => ({
   addAccountInteractive: vi.fn().mockResolvedValue(undefined),
-  status: vi.fn(),
   exportAccount: vi.fn(),
+  getActiveAccount: vi.fn(),
 }))
 
 vi.mock('../../src/convex/vaultClient', () => ({
@@ -58,11 +56,10 @@ afterEach(() => {
 })
 
 describe('Scenario #2 — Add account flow', () => {
-  it('adds via claude-swap, dispatches typed upsertFromPlaintext, and the row reads back via listForUser', async () => {
-    // Pretend `claude-swap --add-account` completed and we're now at slot 1.
-    vi.mocked(status).mockReturnValueOnce('Active account: 1 (work@example.com)\n')
+  it('spawns `claude` interactively, dispatches typed upsertFromPlaintext, and the row reads back via listForUser', async () => {
+    // No prior active account — the overwrite prompt is skipped.
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
     const env = singleAccountEnvelope({ number: 1, email: 'work@example.com' })
-    // Make sure the fixture's expiresAt is realistic.
     env.accounts[0]!.credentials.claudeAiOauth.expiresAt = 1_900_000_000_000
     vi.mocked(exportAccount).mockReturnValueOnce(env)
 
@@ -71,10 +68,9 @@ describe('Scenario #2 — Add account flow', () => {
 
     await runAdd({ label: 'work-mac' })
 
-    // Phase 1: subprocess orchestration.
+    // Phase 1: interactive spawn.
     expect(addAccountInteractive).toHaveBeenCalledOnce()
-    expect(status).toHaveBeenCalledOnce()
-    expect(exportAccount).toHaveBeenCalledWith(1)
+    expect(exportAccount).toHaveBeenCalledOnce()
 
     // Phase 2: dispatch — exactly one action call to the typed
     // `upsertFromPlaintext` ref (NOT a string-keyed proxy).
@@ -104,7 +100,7 @@ describe('Scenario #2 — Add account flow', () => {
     // Round-trip: `cvault list` reads the row back via `listForUser`. The
     // fake's `listForUser` handler mirrors the real one — strips ciphertext
     // / nonce / plaintextBlob and returns metadata only.
-    vi.mocked(status).mockReturnValueOnce('Active account: 1 (work@example.com)\n')
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'work@example.com' })
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
       captured.push(s)
@@ -117,7 +113,7 @@ describe('Scenario #2 — Add account flow', () => {
   })
 
   it('omits `label` from the dispatched payload when not supplied', async () => {
-    vi.mocked(status).mockReturnValueOnce('Active account: 1 (a@b.com)\n')
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
     vi.mocked(exportAccount).mockReturnValueOnce(singleAccountEnvelope({ number: 1, email: 'a@b.com' }))
     const fake = createFakeVaultClient()
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)

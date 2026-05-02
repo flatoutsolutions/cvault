@@ -5,10 +5,9 @@
  * with a test seam (`__setAnthropicFetch`) so unit tests can inject a
  * stub instead of hitting the real network.
  *
- * URLs + headers + payload shape are taken from the claude-swap source
- * (https://github.com/realiti4/claude-swap/blob/main/src/claude_swap/oauth.py).
- * Spec §14 calls for re-confirming these at impl time; values below are
- * what claude-swap currently sends.
+ * URLs + headers + payload shape match Claude Code's OAuth flow
+ * (see docs/research/anthropic-oauth-refresh.md). Spec §14 calls for
+ * re-confirming these at impl time.
  */
 import { randomBytes as nodeRandomBytes } from 'node:crypto'
 

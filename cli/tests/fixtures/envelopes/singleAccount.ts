@@ -1,12 +1,12 @@
 /**
- * Verified `claude-swap --export -` envelope shape (single-account).
+ * Verified envelope shape (single-account).
  *
- * Source: research brief python-cli-tooling.md §3 — extracted directly from
- * `claude-swap`'s `transfer.py`. The wrapping language changed (Python →
- * TypeScript) but the envelope shape is unchanged because `claude-swap`
- * itself is unchanged.
+ * Source: research brief python-cli-tooling.md §3 — extracted directly
+ * from `claude-swap`'s `transfer.py`. cvault now produces this shape
+ * natively (no claude-swap subprocess), but the wire format is unchanged
+ * because Convex storage and the on-disk envelope layout are pinned.
  */
-import type { ClaudeSwapEnvelope } from '../../../src/claudeSwap'
+import type { ClaudeSwapEnvelope } from '../../../src/credentials'
 
 export function singleAccountEnvelope(
   overrides: Partial<ClaudeSwapEnvelope['accounts'][number]> = {}

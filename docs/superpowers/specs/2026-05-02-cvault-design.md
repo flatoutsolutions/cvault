@@ -241,33 +241,34 @@ All cron-scheduled functions are `internalAction` (per Convex essentials: never 
 - **Reuses:**
   - `@clerk/backend` for JWT verification helpers + Backend API calls
   - `convex/browser` (`ConvexHttpClient`) for queries/mutations/actions
-  - `Bun.spawn` for subprocess wrapping `claude-swap`
-  - Argument parser: `commander` (mature, type-friendly) — re-evaluate vs `citty` during impl
+  - `Bun.spawnSync` to call `security` (macOS Keychain) directly + `Bun.spawn` to spawn `claude` (the Claude Code CLI) for the OAuth flow on `cvault add`
+  - Argument parser: `citty` (chosen for type-friendly subcommand declarations)
+- **Native credential module (`cli/src/native/`):** zero external runtime deps; replaces the original plan to shell out to `claude-swap`. macOS uses Keychain via `security`, Linux/WSL uses `~/.claude/.credentials.json`, Windows is unsupported in v1. See `IMPLEMENTATION_NOTES.md` for the migration log.
 
 ### Commands
 
-| Command                       | Purpose                                                                                                         |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `cvault login`                | Browser → Clerk → persists session JSON                                                                         |
-| `cvault add`                  | Captures current Claude Code login via `claude-swap --add-account` + `--export -`, uploads to Convex            |
-| `cvault list`                 | Renders table from Convex query: slot, email, label, 5h%, 7d%, expires, last refresh, active marker             |
-| `cvault switch <slot\|email>` | Pull-on-use: fetch from Convex, hash-compare, `claude-swap --import -` if newer, then `claude-swap --switch-to` |
-| `cvault refresh [slot]`       | Triggers Convex `refreshOAuthToken` action manually                                                             |
-| `cvault remove <slot\|email>` | Soft-deletes in Convex, runs `claude-swap --remove-account` locally                                             |
-| `cvault status`               | Combines local `claude-swap --status` + Convex view for active sub                                              |
-| `cvault sync --all`           | Bootstrap on new machine: pulls every sub, imports each into Keychain                                           |
+| Command                       | Purpose                                                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cvault login`                | Browser → Clerk → persists session JSON                                                                                                                 |
+| `cvault add`                  | Spawns `claude` interactively for OAuth, captures the new credentials + `~/.claude.json` slice, uploads to Convex                                       |
+| `cvault list`                 | Renders table from Convex query: slot, email, label, 5h%, 7d%, expires, last refresh, active marker (matched by EMAIL not slot)                         |
+| `cvault switch <slot\|email>` | Pull-on-use: fetch from Convex, hash-compare, `applyEnvelope` if newer (writes Keychain + `~/.claude.json` atomically with rollback on partial failure) |
+| `cvault refresh [slot]`       | Triggers Convex `refreshOAuthToken` action manually                                                                                                     |
+| `cvault remove <slot\|email>` | Soft-deletes in Convex, ALSO clears local credentials only when the removed sub matches the currently-active local account                              |
+| `cvault status`               | Reads `getActiveAccount()` (typed), looks up Convex meta by email                                                                                       |
+| `cvault sync --all`           | Bootstrap on new machine: pulls every sub, imports each (the LAST imported becomes active; user can `cvault switch` afterward to pick a different one)  |
 
 ### Pull-on-use semantics (`switch`)
 
 1. Convex action `pullForSwitch` — server-side, refreshes if `expiresAt < now+5min`, decrypts, returns `{email, slot, plaintextBlob, contentHash}`.
 2. CLI compares server-returned `contentHash` against `~/.vault/last-hash-{email}.txt`. Match → skip import.
-3. Mismatch → `claude-swap --import -` with single-account export shape, then update local hash.
-4. `claude-swap --switch-to <slot>`.
+3. Mismatch → `applyEnvelope` (under a cross-process file lock) writes the Keychain blob + the `oauthAccount` slice in `~/.claude.json`, with rollback on partial failure. Update local hash.
+4. No separate "switch-to" step — on native there is one active credential at a time, and the import IS the switch.
 
-### Offline degradation
+### Offline behavior
 
-- Convex unreachable → fall back to local `claude-swap --switch-to` directly. Print `⚠ offline — using local cache`.
-- `claude-swap` missing → exit with install hint.
+- Convex unreachable → throw `OfflineError` with a clear message. Native has no per-slot local backup pool, so credentials cannot be rotated without the vault. The previously-active sub stays usable locally; only switching is blocked.
+- `claude` (the OAuth CLI) missing → `cvault add` exits with `ClaudeCliMissingError` and an install hint.
 - Clerk session expired → trigger browser re-auth, persist new session, retry original command.
 
 ---

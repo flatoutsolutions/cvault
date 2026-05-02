@@ -31,9 +31,9 @@ import { api } from '@cvault/convex/api'
 import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { importEnvelope, switchTo } from '../../src/claudeSwap'
 import { runSwitch } from '../../src/commands/switch'
 import { makeVaultClient } from '../../src/convex/vaultClient'
+import { importEnvelope, switchTo } from '../../src/credentials'
 import { ensureVaultDir, lastHashPath } from '../../src/paths'
 import {
   SAMPLE_OAUTH_BLOB,
@@ -45,7 +45,7 @@ import {
   setupTempHome,
 } from './_helpers'
 
-vi.mock('../../src/claudeSwap', () => ({
+vi.mock('../../src/credentials', () => ({
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
 }))
@@ -90,10 +90,11 @@ describe('Scenario #4 — Switch on the same machine (hash matches)', () => {
     expect(refName(call.ref)).toBe(getFunctionName(api.subscriptions.actions.pullForSwitch))
     expect(call.args?.slotOrEmail).toBe('1')
 
-    // Hash matched -> no claude-swap --import -.
+    // Hash matched -> no import.
     expect(importEnvelope).not.toHaveBeenCalled()
-    // But we still flip the active slot.
-    expect(switchTo).toHaveBeenCalledWith(1)
+    // On native, no separate `switchTo` step — the active credentials
+    // are whatever was last imported.
+    expect(switchTo).not.toHaveBeenCalled()
 
     // The fake's `pullForSwitch` recorded a machineActivity row with
     // action='pull' (mirror of convex/subscriptions/actions.ts line 83).
@@ -124,6 +125,7 @@ describe('Scenario #4 — Switch on the same machine (hash matches)', () => {
     expect(env?.accounts[0]?.email).toBe('fresh@b.com')
     // The envelope carries the OAuth blob the fake handed back.
     expect(env?.accounts[0]?.credentials.claudeAiOauth.accessToken).toBe('sk-ant-oat01-AAAAAAAAAAAAAAAAAAAA')
-    expect(switchTo).toHaveBeenCalledWith(2)
+    // On native, the import IS the switch — no separate `switchTo` call.
+    expect(switchTo).not.toHaveBeenCalled()
   })
 })

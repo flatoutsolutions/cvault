@@ -11,27 +11,23 @@
  *
  * What this scenario covers end-to-end:
  *  - `runRemove(email)` dispatches the typed
- *    `api.subscriptions.mutations.softRemove` ref FIRST. Server is the
- *    source of truth — we touch Convex before mutating the local
- *    Keychain.
- *  - Only after the mutation resolves does `runRemove` invoke
- *    `claude-swap --remove-account` for the local cleanup.
- *  - If the server mutation fails, the local Keychain is left intact.
+ *    `api.subscriptions.mutations.softRemove` ref FIRST.
+ *  - Local credentials are cleared ONLY when the removed sub matches
+ *    the currently-active local account (H4 fix).
+ *  - If the server mutation fails, the local credentials are untouched.
  *  - Round-trip via `runList`: after removal, `cvault list` no longer
- *    renders the soft-removed sub (the fake's `listForUser` mirrors
- *    the real handler's `removedAt` filter).
- *  - When the user passes a slot number (not an email), the CLI resolves
- *    the email via `listForUser` first, so `softRemove({email})` gets
- *    the right argument.
+ *    renders the soft-removed sub.
+ *  - When the user passes a slot number, the CLI resolves it via
+ *    `listForUser` first.
  */
 import { api } from '@cvault/convex/api'
 import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { removeAccount, status } from '../../src/claudeSwap'
 import { runList } from '../../src/commands/list'
 import { runRemove } from '../../src/commands/remove'
 import { makeVaultClient } from '../../src/convex/vaultClient'
+import { getActiveAccount, removeAccount } from '../../src/credentials'
 import {
   SAMPLE_OAUTH_BLOB,
   cleanupTempHome,
@@ -42,9 +38,9 @@ import {
   setupTempHome,
 } from './_helpers'
 
-vi.mock('../../src/claudeSwap', () => ({
-  removeAccount: vi.fn(),
-  status: vi.fn(),
+vi.mock('../../src/credentials', () => ({
+  removeAccount: vi.fn().mockResolvedValue(undefined),
+  getActiveAccount: vi.fn(),
 }))
 
 vi.mock('../../src/convex/vaultClient', () => ({
@@ -56,6 +52,9 @@ let tempHome: string
 
 beforeEach(() => {
   tempHome = setupTempHome('cvault-remove-test-')
+  vi.mocked(getActiveAccount).mockReset()
+  vi.mocked(removeAccount).mockReset()
+  vi.mocked(removeAccount).mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -63,7 +62,7 @@ afterEach(() => {
 })
 
 describe('Scenario #10 (CLI half) — `cvault remove` + listAfterRemove', () => {
-  it('calls softRemove then claude-swap --remove-account, in that order', async () => {
+  it('calls softRemove then clears local credentials when the removed sub IS the active one', async () => {
     const sub = await makeSub({
       email: 'gone@example.com',
       slot: 1,
@@ -71,34 +70,48 @@ describe('Scenario #10 (CLI half) — `cvault remove` + listAfterRemove', () => 
     })
     const fake = createFakeVaultClient({ subscriptions: [sub] })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'gone@example.com' })
 
-    // Track ordering: convex mutation must happen before the local
-    // Keychain remove.
     const order: string[] = []
     fake.mutation.mockImplementationOnce((ref: unknown, args?: Record<string, unknown>) => {
       order.push('convex')
-      // Mirror the real fake's softRemove path so the round-trip
-      // listForUser test below sees `removedAt` set. We do this via the
-      // standard handler by calling it; the easier path is to mark
-      // removedAt directly on the seeded sub.
       const email = (args ?? {}).email
       for (const s of fake.state.subscriptions.values()) {
         if (s.email === email && s.removedAt === undefined) {
           s.removedAt = Date.now()
         }
       }
-      // Verify the dispatched ref is the typed softRemove proxy.
       expect(refName(ref)).toBe(getFunctionName(api.subscriptions.mutations.softRemove))
       return Promise.resolve(null)
     })
-    vi.mocked(removeAccount).mockImplementationOnce(() => {
-      order.push('claude-swap')
+    vi.mocked(removeAccount).mockImplementationOnce(async () => {
+      order.push('local')
     })
 
     await runRemove({ slotOrEmail: 'gone@example.com' })
 
-    expect(order).toEqual(['convex', 'claude-swap'])
+    expect(order).toEqual(['convex', 'local'])
     expect(removeAccount).toHaveBeenCalledWith('gone@example.com')
+  })
+
+  it('does NOT touch the local credentials when the removed sub is NOT the active one (H4)', async () => {
+    const sub = await makeSub({
+      email: 'archived@example.com',
+      slot: 1,
+      plaintextBlob: SAMPLE_OAUTH_BLOB,
+    })
+    const fake = createFakeVaultClient({ subscriptions: [sub] })
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
+    // The active account is unrelated to the one being removed.
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'still-here@example.com' })
+
+    fake.mutation.mockResolvedValueOnce(null)
+
+    await runRemove({ slotOrEmail: 'archived@example.com' })
+
+    // Convex side ran. Local clear did not.
+    expect(fake.mutation).toHaveBeenCalledOnce()
+    expect(removeAccount).not.toHaveBeenCalled()
   })
 
   it('does NOT touch the local Keychain when the server mutation fails', async () => {
@@ -109,6 +122,7 @@ describe('Scenario #10 (CLI half) — `cvault remove` + listAfterRemove', () => 
     })
     const fake = createFakeVaultClient({ subscriptions: [sub] })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'survives@example.com' })
 
     fake.mutation.mockRejectedValueOnce(new Error('NOT_FOUND'))
 
@@ -126,6 +140,7 @@ describe('Scenario #10 (CLI half) — `cvault remove` + listAfterRemove', () => 
     ])
     const fake = createFakeVaultClient({ subscriptions: subs })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'two@x.com' })
 
     await runRemove({ slotOrEmail: '2' })
 
@@ -135,9 +150,8 @@ describe('Scenario #10 (CLI half) — `cvault remove` + listAfterRemove', () => 
     // Then dispatched softRemove with the resolved email.
     expect(fake.mutation).toHaveBeenCalledOnce()
     expect(getCall(fake.mutation, 0).args?.email).toBe('two@x.com')
-    // claude-swap got the slot number form (matches the existing
-    // tests/commands/remove.test.ts contract).
-    expect(removeAccount).toHaveBeenCalledWith(2)
+    // Local clear keyed off the resolved EMAIL (not the original numeric arg).
+    expect(removeAccount).toHaveBeenCalledWith('two@x.com')
   })
 
   it('after remove, runList no longer shows the sub (round-trip via listForUser)', async () => {
@@ -147,13 +161,14 @@ describe('Scenario #10 (CLI half) — `cvault remove` + listAfterRemove', () => 
     ])
     const fake = createFakeVaultClient({ subscriptions: subs })
     vi.mocked(makeVaultClient).mockResolvedValue(fake as never)
+    vi.mocked(getActiveAccount).mockReturnValue({ email: 'keep@x.com' })
 
-    // Step 1: remove drop@x.com
+    // Step 1: remove drop@x.com — keep@x.com is active, so removeAccount
+    // should NOT fire on this removal (H4 fix).
     await runRemove({ slotOrEmail: 'drop@x.com' })
-    expect(removeAccount).toHaveBeenCalledOnce()
+    expect(removeAccount).not.toHaveBeenCalled()
 
     // Step 2: list — drop@x.com must not appear.
-    vi.mocked(status).mockReturnValueOnce('Active account: 1 (keep@x.com)')
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
       captured.push(s)
@@ -172,10 +187,11 @@ describe('Scenario #10 (CLI half) — `cvault remove` + listAfterRemove', () => 
     })
     const fake = createFakeVaultClient({ subscriptions: [sub] })
     vi.mocked(makeVaultClient).mockResolvedValue(fake as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'only@x.com' })
 
     await runRemove({ slotOrEmail: 'only@x.com' })
 
-    vi.mocked(status).mockReturnValueOnce('No active account')
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
       captured.push(s)

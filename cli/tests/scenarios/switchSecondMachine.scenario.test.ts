@@ -30,14 +30,14 @@ import { existsSync, readFileSync } from 'node:fs'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { importEnvelope, switchTo } from '../../src/claudeSwap'
 import { runSwitch } from '../../src/commands/switch'
 import { runSync } from '../../src/commands/sync'
 import { makeVaultClient } from '../../src/convex/vaultClient'
+import { importEnvelope, switchTo } from '../../src/credentials'
 import { lastHashPath } from '../../src/paths'
 import { SAMPLE_OAUTH_BLOB, cleanupTempHome, createFakeVaultClient, makeSub, setupTempHome } from './_helpers'
 
-vi.mock('../../src/claudeSwap', () => ({
+vi.mock('../../src/credentials', () => ({
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
 }))
@@ -106,7 +106,8 @@ describe('Scenario #5 — Switch on a second machine (sync, then switch)', () =>
     await runSwitch({ slotOrEmail: 'a@b.com' })
 
     expect(importEnvelope).not.toHaveBeenCalled() // post-sync, hash matches
-    expect(switchTo).toHaveBeenCalledWith(1)
+    // On native, no separate `switchTo` step — import IS the switch.
+    expect(switchTo).not.toHaveBeenCalled()
 
     // The shared backend recorded a second machineActivity row from the
     // post-sync switch. Sync inserted 2 rows, switch added 1 — total 3.

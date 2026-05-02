@@ -38,8 +38,7 @@ const CRITICAL_PCT = 90
 /**
  * Format the time remaining until `resetsAt` as a short, human string.
  *
- * Mirrors the format used by claude-swap (see docs/research/anthropic-usage.md
- * §"claude-swap normalized shape"):
+ * Format (see docs/research/anthropic-usage.md):
  *   > 1d  -> "Xd Xh"
  *   > 1h  -> "Xh Xm"
  *   else  -> "Xm"

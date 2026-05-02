@@ -19,31 +19,52 @@ import { AuditPage } from '../../routes/dashboard/audit'
 /**
  * Convex function-reference identity is opaque (Proxy), so instead of
  * pattern-matching the path, we route by call order. The audit page
- * calls useQuery three times per render in this order:
- *   1. refreshLog.recentForUser
- *   2. machineActivity.recentForUser
- *   3. subscriptions.listForUser
+ * makes three Convex hook calls per render in this order:
+ *   1. usePaginatedQuery — refreshLog.recentForUser
+ *   2. usePaginatedQuery — machineActivity.recentForUser
+ *   3. useQuery          — subscriptions.listForUser
  * — verified by reading routes/dashboard/audit.tsx.
  */
-let nextResults: { refreshLog: unknown; machineActivity: unknown; subscriptions: unknown } = {
-  refreshLog: undefined,
-  machineActivity: undefined,
+type PaginatedFake = {
+  results: unknown[] | undefined
+  /** Convex hook returns one of these strings; tests choose. */
+  status: 'LoadingFirstPage' | 'CanLoadMore' | 'LoadingMore' | 'Exhausted'
+}
+
+let nextResults: {
+  refreshLog: PaginatedFake
+  machineActivity: PaginatedFake
+  subscriptions: unknown
+} = {
+  refreshLog: { results: undefined, status: 'LoadingFirstPage' },
+  machineActivity: { results: undefined, status: 'LoadingFirstPage' },
   subscriptions: undefined,
 }
 
-function setQueryReturn(key: keyof typeof nextResults, value: unknown) {
-  nextResults = { ...nextResults, [key]: value }
+function setRefreshLog(value: PaginatedFake) {
+  nextResults = { ...nextResults, refreshLog: value }
+}
+function setMachineActivity(value: PaginatedFake) {
+  nextResults = { ...nextResults, machineActivity: value }
+}
+function setSubscriptions(value: unknown) {
+  nextResults = { ...nextResults, subscriptions: value }
 }
 
-let useQueryCallCount = 0
+let usePaginatedQueryCallCount = 0
 
 vi.mock('convex/react', () => ({
-  useQuery: () => {
-    const idx = useQueryCallCount % 3
-    useQueryCallCount += 1
-    if (idx === 0) return nextResults.refreshLog
-    if (idx === 1) return nextResults.machineActivity
-    return nextResults.subscriptions
+  useQuery: () => nextResults.subscriptions,
+  usePaginatedQuery: () => {
+    const idx = usePaginatedQueryCallCount % 2
+    usePaginatedQueryCallCount += 1
+    const fake = idx === 0 ? nextResults.refreshLog : nextResults.machineActivity
+    return {
+      results: fake.results ?? [],
+      status: fake.status,
+      loadMore: () => undefined,
+      isLoading: fake.status === 'LoadingFirstPage' || fake.status === 'LoadingMore',
+    }
   },
 }))
 
@@ -53,55 +74,65 @@ vi.mock('@tanstack/react-router', () => ({
 
 describe('/dashboard/audit', () => {
   beforeEach(() => {
-    nextResults = { refreshLog: undefined, machineActivity: undefined, subscriptions: undefined }
-    useQueryCallCount = 0
+    nextResults = {
+      refreshLog: { results: undefined, status: 'LoadingFirstPage' },
+      machineActivity: { results: undefined, status: 'LoadingFirstPage' },
+      subscriptions: undefined,
+    }
+    usePaginatedQueryCallCount = 0
   })
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('renders skeletons while one of the queries is loading', () => {
-    setQueryReturn('refreshLog', undefined)
-    setQueryReturn('machineActivity', undefined)
-    setQueryReturn('subscriptions', undefined)
+  it('renders skeletons while both paginated queries are loading their first page', () => {
+    setRefreshLog({ results: undefined, status: 'LoadingFirstPage' })
+    setMachineActivity({ results: undefined, status: 'LoadingFirstPage' })
+    setSubscriptions(undefined)
     const { container } = render(<AuditPage />)
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
   })
 
   it('renders an empty-state message when both queries return zero rows', () => {
-    setQueryReturn('refreshLog', [])
-    setQueryReturn('machineActivity', [])
-    setQueryReturn('subscriptions', [])
+    setRefreshLog({ results: [], status: 'Exhausted' })
+    setMachineActivity({ results: [], status: 'Exhausted' })
+    setSubscriptions([])
     render(<AuditPage />)
     expect(screen.getByText(/no audit rows/i)).toBeTruthy()
   })
 
   it('renders rows from both backends, most recent first', () => {
     const now = Date.now()
-    setQueryReturn('refreshLog', [
-      {
-        _id: 'log_1',
-        _creationTime: now,
-        userId: 'u_1',
-        subscriptionId: 'sub_1',
-        triggeredBy: 'cron',
-        outcome: 'success',
-        at: now - 10 * 60_000,
-      },
-    ])
-    setQueryReturn('machineActivity', [
-      {
-        _id: 'act_1',
-        _creationTime: now,
-        userId: 'u_1',
-        clerkSessionId: 'sess_abc12345xyz',
-        action: 'switch',
-        subscriptionId: 'sub_1',
-        at: now - 5 * 60_000,
-        ipHash: 'a1b2c3d4',
-      },
-    ])
-    setQueryReturn('subscriptions', [{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
+    setRefreshLog({
+      results: [
+        {
+          _id: 'log_1',
+          _creationTime: now,
+          userId: 'u_1',
+          subscriptionId: 'sub_1',
+          triggeredBy: 'cron',
+          outcome: 'success',
+          at: now - 10 * 60_000,
+        },
+      ],
+      status: 'Exhausted',
+    })
+    setMachineActivity({
+      results: [
+        {
+          _id: 'act_1',
+          _creationTime: now,
+          userId: 'u_1',
+          clerkSessionId: 'sess_abc12345xyz',
+          action: 'switch',
+          subscriptionId: 'sub_1',
+          at: now - 5 * 60_000,
+          ipHash: 'a1b2c3d4',
+        },
+      ],
+      status: 'Exhausted',
+    })
+    setSubscriptions([{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
     const { container } = render(<AuditPage />)
     const rows = Array.from(container.querySelectorAll('[data-slot="audit-row"]'))
     expect(rows).toHaveLength(2)
@@ -112,40 +143,46 @@ describe('/dashboard/audit', () => {
 
   it('filters by outcome=failure and excludes activity rows', () => {
     const now = Date.now()
-    setQueryReturn('refreshLog', [
-      {
-        _id: 'log_1',
-        _creationTime: now,
-        userId: 'u_1',
-        subscriptionId: 'sub_1',
-        triggeredBy: 'cron',
-        outcome: 'success',
-        at: now - 1000,
-      },
-      {
-        _id: 'log_2',
-        _creationTime: now,
-        userId: 'u_1',
-        subscriptionId: 'sub_1',
-        triggeredBy: 'cron',
-        outcome: 'failure',
-        error: 'Anthropic refresh 500',
-        at: now - 2000,
-      },
-    ])
-    setQueryReturn('machineActivity', [
-      {
-        _id: 'act_1',
-        _creationTime: now,
-        userId: 'u_1',
-        clerkSessionId: 'sess_abc',
-        action: 'pull',
-        subscriptionId: undefined,
-        at: now - 500,
-        ipHash: undefined,
-      },
-    ])
-    setQueryReturn('subscriptions', [{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
+    setRefreshLog({
+      results: [
+        {
+          _id: 'log_1',
+          _creationTime: now,
+          userId: 'u_1',
+          subscriptionId: 'sub_1',
+          triggeredBy: 'cron',
+          outcome: 'success',
+          at: now - 1000,
+        },
+        {
+          _id: 'log_2',
+          _creationTime: now,
+          userId: 'u_1',
+          subscriptionId: 'sub_1',
+          triggeredBy: 'cron',
+          outcome: 'failure',
+          error: 'Anthropic refresh 500',
+          at: now - 2000,
+        },
+      ],
+      status: 'Exhausted',
+    })
+    setMachineActivity({
+      results: [
+        {
+          _id: 'act_1',
+          _creationTime: now,
+          userId: 'u_1',
+          clerkSessionId: 'sess_abc',
+          action: 'pull',
+          subscriptionId: undefined,
+          at: now - 500,
+          ipHash: undefined,
+        },
+      ],
+      status: 'Exhausted',
+    })
+    setSubscriptions([{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
 
     const { container } = render(<AuditPage />)
     // Pick the Outcome filter and switch to 'failure'

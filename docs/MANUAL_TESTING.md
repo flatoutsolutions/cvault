@@ -76,12 +76,17 @@ Verify all required Convex-side secrets are present (do **not** echo their value
   - [ ] `VITE_CONVEX_SITE_URL`
   - [ ] `VITE_CLERK_PUBLISHABLE_KEY`
 
-### 1.5 `claude-swap` installed
+### 1.5 `claude` CLI (Claude Code) installed
 
-The CLI shells to `claude-swap` for every Keychain read/write. cvault does **not** read the Keychain directly.
+The CLI reads/writes the macOS Keychain (and `~/.claude.json`) directly
+via a native TypeScript module. The only external CLI it depends on is
+`claude` (Claude Code itself), invoked interactively for the OAuth flow
+during `cvault add`.
 
-- [ ] `which claude-swap` should resolve to `~/.local/bin/claude-swap` (or wherever you installed it)
-- [ ] `claude-swap --help` should print usage. Re-install per <https://github.com/realiti4/claude-swap> if missing.
+- [ ] `which claude` should resolve to your Claude Code binary (e.g.
+      `~/.local/bin/claude`).
+- [ ] `claude --help` should print usage. Install/upgrade Claude Code if
+      missing.
 
 ### 1.6 Bun installed
 
@@ -148,7 +153,7 @@ In a second terminal:
 ### 2.5 Empty list confirms wiring
 
 - [ ] `./cvault list` returns the empty-state rendering (per `cli/src/render/table.ts`) with no error
-- [ ] `./cvault status` reports no active sub (matches the local `claude-swap --status` output)
+- [ ] `./cvault status` reports no active sub (matches the lack of an active credential entry on this machine)
 
 If 2.1-2.5 all pass, the rails are connected. Proceed.
 
@@ -163,7 +168,7 @@ Add a real Claude Code subscription, see it flow into Convex, refresh, switch, a
 - [ ] Open Claude Code on the dev machine and sign into the test Anthropic account (per [§1.7](#17-a-real-test-anthropic-max-account))
 - [ ] Verify Claude Code is functional (e.g. ask it `whoami` or use it for one prompt) — this primes the Keychain entry
 - [ ] In the cvault `cli/` directory: `./cvault add`
-- [ ] CLI shells to `claude-swap --status` then `claude-swap --add-account` (adds the current Keychain entry as a numbered slot) then `claude-swap --export -` to capture the envelope
+- [ ] CLI spawns `claude` interactively for the OAuth flow, then reads the active credentials + `~/.claude.json` natively to capture the envelope
 - [ ] CLI uploads via `api.subscriptions.actions.upsertFromPlaintext` (encrypts server-side under `VAULT_AES_KEY`)
 - [ ] CLI prints "Added <email> as slot 1" or similar success line, exits 0
 
@@ -201,8 +206,8 @@ If you only have one sub, switching is a no-op-ish exercise but still proves the
 
 - [ ] `./cvault switch 1`
 - [ ] CLI calls `api.subscriptions.actions.pullForSwitch`
-- [ ] Hash compare: matches the local `~/.vault/last-hash-{email}.txt` if present (no re-import); mismatches → `claude-swap --import -` runs
-- [ ] CLI then runs `claude-swap --switch-to 1`
+- [ ] Hash compare: matches the local `~/.vault/last-hash-{email}.txt` if present (no re-import); mismatches → `importEnvelope` writes Keychain + `~/.claude.json`
+- [ ] On native, `switchTo` is a no-op — the active credential is already whatever was just imported
 - [ ] No error output; exit 0
 - [ ] `./cvault status` confirms slot 1 is active
 
@@ -218,7 +223,7 @@ If you only have one Anthropic test account, skip this and use the multi-machine
 ### 3.8 Switch between subs
 
 - [ ] `./cvault switch 1` then `./cvault switch 2` (or vice versa)
-- [ ] Each call: pull-on-use, hash compare, import if mismatch, then `claude-swap --switch-to`
+- [ ] Each call: pull-on-use, hash compare, import if mismatch (then `switchTo` is a no-op since the imported sub is already active)
 - [ ] After each switch: `./cvault status` reflects the new active slot
 - [ ] Mac Keychain reflects the swap (verify by opening Keychain Access → search for "Claude Code-credentials" → the active entry has the right account email metadata)
 
@@ -235,7 +240,7 @@ This is **post-fix** territory — pre-fix `cvault refresh` was broken because `
 ### 3.10 Soft remove
 
 - [ ] `./cvault remove 1` (or use the dashboard's Remove button)
-- [ ] CLI calls `api.subscriptions.mutations.softRemove` (sets `removedAt`) then locally `claude-swap --remove-account 1`
+- [ ] CLI calls `api.subscriptions.mutations.softRemove` (sets `removedAt`) then natively clears the Keychain entry + `oauthAccount` slice in `~/.claude.json`
 - [ ] `./cvault list` no longer shows slot 1
 - [ ] Dashboard card disappears from `/dashboard` (filtered out by `removedAt`)
 - [ ] In Convex dashboard, the row still exists in the `subscriptions` table — it's a soft delete (the hard-delete cron is deferred per scenario plan §9)
@@ -261,9 +266,9 @@ On the second machine (per [§1.8](#18-a-second-machine-or-vm-or-alt-user-ready)
 - [ ] On machine 2: `./cvault sync --all`
 - [ ] CLI calls `GET /api/cli/sync` (the bundle endpoint per spec §5)
 - [ ] Each sub from Convex is decrypted server-side and returned in a single response
-- [ ] CLI imports each via `claude-swap --import -`, writes `~/.vault/last-hash-<email>.txt` per sub
+- [ ] CLI imports each natively (writes Keychain + `~/.claude.json`), and writes `~/.vault/last-hash-<email>.txt` per sub
 - [ ] `./cvault list` on machine 2 shows the same subs that machine 1 has
-- [ ] `claude-swap --list` (or `--status`) on machine 2 shows the imported accounts in the Keychain
+- [ ] On machine 2 the Keychain entry "Claude Code-credentials" reflects the LAST imported sub (since native has one active credential at a time)
 
 ### 4.3 Switch a sub previously added on machine 1
 
@@ -334,7 +339,7 @@ The cleanest way to simulate without burning a real Anthropic refresh token:
 - [ ] On the CLI machine, disable network access to the Convex deployment. Easiest: turn off Wi-Fi briefly, or `sudo route add -host <convex-cloud-IP> 127.0.0.1` (then `route delete` after)
 - [ ] `./cvault switch <slot>`
 - [ ] Expected: CLI prints `⚠ offline — using local cache` (or similar wording per `cli/src/commands/switch.ts`)
-- [ ] CLI falls back to `claude-swap --switch-to <slot>` directly — switch still happens locally
+- [ ] CLI falls back to a local `switchTo` (a no-op on native since the active credential is whatever was last imported) — the previously-active sub stays active
 - [ ] Re-enable network. `./cvault switch` to a different slot — should pull-on-use against Convex and behave normally again
 
 ### 5.5 Refresh log redaction (scenario #14)
@@ -472,7 +477,8 @@ Per spec §14 + IMPLEMENTATION_NOTES "Open backend issues" + scenario plan §9. 
 - [ ] **Per-user mutation rate limiting** — deferred to v2 per spec §12. (Verify whether the M3 fix-builder added any rate limit on `/api/cli/sync` specifically; if so, that's a partial fix.)
 - [ ] **`cvault watch` daemon** — no background mode; pull-on-use only per spec §2.
 - [ ] **Multi-org / team sharing** — explicitly excluded per spec §2 (ToS reasons). The `organizations` Blueprint tables exist but are unused.
-- [ ] **Linux / Windows** — Mac-first only in v1. `claude-swap` works on those platforms but cvault wraps it untested per spec §2.
+- [ ] **Linux / WSL** — supported by the native module (file-based credentials at `~/.claude/.credentials.json`) but untested in v1's manual testing harness.
+- [ ] **Windows** — `cvault` throws `PlatformUnsupportedError` on `process.platform === 'win32'`. Tracked as a follow-up issue.
 - [ ] **Hard-delete cron after 30d** — deferred per scenario plan §9. Soft-removed rows stay forever in v1.
 - [ ] **Live Anthropic refresh scenario test** — `convex/__scenarios__/liveAnthropicRefresh.scenario.test.ts` is gated on `VAULT_TEST_REFRESH_TOKEN` and consumes the token on each run. Skip unless explicitly running the live suite.
 - [ ] **Anthropic API contract drift** — no integration test against the real refresh endpoint runs by default. If Anthropic changes their wire format, mocks won't catch it (per security finding L2).
@@ -502,7 +508,7 @@ Bare minimum for v1 acceptance:
 - [ ] Forcing `expiresAt` to past triggers refresh on next use; dashboard reflects new state
 - [ ] Forcing `refreshExpiresAt` to past surfaces the `⚠ relogin required` badge
 - [ ] Tampered `ciphertext` produces a clear "creds corrupt — re-add" error with no plaintext leak
-- [ ] Offline → CLI degrades to local `claude-swap --switch-to` with `⚠ offline` warning
+- [ ] Offline → CLI degrades to a local `switchTo` no-op with `⚠ offline` warning (active credentials remain whatever was last imported)
 
 **Security (post-fix):**
 
@@ -551,7 +557,7 @@ When something fails, capture **all** of the following before filing the report 
 
 - [ ] OS + version (`sw_vers` on macOS)
 - [ ] `bun --version`
-- [ ] `claude-swap --version`
+- [ ] `claude --version` (Claude Code CLI)
 - [ ] CLI binary version: `./cvault --version`
 - [ ] Convex deployment slug (visible in `.env.local` or `npx convex env list`)
 

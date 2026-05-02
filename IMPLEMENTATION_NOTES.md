@@ -5,6 +5,110 @@ agent; do not delete sections you don't own without coordinating in cccollab.
 
 ---
 
+## 2026-05-02 — `claude-swap` → native TypeScript Keychain module
+
+cvault no longer shells out to `claude-swap` (Python). The CLI now reads
+and writes the macOS Keychain entry (and the Linux/WSL credentials file)
+directly via a native TypeScript module under `cli/src/native/`.
+
+### What changed
+
+| Concern                   | Before                                      | After                                                                                             |
+| ------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Active credentials read   | `claude-swap --status` / `--export -`       | `cli/src/native/keychain.ts` (`security` CLI on macOS)                                            |
+| Active credentials write  | `claude-swap --import -`                    | `cli/src/native/keychain.ts` / `cli/src/native/credentialsFile.ts`                                |
+| Active credentials delete | `claude-swap --remove-account` / `--purge`  | `cli/src/native/credentialStore.ts` (`deleteCredentials`)                                         |
+| `~/.claude.json` slice    | `claude-swap` wrote it                      | `cli/src/native/claudeConfig.ts` (`readGlobalConfig` / `writeOauthAccount` / `clearOauthAccount`) |
+| Interactive add           | `claude-swap --add-account`                 | `cli/src/native/claudeCli.ts` spawns `claude` directly                                            |
+| Envelope build/apply      | round-trip via subprocess                   | `cli/src/native/envelope.ts` (`buildEnvelope` / `applyEnvelope`)                                  |
+| Façade for command code   | `cli/src/claudeSwap.ts`                     | `cli/src/credentials.ts` (legacy verb names preserved as thin wrappers)                           |
+| Tests for the wrapper     | `cli/tests/claudeSwap.test.ts` (subprocess) | `cli/tests/credentials.test.ts` (façade) + `cli/tests/native/*.test.ts` (per module)              |
+
+### Key design decisions
+
+- **Wire format preserved.** The envelope shape (`ClaudeSwapAccount` /
+  `ClaudeSwapEnvelope`) and Convex storage schema are unchanged. The
+  type names still bear `ClaudeSwap` for cross-version compat. New
+  exports stamp `swapVersion: 'cvault-native-1'` so future tooling can
+  tell native exports from legacy ones.
+- **`switchTo` is a no-op on native.** There is no per-slot backup pool;
+  the active credential is whatever was last imported. Callers
+  (`switch.ts`, `sync.ts`) call `switchTo` after `importEnvelope`, so
+  the post-condition is already satisfied.
+- **Windows is unsupported in v1.** `cli/src/native/credentialStore.ts`
+  throws `PlatformUnsupportedError` on `process.platform === 'win32'`.
+- **`claude-swap.ts` was renamed to `credentials.ts`.** The file is a
+  thin façade over the native module, preserving the legacy verb names
+  the rest of the CLI imports.
+
+### Hardening folded in (HIGH-risk regressions caught by review)
+
+- **H1+M5: typed `getActiveAccount()` instead of slot-string parsing.**
+  The legacy `status()` returns the synthesized "Status: Account-1
+  (email)" string with a hard-coded slot. `list.ts` and `status.ts`
+  used a regex to parse it back, which broke for users whose vault
+  slot wasn't 1. Replaced with a typed `getActiveAccount(): { email,
+... } | null`. Callers match by EMAIL (stable across machines and
+  renumbers), not slot.
+- **H2: cross-process file lock (`cli/src/native/lock.ts`).** Wraps
+  `applyEnvelope` and `clearActive` in a `withFileLock` that uses
+  exclusive-create (`fs.openSync(path, 'wx')`) with backoff retry. Lock
+  path: `<config_home>/.cvault.lock`. Stale-lock detection breaks any
+  lock older than 60s (presumed crashed prior holder).
+- **H3: rollback in `applyEnvelope`.** Snapshots the prior credentials
+  blob + `oauthAccount` slice before the writes; if the second write
+  fails, rolls back the first. Tested with both prior-state and
+  no-prior-state branches.
+- **H4: `removeAccount` only clears local creds when the removed sub
+  IS the active local one.** Previously, `cvault remove <other-slot>`
+  would silently log the user out of an unrelated active account. The
+  guard checks `getActiveAccount().email === resolvedEmail` before
+  invoking `clearActive()`.
+- **M6: `cvault switch` fails loud on offline.** Previously fell back
+  to a no-op `switchTo` and printed a vague warning. Now throws an
+  `OfflineError` with a clear message; non-network errors still
+  re-throw verbatim so real bugs aren't masked.
+- **M7: `cvault add` prompts before overwriting an existing active
+  account.** `cvault add --force` skips the prompt for non-interactive
+  callers.
+- **L9: unified `swapVersion: 'cvault-native-1'`** across both the
+  Convex-pull envelope path (`cli/src/envelope.ts`) and the local
+  build path (`cli/src/native/envelope.ts`).
+- **S-series Keychain hardening (`cli/src/native/keychain.ts`).**
+  Typed exit-code map: `not-found` (44, status), `interaction-required`
+  (36, hint about SSH/headless), `auth-denied` (51, hint about
+  partition-list / re-add), `cancelled` (128), plus a synthesized
+  `interaction-required` for Bun timeouts. 30-second hard timeout on
+  every `security` call. Each error kind carries an actionable
+  remediation hint in the message.
+- **S1 trade-off documented.** The `man security(1)` page recommends
+  the stdin-prompt form for password input. We investigated it and
+  found an undocumented 128-byte cap that silently truncates the
+  ~180-250 byte OAuth blob. The integration test at
+  `tests/integration/keychainRoundtrip.test.ts` pins this regression
+  with two assertions: (a) argv-form round-trips correctly; (b)
+  stdin-prompt-form truncates a 200-byte blob. If a future macOS fix
+  raises the cap, test (b) will fail and we can switch to the safer
+  stdin form.
+
+### Test counts
+
+`cd cli && bunx --bun vitest run` — **240 passing across 37 files** (2
+integration tests skipped behind `CVAULT_E2E_KEYCHAIN=1`). Baseline
+before this migration: 150 tests across 27 files.
+
+### Open follow-ups
+
+- **Windows Keychain support.** Tracked separately. `keytar` + the
+  Windows Credential Manager would be the standard route.
+- **`status()` legacy stdout-form.** Retained alongside
+  `getActiveAccount()` for any tooling that scrapes it. New code
+  should use `getActiveAccount()` directly. Removing `status()` is a
+  follow-up that requires auditing third-party scripts that may parse
+  the legacy format.
+
+---
+
 ## Backend (this agent) — Phase 2 status: COMPLETE
 
 Phase 2 (Convex backend) is complete. All public surface the spec
