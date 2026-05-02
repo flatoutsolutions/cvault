@@ -1,0 +1,57 @@
+{
+  "name": "cvault",
+  "version": "0.1.0",
+  "description": "Centralized Claude Code credential vault — wraps claude-swap with Convex sync.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Stefan Asseg <stefan@flatout.solutions>",
+  "homepage": "https://github.com/stefanasseg/cvault",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stefanasseg/cvault.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/stefanasseg/cvault/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "credentials",
+    "convex",
+    "oauth",
+    "cli"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "bin": {
+    "cvault": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "bun run src/index.ts --",
+    "typecheck": "tsc --noEmit",
+    "build:bunx": "bun build ./src/index.ts --target=bun --outfile dist/cli.js --minify",
+    "build:darwin-arm64": "bun build --compile --minify --sourcemap --bytecode --target=bun-darwin-arm64 ./src/index.ts --outfile dist/cvault-darwin-arm64",
+    "build:darwin-x64": "bun build --compile --minify --sourcemap --bytecode --target=bun-darwin-x64 ./src/index.ts --outfile dist/cvault-darwin-x64",
+    "build:linux-x64": "bun build --compile --minify --sourcemap --bytecode --target=bun-linux-x64 ./src/index.ts --outfile dist/cvault-linux-x64",
+    "build:linux-arm64": "bun build --compile --minify --sourcemap --bytecode --target=bun-linux-arm64 ./src/index.ts --outfile dist/cvault-linux-arm64",
+    "build:all": "bun run build:darwin-arm64 && bun run build:darwin-x64 && bun run build:linux-x64 && bun run build:linux-arm64",
+    "test": "bunx --bun vitest run --passWithNoTests",
+    "test:watch": "bunx --bun vitest"
+  },
+  "dependencies": {
+    "citty": "^0.1.6",
+    "convex": "^1.32.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/node": "^25.3.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,0 +1,428 @@
+# =============================================================================
+#  release-cli.yml — cvault CLI release pipeline
+# -----------------------------------------------------------------------------
+#  Triggered by pushing a `cli-v*` semver tag (e.g. cli-v0.1.0, cli-v1.2.3).
+#  Pipeline:
+#    1. test    — typecheck, lint, vitest in cli/
+#    2. build   — bun build --compile per target (matrix), upload artifacts
+#    3. release — collect artifacts, sha256, create GitHub Release w/ assets
+#    4. update-tap — bump Formula/cvault.rb in the homebrew tap repo + open PR
+#
+#  Hardening:
+#    * Third-party actions pinned to commit SHAs (annotated with version tag).
+#    * `concurrency` cancels stale runs on the same tag.
+#    * `permissions:` granted only where the job needs them.
+# =============================================================================
+
+name: Release CLI
+
+# Quoted "on" because some YAML 1.1 parsers (Ruby psych, older yamllint)
+# coerce the bare key to boolean `true`. GitHub Actions tolerates either,
+# but the quoted form is unambiguous everywhere.
+"on":
+  push:
+    tags:
+      # Semver-tagged CLI releases: cli-v0.1.0, cli-v1.2.3, cli-v2.0.0-rc.1, ...
+      - 'cli-v*'
+
+# Top-level permissions are intentionally minimal; jobs widen as needed.
+permissions:
+  contents: read
+
+# Cancel any in-progress run for the same tag — a re-pushed tag should win.
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Single source of truth for the Bun version used in CI. Bump in lock-step
+  # with cli/.bun-version once that file is in place.
+  BUN_VERSION: '1.2.21'
+  # Subdirectory containing the CLI package. Mirrors the spec (§7).
+  CLI_DIR: cli
+  # Homebrew tap repo (owner/name). TODO(stefan): replace placeholder once the
+  # tap repo is created. The tap MUST live at a stable URL so end users can
+  # `brew tap stefan/cvault`.
+  TAP_REPO: stefanasseg/homebrew-cvault
+
+jobs:
+  # ===========================================================================
+  # 1) test — fast, single-OS gate. Must pass before we burn matrix minutes.
+  # ===========================================================================
+  test:
+    name: Test (typecheck + lint + vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source at tag
+        # actions/checkout v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+
+      - name: Install Bun ${{ env.BUN_VERSION }}
+        # oven-sh/setup-bun v2.2.0
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install CLI dependencies
+        working-directory: ${{ env.CLI_DIR }}
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck (tsc --noEmit)
+        working-directory: ${{ env.CLI_DIR }}
+        run: bunx tsc --noEmit
+
+      # Lint: per ts-bun-cli-tooling brief §9, the CLI inherits the
+      # repo-root ESLint flat config (eslint.config.ts).
+      # `npx eslint` runs against the root config without needing yarn install
+      # because ESLint resolves plugins via node_modules in the repo root.
+      - name: Lint (ESLint flat config — root-scoped)
+        run: |
+          if [ -f package.json ]; then
+            corepack enable
+            yarn install --immutable || yarn install
+          fi
+          yarn lint:check || npx --yes eslint cli/src cli/tests
+
+      # bunx --bun forces Vitest to run inside the embedded Bun runtime so
+      # `Bun.spawn`/`Bun.serve` globals are available to test code.
+      - name: Run unit tests (vitest, under Bun runtime)
+        working-directory: ${{ env.CLI_DIR }}
+        run: bunx --bun vitest run
+
+  # ===========================================================================
+  # 2) build — fan out across all release targets. Each job produces ONE binary.
+  # ===========================================================================
+  build:
+    name: Build (${{ matrix.target }})
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon — primary install target for Stefan's machines.
+          - target: bun-darwin-arm64
+            runner: macos-14
+            asset: cvault-darwin-arm64
+          # macOS Intel — older Macs and CI hosts that haven't migrated.
+          - target: bun-darwin-x64
+            runner: macos-13
+            asset: cvault-darwin-x64
+          # Linux x64 — for cloud VMs / CI usage.
+          - target: bun-linux-x64
+            runner: ubuntu-latest
+            asset: cvault-linux-x64
+          # Linux ARM64 — for Graviton / Asahi / future ARM cloud.
+          - target: bun-linux-arm64
+            runner: ubuntu-24.04-arm
+            asset: cvault-linux-arm64
+    steps:
+      - name: Checkout source at tag
+        # actions/checkout v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+
+      - name: Install Bun ${{ env.BUN_VERSION }}
+        # oven-sh/setup-bun v2.2.0
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install CLI dependencies
+        working-directory: ${{ env.CLI_DIR }}
+        run: bun install --frozen-lockfile
+
+      - name: Compile static binary for ${{ matrix.target }}
+        working-directory: ${{ env.CLI_DIR }}
+        # `bun build --compile --target=<triple>` produces a self-contained
+        # binary with the Bun runtime baked in; no Bun install required on the
+        # user machine. Flags:
+        #   --minify     reduce binary size
+        #   --bytecode   precompile JS to JSC bytecode → ~2x faster startup
+        #   --sourcemap  embed for usable stack traces (no separate file)
+        # Refs: https://bun.sh/docs/bundler/executables
+        #       https://bun.sh/docs/bundler/bytecode
+        run: |
+          mkdir -p dist
+          bun build \
+            --compile \
+            --target=${{ matrix.target }} \
+            --minify \
+            --bytecode \
+            --sourcemap=linked \
+            ./src/index.ts \
+            --outfile dist/${{ matrix.asset }}
+
+      # macOS-only: ad-hoc codesign so the binary launches without a
+      # Gatekeeper SIGKILL on first run. Re-signing requires removing the
+      # bun-injected signature first; without this users get exit 137 on
+      # any invocation. Documented in ts-bun-cli-tooling brief §1.2.
+      # On the macos-* runners `codesign` is preinstalled with the Xcode
+      # command-line tools.
+      - name: Ad-hoc codesign (macOS only)
+        if: startsWith(matrix.target, 'bun-darwin-')
+        working-directory: ${{ env.CLI_DIR }}
+        run: |
+          codesign --remove-signature dist/${{ matrix.asset }} || true
+          codesign -s - dist/${{ matrix.asset }}
+
+      - name: Smoke-check binary (size + file type)
+        working-directory: ${{ env.CLI_DIR }}
+        run: |
+          ls -lh dist/${{ matrix.asset }}
+          file dist/${{ matrix.asset }} || true
+
+      - name: Upload binary as workflow artifact
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ env.CLI_DIR }}/dist/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ===========================================================================
+  # 3) release — collect every binary, hash, and publish the GitHub Release.
+  # ===========================================================================
+  release:
+    name: Publish GitHub Release
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Required by softprops/action-gh-release to create the release object.
+      contents: write
+    outputs:
+      # Surface the per-platform sha256 sums so update-tap can consume them
+      # without re-downloading and rehashing the binaries.
+      sha256_darwin_arm64: ${{ steps.hashes.outputs.sha256_darwin_arm64 }}
+      sha256_darwin_x64: ${{ steps.hashes.outputs.sha256_darwin_x64 }}
+      sha256_linux_x64: ${{ steps.hashes.outputs.sha256_linux_x64 }}
+      sha256_linux_arm64: ${{ steps.hashes.outputs.sha256_linux_arm64 }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Derive version from tag (strip `cli-v` prefix)
+        id: version
+        # github.ref_name = "cli-v0.1.0" → version = "0.1.0"
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#cli-v}"
+          if [ -z "$version" ] || [ "$version" = "$tag" ]; then
+            echo "::error::Tag '$tag' does not match expected format 'cli-vX.Y.Z'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $version"
+
+      - name: Download all built binaries
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: artifacts
+          # Each matrix job uploaded under a unique name — flatten back into
+          # one directory so we can hash + upload them as a single batch.
+          merge-multiple: true
+
+      - name: Compute sha256 sums and SHA256SUMS.txt
+        id: hashes
+        working-directory: artifacts
+        run: |
+          set -euo pipefail
+          ls -la
+          # Per-file sums (machine-readable for the tap update job).
+          sha_darwin_arm64=$(sha256sum cvault-darwin-arm64 | awk '{print $1}')
+          sha_darwin_x64=$(sha256sum cvault-darwin-x64   | awk '{print $1}')
+          sha_linux_x64=$(sha256sum cvault-linux-x64     | awk '{print $1}')
+          sha_linux_arm64=$(sha256sum cvault-linux-arm64 | awk '{print $1}')
+          # Aggregate file users can verify locally with `sha256sum -c`.
+          sha256sum cvault-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          {
+            echo "sha256_darwin_arm64=$sha_darwin_arm64"
+            echo "sha256_darwin_x64=$sha_darwin_x64"
+            echo "sha256_linux_x64=$sha_linux_x64"
+            echo "sha256_linux_arm64=$sha_linux_arm64"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render release notes body
+        id: body
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA_DARWIN_ARM64: ${{ steps.hashes.outputs.sha256_darwin_arm64 }}
+          SHA_DARWIN_X64: ${{ steps.hashes.outputs.sha256_darwin_x64 }}
+          SHA_LINUX_X64: ${{ steps.hashes.outputs.sha256_linux_x64 }}
+          SHA_LINUX_ARM64: ${{ steps.hashes.outputs.sha256_linux_arm64 }}
+        run: |
+          {
+            echo "## cvault $VERSION"
+            echo ""
+            echo "Single-binary CLI for the cvault credential vault. Wraps"
+            echo "[\`claude-swap\`](https://github.com/realiti4/claude-swap) with cross-machine sync via Convex."
+            echo ""
+            echo "### Install (Homebrew, recommended)"
+            echo ""
+            echo '```sh'
+            echo "brew tap stefanasseg/cvault"
+            echo "brew install cvault"
+            echo "uv tool install claude-swap   # required runtime dependency"
+            echo '```'
+            echo ""
+            echo "### Manual download"
+            echo ""
+            echo "Pick the binary for your platform, \`chmod +x\`, and drop into your \`PATH\`."
+            echo ""
+            echo "| Platform              | Asset                  | sha256 |"
+            echo "| --------------------- | ---------------------- | ------ |"
+            echo "| macOS (Apple Silicon) | \`cvault-darwin-arm64\` | \`$SHA_DARWIN_ARM64\` |"
+            echo "| macOS (Intel)         | \`cvault-darwin-x64\`   | \`$SHA_DARWIN_X64\` |"
+            echo "| Linux (x86_64)        | \`cvault-linux-x64\`    | \`$SHA_LINUX_X64\` |"
+            echo "| Linux (arm64)         | \`cvault-linux-arm64\`  | \`$SHA_LINUX_ARM64\` |"
+            echo ""
+            echo "Verify any binary with the bundled \`SHA256SUMS.txt\`:"
+            echo ""
+            echo '```sh'
+            echo "sha256sum -c SHA256SUMS.txt"
+            echo '```'
+          } > RELEASE_NOTES.md
+          echo "body_path=RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and attach binaries
+        id: gh_release
+        # softprops/action-gh-release v3.0.0
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: cvault ${{ steps.version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          # Tag pre-releases automatically (anything past `cli-vX.Y.Z-…`).
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          make_latest: ${{ contains(steps.version.outputs.version, '-') == false }}
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/cvault-darwin-arm64
+            artifacts/cvault-darwin-x64
+            artifacts/cvault-linux-x64
+            artifacts/cvault-linux-arm64
+            artifacts/SHA256SUMS.txt
+
+  # ===========================================================================
+  # 4) update-tap — open a PR against the homebrew tap repo with the new
+  # version + sha256 sums for darwin-arm64 and darwin-x64. We do NOT auto-merge
+  # so Stefan can eyeball the formula diff before users `brew upgrade`.
+  # ===========================================================================
+  update-tap:
+    name: Open PR against homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate tap secret is present
+        # Fail fast if the PAT is missing rather than after the checkout step.
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "::error::Repository secret HOMEBREW_TAP_TOKEN is not set."
+            echo "::error::Create a fine-scoped PAT with 'contents:write' + 'pull-requests:write' on $TAP_REPO and add it as HOMEBREW_TAP_TOKEN."
+            exit 1
+          fi
+
+      - name: Checkout homebrew tap repo (${{ env.TAP_REPO }})
+        # actions/checkout v6.0.2
+        # TODO(stefan): once the tap repo is created at $TAP_REPO, this is the
+        # only place it needs to be referenced for cloning. Update the env var
+        # at the top of this file if the repo path changes.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Land on `main` of the tap repo; the action below will branch off it.
+          ref: main
+          path: tap
+          persist-credentials: true
+
+      - name: Update Formula/cvault.rb in tap with new version + sha256 sums
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA_DARWIN_ARM64: ${{ needs.release.outputs.sha256_darwin_arm64 }}
+          SHA_DARWIN_X64: ${{ needs.release.outputs.sha256_darwin_x64 }}
+          SHA_LINUX_X64: ${{ needs.release.outputs.sha256_linux_x64 }}
+          SHA_LINUX_ARM64: ${{ needs.release.outputs.sha256_linux_arm64 }}
+        # The substitution is intentionally targeted: it replaces the four
+        # placeholder markers the formula ships with (see Formula/cvault.rb in
+        # this repo for the canonical template). Keep the marker strings in
+        # sync between the two files.
+        run: |
+          set -euo pipefail
+          formula="tap/Formula/cvault.rb"
+          if [ ! -f "$formula" ]; then
+            echo "::error::Expected $formula in tap repo. Seed the tap with the template at Formula/cvault.rb from cvault before tagging."
+            exit 1
+          fi
+          # version "X.Y.Z"
+          sed -i.bak -E "s/^([[:space:]]*version[[:space:]]+\")[^\"]*(\".*)$/\1${VERSION}\2/" "$formula"
+          # SHA256 placeholders use the markers below; CI swaps them in place.
+          # Markers are stable strings — never change them in the template
+          # without updating this script.
+          python3 - "$formula" <<PY
+          import os, re, sys
+          path = sys.argv[1]
+          with open(path) as f:
+              src = f.read()
+          replacements = {
+              "SHA256_DARWIN_ARM64_PLACEHOLDER": os.environ["SHA_DARWIN_ARM64"],
+              "SHA256_DARWIN_X64_PLACEHOLDER":   os.environ["SHA_DARWIN_X64"],
+              "SHA256_LINUX_X64_PLACEHOLDER":    os.environ["SHA_LINUX_X64"],
+              "SHA256_LINUX_ARM64_PLACEHOLDER":  os.environ["SHA_LINUX_ARM64"],
+          }
+          for marker, sha in replacements.items():
+              if marker not in src:
+                  print(f"::warning::Marker {marker} not present — sha256 for that platform was not updated.")
+              src = src.replace(marker, sha)
+          with open(path, "w") as f:
+              f.write(src)
+          PY
+          rm -f "${formula}.bak"
+          echo "----- Updated $formula -----"
+          cat "$formula"
+
+      - name: Open PR against tap repo with the bumped formula
+        # peter-evans/create-pull-request v8.1.1
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+        with:
+          path: tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          branch: cvault-bump/${{ needs.release.outputs.version }}
+          delete-branch: true
+          commit-message: |
+            cvault ${{ needs.release.outputs.version }}
+
+            Auto-generated by cvault release-cli workflow
+            (run ${{ github.run_id }}, tag ${{ github.ref_name }}).
+          title: 'cvault ${{ needs.release.outputs.version }}'
+          body: |
+            Bumps `cvault` to **${{ needs.release.outputs.version }}**.
+
+            Generated automatically by [release-cli.yml](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            from tag `${{ github.ref_name }}`.
+
+            **sha256 sums**
+
+            | Platform              | sha256 |
+            | --------------------- | ------ |
+            | macOS (Apple Silicon) | `${{ needs.release.outputs.sha256_darwin_arm64 }}` |
+            | macOS (Intel)         | `${{ needs.release.outputs.sha256_darwin_x64 }}`   |
+            | Linux (x86_64)        | `${{ needs.release.outputs.sha256_linux_x64 }}`    |
+            | Linux (arm64)         | `${{ needs.release.outputs.sha256_linux_arm64 }}`  |
+
+            Review the formula diff, then merge to publish.
+          labels: |
+            cvault
+            automated
+            release

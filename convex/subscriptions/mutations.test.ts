@@ -1,0 +1,453 @@
+import { describe, expect, it } from 'vitest'
+
+import { api, internal } from '../_generated/api'
+import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+
+/**
+ * Spec: §5 (mutations) + §9 (refresh race protection) + §11 (testing).
+ *
+ * Mutations under test:
+ *  - upsert            - creates a new sub or updates an existing one in-place
+ *  - softRemove        - sets `removedAt` so listForUser hides it
+ *  - rename            - patches just the user-friendly label
+ *  - tryAcquireRefreshLease   - atomic CAS for refresh race protection
+ *  - releaseRefreshLease      - clears lease if and only if holder matches
+ *  - commitRefreshedTokens    - internal mutation called by refresh action
+ */
+
+const FAKE_CIPHERTEXT = new ArrayBuffer(32)
+const FAKE_NONCE = new ArrayBuffer(12)
+
+describe('subscriptions.mutations.upsert', () => {
+  it('throws when the caller is not authenticated', async () => {
+    const t = vault()
+    await expect(
+      t.mutation(api.subscriptions.mutations.upsert, {
+        email: 'a@example.com',
+        ciphertext: FAKE_CIPHERTEXT,
+        nonce: FAKE_NONCE,
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+      })
+    ).rejects.toThrow(/authenticated/i)
+  })
+
+  it('inserts a new sub and assigns slot 1 when the user has no subs yet', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    const result = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'first@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    expect(result.created).toBe(true)
+    expect(result.slot).toBe(1)
+  })
+
+  it('assigns the next free slot when adding additional subs', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    const a = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'a@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    const b = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'b@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    expect(a.slot).toBe(1)
+    expect(b.slot).toBe(2)
+  })
+
+  it('updates existing sub in place when the email matches (same slot, new ciphertext)', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    const initial = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'a@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    const newer = new ArrayBuffer(64)
+    const result = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'a@example.com',
+      ciphertext: newer,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 120_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    expect(result.created).toBe(false)
+    expect(result.slot).toBe(initial.slot)
+
+    // Confirm the row was updated with the new ciphertext (32 -> 64 bytes).
+    const row = await t.run(async (ctx) => {
+      return await ctx.db
+        .query('subscriptions')
+        .withIndex('byUserAndEmail', (q) => q.eq('userId', initial.userId).eq('email', 'a@example.com'))
+        .unique()
+    })
+    expect(row?.ciphertext.byteLength).toBe(64)
+  })
+
+  it('reuses a previously freed slot after a soft-remove', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'a@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    const b = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'b@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    expect(b.slot).toBe(2)
+
+    // Remove b, then add c -> c should take slot 2 again.
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'b@example.com',
+    })
+    const c = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'c@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    expect(c.slot).toBe(2)
+  })
+})
+
+describe('subscriptions.mutations.softRemove', () => {
+  it('marks a sub as removed without deleting the row', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'gone@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'gone@example.com',
+    })
+
+    const after = await t.run(async (ctx) => {
+      return await ctx.db
+        .query('subscriptions')
+        .withIndex('byUserAndEmail', (q) => q.eq('userId', inserted.userId).eq('email', 'gone@example.com'))
+        .unique()
+    })
+    expect(after).not.toBeNull()
+    expect(after?.removedAt).toBeTypeOf('number')
+  })
+
+  it('throws when removing a non-existent sub', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    await expect(
+      t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+        email: 'nobody@example.com',
+      })
+    ).rejects.toThrow(/not found/i)
+  })
+
+  it("inserts a machineActivity row with action='remove'", async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(
+      api.subscriptions.mutations.upsert,
+      {
+        email: 'audit-remove@example.com',
+        ciphertext: FAKE_CIPHERTEXT,
+        nonce: FAKE_NONCE,
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+      }
+    )
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'audit-remove@example.com',
+    })
+
+    const rows = await t.run(async (ctx) =>
+      await ctx.db.query('machineActivity').collect()
+    )
+    const removeRow = rows.find((r) => r.action === 'remove')
+    expect(removeRow).toBeDefined()
+    expect(removeRow?.subscriptionId).toEqual(inserted.subId)
+  })
+})
+
+describe('subscriptions.mutations.rename', () => {
+  it('updates only the label and leaves other fields intact', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'rename@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.rename, {
+      email: 'rename@example.com',
+      label: 'My Personal Sub',
+    })
+
+    const after = await t.run(async (ctx) => {
+      return await ctx.db
+        .query('subscriptions')
+        .withIndex('byUserAndEmail', (q) => q.eq('userId', inserted.userId).eq('email', 'rename@example.com'))
+        .unique()
+    })
+    expect(after?.label).toBe('My Personal Sub')
+    // Other fields untouched.
+    expect(after?.subscriptionType).toBe('max')
+    expect(after?.slot).toBe(inserted.slot)
+  })
+
+  it("inserts a machineActivity row with action='rename'", async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(
+      api.subscriptions.mutations.upsert,
+      {
+        email: 'audit-rename@example.com',
+        ciphertext: FAKE_CIPHERTEXT,
+        nonce: FAKE_NONCE,
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+      }
+    )
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.rename, {
+      email: 'audit-rename@example.com',
+      label: 'Personal',
+    })
+
+    const rows = await t.run(async (ctx) =>
+      await ctx.db.query('machineActivity').collect()
+    )
+    const renameRow = rows.find((r) => r.action === 'rename')
+    expect(renameRow).toBeDefined()
+    expect(renameRow?.subscriptionId).toEqual(inserted.subId)
+  })
+})
+
+describe('subscriptions.mutations.tryAcquireRefreshLease (CAS)', () => {
+  it('grants the lease when no current holder', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'lease@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    const result = await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'machine-A-token',
+    })
+    expect(result.acquired).toBe(true)
+  })
+
+  it('refuses the lease when another holder still has it within TTL', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'lease@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    const first = await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'machine-A',
+    })
+    expect(first.acquired).toBe(true)
+
+    const second = await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'machine-B',
+    })
+    expect(second.acquired).toBe(false)
+  })
+
+  it('grants the lease again after the previous lease has expired', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'lease@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // Manually set a stale lease in the past.
+    await t.run(async (ctx) => {
+      await ctx.db.patch('subscriptions', inserted.subId, {
+        refreshLeaseHolder: 'old-machine',
+        refreshLeaseUntil: Date.now() - 1_000,
+      })
+    })
+
+    const result = await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'new-machine',
+    })
+    expect(result.acquired).toBe(true)
+  })
+})
+
+describe('subscriptions.mutations.releaseRefreshLease', () => {
+  it('clears the lease only if the holder token matches', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'lease@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'real-holder',
+    })
+
+    // Wrong holder tries to release - should be a no-op.
+    await t.mutation(internal.subscriptions.mutations.releaseRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'wrong-holder',
+    })
+
+    const stillHeld = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(stillHeld?.refreshLeaseHolder).toBe('real-holder')
+
+    // Correct holder releases - lease cleared.
+    await t.mutation(internal.subscriptions.mutations.releaseRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'real-holder',
+    })
+    const released = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(released?.refreshLeaseHolder).toBeUndefined()
+    expect(released?.refreshLeaseUntil).toBeUndefined()
+  })
+})
+
+describe('subscriptions.mutations.commitRefreshedTokens', () => {
+  it('writes new ciphertext + nonce + expiry and clears the lease atomically', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'rotate@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'holder',
+    })
+
+    const newCt = new ArrayBuffer(64)
+    const newNonce = new ArrayBuffer(12)
+    const futureExpiry = Date.now() + 8 * 60 * 60 * 1000
+    const refreshedAt = Date.now()
+    await t.mutation(internal.subscriptions.mutations.commitRefreshedTokens, {
+      subId: inserted.subId,
+      holderToken: 'holder',
+      ciphertext: newCt,
+      nonce: newNonce,
+      expiresAt: futureExpiry,
+      lastRefreshedAt: refreshedAt,
+    })
+
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.ciphertext.byteLength).toBe(64)
+    expect(after?.expiresAt).toBe(futureExpiry)
+    expect(after?.lastRefreshedAt).toBe(refreshedAt)
+    expect(after?.refreshLeaseHolder).toBeUndefined()
+    expect(after?.refreshLeaseUntil).toBeUndefined()
+  })
+
+  it('refuses to commit when the holder token does not match the current lease', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'rotate@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'real',
+    })
+
+    await expect(
+      t.mutation(internal.subscriptions.mutations.commitRefreshedTokens, {
+        subId: inserted.subId,
+        holderToken: 'imposter',
+        ciphertext: new ArrayBuffer(64),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        lastRefreshedAt: Date.now(),
+      })
+    ).rejects.toThrow(/lease/i)
+  })
+})
