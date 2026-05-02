@@ -22,11 +22,12 @@ jobs:
       - name: Format check
         run: yarn format:check
 
-  # NOTE: lint/build/test do NOT run `convex codegen`. The generated
-  # `convex/_generated/*` files are committed to the repo (see
-  # `git ls-files convex/_generated`), so CI can typecheck and bundle
-  # without a CONVEX_DEPLOY_KEY. Codegen is only needed when the deploy
-  # key is configured (sync-secrets / deploy-backend below).
+  # `convex/_generated/` is gitignored, so every CI job that imports from
+  # it must run `npx convex codegen` first. Codegen does NOT call Convex
+  # over the network — it derives types from `convex/schema.ts` plus
+  # function signatures locally — so it works without a deploy key. We
+  # pass `--typecheck disable` because the dedicated lint/build steps
+  # already run their own typecheckers.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -34,6 +35,8 @@ jobs:
       - uses: flatoutsolutions/github-actions/setup@v1
         with:
           node-version: '22.21.1'
+      - name: Convex codegen (no deploy key needed)
+        run: npx convex codegen --typecheck disable
       - name: Lint
         run: yarn lint:check
 
@@ -44,6 +47,8 @@ jobs:
       - uses: flatoutsolutions/github-actions/setup@v1
         with:
           node-version: '22.21.1'
+      - name: Convex codegen (no deploy key needed)
+        run: npx convex codegen --typecheck disable
       - name: Build
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
@@ -76,6 +81,8 @@ jobs:
       - uses: flatoutsolutions/github-actions/setup@v1
         with:
           node-version: '22.21.1'
+      - name: Convex codegen (no deploy key needed)
+        run: npx convex codegen --typecheck disable
       - name: Run tests
         run: yarn test
       - name: Run integration tests
