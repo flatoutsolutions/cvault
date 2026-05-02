@@ -1,0 +1,155 @@
+# cvault — Performance Audit
+
+**Date:** 2026-05-02
+**Scope:** Read-only audit of `cvault` (Convex backend, TanStack Start frontend, Bun-compiled CLI) at the state currently committed (no commits, working tree). A separate fix-builder is in flight modifying parts of `convex/`, `cli/`, and `frontend/`; findings below note "may auto-resolve" where appropriate.
+**Auditor:** perf-audit subagent (read-only).
+**Reference docs consulted:** Convex best-practices, Convex realtime, Convex helpers; Vercel React best-practices; TanStack Router code-splitting; Vite manualChunks. Skill bodies were not freshly invoked — guidance was pulled via `context7` doc fetches.
+
+---
+
+## TL;DR
+
+- Frontend ships **a 688 KB main JS chunk** (gzip 205 KB) that contains every dashboard route. Per-route lazy splitting via TanStack Router `.lazy.tsx` would push interactive routes well below the 500 KB warning threshold.
+- Convex backend is **mostly index-correct**, but the `pollUsage` cron's `listAllActiveSubIds` does a **full table scan** (`ctx.db.query('subscriptions').collect()` with no `withIndex`). At realistic v1 scale (≤ 20 subs) the cost is bounded; once the table grows it becomes a hot scan every 5 min.
+- The shipped CLI binary (`bun build --compile --minify --bytecode`) **does not run** — bytecode generation fails at build time (`error: Failed to generate bytecode for ./index.js`) and the resulting binary throws `Expected CommonJS module to have a function wrapper` at startup (Bun 1.3.12 bytecode regression).
+- A non-bytecode binary works fine: 59 MB total (≈160 KB of cvault code on top of Bun's 58.5 MB minimum runtime), cold-start ≈ 1.0 s, warm-start 35–40 ms.
+- Several Blueprint-leftover code paths are dead weight: `recentForSubscription`, `listByOrg`, `listByUser`, `organizations.bySlug`, `organizationMembers.byOrgAndUser`, `organizationMembers.byOrgExternalId`, `organizationMembers.byUserExternalId`, plus 4 unused npm deps and 3 unused shadcn components.
+
+---
+
+## Findings table
+
+Severity legend: **Critical** = blocks ship / data corruption / runtime failure | **High** = significant cost or UX impact at v1 scale | **Medium** = bounded cost today, will bite as data grows | **Low** = polish / minor wins | **Info** = noted, no action required.
+
+| Sev | Layer | File:line | Issue | Recommendation |
+|---|---|---|---|---|
+| Critical | CLI | `cli/package.json:39-42` (build scripts) | `bun build --compile --minify --bytecode` for darwin-arm64 fails at build time with `error: Failed to generate bytecode for ./index.js`. The resulting binary still gets emitted but launches with `TypeError: Expected CommonJS module to have a function wrapper` (Bun 1.3.12 bytecode regression). All four release matrix targets (`build:darwin-arm64/x64`, `build:linux-x64/arm64`) carry the same flag combo. | Drop `--bytecode` until Bun ships a fix. Without it the binary runs and is the same size (`bytecode` is supposed to shave cold-start, not size). Re-add once bytecode validation passes locally. |
+| High | Frontend | `frontend/src/routes/dashboard/{index,audit,machines,settings}.tsx` (all use `createFileRoute`) | All four `/dashboard/*` routes plus `/cli/link` and `/` are eagerly imported in `routeTree.gen.ts` and tree-shaken into a single 688.29 KB main chunk (`dist/client/assets/main-GJJosk_z.js`, gzip 205.03 KB). Vite emitted a "chunks larger than 500 kB" warning. | Convert each non-shared route to `.lazy.tsx` per [TanStack Router code-splitting docs](https://tanstack.com/router/latest/docs/framework/react/guide/code-splitting). E.g., move the bodies of `dashboard/audit.tsx`, `dashboard/machines.tsx`, `dashboard/settings.tsx`, `dashboard/index.tsx`, `cli/link.tsx` into sibling `*.lazy.tsx` files using `createLazyFileRoute`. Expect a ~250–350 KB drop in main and 4–6 small route chunks (5–40 KB each). |
+| High | Convex | `convex/subscriptions/internalReads.ts:104-113` (`listAllActiveSubIds`) | Full table scan — `ctx.db.query('subscriptions').collect()` with **no** `withIndex`. Called from `pollUsage` cron every 5 min (12×/h, 288×/day). At v1's "≤ 20 subs across all users" scale this is fine; if cvault ever leaves single-tenant the scan grows linearly with global sub count. Per Convex docs: "If your table could contain more than a few thousand documents, consider pagination or an index with a range expression." | Add an index on `removedAt` (e.g. `byRemovedAt`) so the scan only sees live subs, or change the cron to fan out per-user via `byUserAndSlot`. Cheapest fix: add `byActive` derived index keyed on `(removedAt, _creationTime)` and `withIndex('byActive', q => q.eq('removedAt', undefined))`. **May auto-resolve** if fix-builder addresses cron cost. |
+| High | Convex | `convex/subscriptions/internalReads.ts:90-101` (`findExpiringSubs`) | `withIndex('byExpiry', q => q.lt('expiresAt', cutoff))` returns *every* row whose `expiresAt < cutoff`, including soft-deleted subs and subs whose `expiresAt` is years in the past (e.g., a sub that was tombstoned a month ago). The `removedAt === undefined` filter happens client-side after `.collect()`. Index ordering is `[expiresAt]`, so the scan starts at the lowest historical `expiresAt`. | Add a lower bound: `q.gt('expiresAt', Date.now()).lt('expiresAt', cutoff)` so the scan only spans the [now, now+15min] window. Alternatively, when soft-removing, set `expiresAt = 0` so dead rows sort to the bottom of `byExpiry` and the scan can stop early via `_creationTime` ordering. **May auto-resolve.** |
+| High | CLI | `cli/dist/cvault-darwin-arm64` (after running release script) | Bun-compiled binary is 59 MB. Of that, 58.5 MB is the embedded Bun runtime (verified by compiling a 1-line `console.log` on the same Bun version: 58.49 MB). The cvault application code adds ~160 KB. There is no realistic way to shrink the binary further without switching off `bun build --compile`. | This is a Bun architectural floor, not a cvault bug. Document it in the README so users don't expect a smaller binary. Consider shipping the source bundle (`build:bunx`, 118 KB minified) as an alternative for users who already have Bun installed. |
+| Medium | Convex | `convex/refreshLog/queries.ts:36-51` (`recentForSubscription`) | Query is exported and indexed (`bySubscriptionAndAt`) but is **never called** from the frontend, the CLI, or any test. Dead code + dead index. | Either wire it to a "per-sub history" UI on the audit page, or delete both the query and the `bySubscriptionAndAt` index from `convex/refreshLog/schema.ts:20`. Indexes cost write amplification on every `refreshLog` insert (one per refresh attempt — 6/h per sub for the 10-min cron). |
+| Medium | Convex | `convex/organizationMembers/schema.ts:11-13`, `convex/organizations/schema.ts:14` | Five Blueprint-template indexes are defined but no client query reads from `organizationMembers` or `organizations` (`grep -rn organizationMembers frontend cli` returns 0). The Clerk webhook still writes to both tables, so every Clerk org event pays write amplification on **5 unused indexes**: `organizations.bySlug`, `organizationMembers.byOrgExternalId`, `byUserExternalId`, `byOrgAndUser`, plus `organizations.byExternalId` and `organizationMembers.byExternalId` (only used by the webhook handlers themselves). | If cvault is single-tenant per spec §2, drop the entire `organizations` and `organizationMembers` domains — table, schema, actions, webhook routes — and remove the corresponding `case 'organization*'` branches from `convex/webhooks/clerk.ts`. If kept "for future", leave only `byExternalId` on each table; drop the other 3. |
+| Medium | Frontend | `frontend/src/routes/dashboard/audit.tsx:35-37` | Audit page issues 3 simultaneous Convex subscriptions (`refreshLog.recentForUser`, `machineActivity.recentForUser`, `subscriptions.listForUser`), each capped at 200 rows. Every `refreshLog` insert (cron-driven, 6/h × N subs) re-pushes the entire 200-row array to every connected dashboard tab. With Convex's reactive streams this is expected, but the merge step (`useMemo` over `[...refreshRows, ...activityRows].sort(...)`) re-runs on every push. | At realistic scale this is fine. As a follow-up: consider switching to paginated queries (`paginate(opts)` + `usePaginatedQuery`) — Convex docs explicitly call this out as the recommended pattern for "incremental lists of results." Also, the audit feed could be a single Convex query that joins server-side, removing the need for the client `useMemo` dance entirely. |
+| Medium | Frontend | `package.json:31-36` | Dependencies pulled in but unused by cvault production code: `@tanstack/react-form` (`^1.28.4`), `@tanstack/react-table` (latest), `@tanstack/match-sorter-utils` (latest), `@hookform/resolvers` (`^5.2.2`), `react-hook-form` (`^7.71.2`). `grep -rn` confirms zero imports under `frontend/src`. | Remove from `package.json`. These do not currently leak into the production bundle (Vite tree-shakes them), but they bloat `node_modules` and slow `yarn install` / cold builds. |
+| Medium | Frontend | `frontend/src/components/ui/{dropdown-menu,separator,tabs}.tsx` | Three shadcn components have zero imports anywhere (verified via `grep -rln "from '@/components/ui/<name>'"`). They're not bundled (Vite tree-shakes), but they sit in `src/` as dead code that future refactors may accidentally drag in. | Delete the three files. They can be re-added via `yarn shadcn:add tabs` if needed. |
+| Medium | Convex | `convex/subscriptions/actions.ts:39-97` (`pullForSwitch`) | The action runs `runQuery` → optional `runAction(refreshOAuthToken)` → `runQuery` → `runMutation` → `decrypt` → `sha256Hex`. Every step is a separate Convex transaction, and every action invocation is a Node-runtime cold start. For `cvault switch` on a fresh access token, that's 4 Convex roundtrips. The encryption key is loaded fresh per `decrypt`/`encrypt` call (`crypto.ts:24` calls `process.env.VAULT_AES_KEY` and re-validates length per call). | Cache the master key in module scope after first load (it's a 32-byte buffer; Convex Node container is reused between calls within the same invocation). Either keep `loadMasterKey()` as-is and memoize via a module-level `let cachedKey: Buffer | undefined`, or read once at module top. Each `decrypt` call currently does a `Buffer.from(raw, 'base64')` + length check; trivial individually but multiplied by `pollUsage` × 12 calls/h. |
+| Medium | Convex | `convex/subscriptions/queries.ts:55-71` (`listForUser`) | Comment claims `byUserAndSlot` returns rows in slot order. The index is `[userId, slot]`, so after `.eq('userId', ...)` the secondary order is `slot` ASC — correct. However, `.collect()` then `.filter()` over `removedAt` allocates twice. At ≤ 20 rows per user this is negligible. | No action. Note for future scale: switch to `.filter(q => q.eq(q.field('removedAt'), undefined))` so Convex pushes the predicate to the storage layer. |
+| Medium | Frontend | `frontend/src/components/dashboard/ExpiryCountdown.tsx:31` and `UsageBar.tsx:90` | Both components display a relative time (`expires in 17 minutes`, `resets in 4h 23m`) but never re-render on a timer. The text is fixed at mount and only updates when the parent re-renders for an unrelated reason (e.g., a Convex query update). User can stare at "expires in 1m" for several minutes after expiry. | Add a 30-s `setInterval` (or shared 1-min "tick" hook at the dashboard layout level) that bumps a `now` value used by all visible `ExpiryCountdown`/`UsageBar` instances. Keep it scoped to the dashboard route so it doesn't run when the user is on `/cli/link` etc. |
+| Low | CLI | `cli/src/commands/list.ts:43-72` and `cli/src/commands/refresh.ts:32-49` | Both call `listForUser` from the CLI to resolve a slot/email even when the user typed an email. `cvault refresh user@example.com` could go directly to `requestRefresh` if `requestRefresh` accepted `slotOrEmail` instead of `subId`. Currently each invocation is an extra Convex query roundtrip (~50–200 ms depending on geography). | Add a server-side overload: `requestRefresh({ slotOrEmail })` that resolves to `subId` inside the action. Saves one roundtrip per CLI `refresh`/`remove`. Counter-argument: the existing flow lets the CLI render an "available subscriptions" hint on lookup miss, which is good UX. Could keep both. |
+| Low | Convex | `convex/cli/clerk.ts:115-132` (`revokeClerkSession`) + `getClerkSession` (155-177) | `revokeSession` action makes 2 sequential Clerk REST calls (lookup-then-revoke) for the ownership check. Each Clerk REST call from the Convex action incurs a Node cold-start + ~100–300 ms HTTP roundtrip to `api.clerk.com`. | Acceptable for an admin operation. As a future optimization, persist `clerkSessionId → userId` mappings in the `machineActivity` audit log itself (it already has `userId` + `clerkSessionId`) and verify ownership via a Convex query before doing the Clerk revoke. Saves one Clerk hop, gets the user a faster response, and removes a cross-tenant attack vector that depends on Clerk's `getSession` being correct. |
+| Low | Frontend | `frontend/src/routes/dashboard/index.tsx:60-78` (`handleForceRefresh`) | Currently a 250-ms placebo — the `refreshOAuthToken` public wrapper is `requestRefresh` (already shipped per `IMPLEMENTATION_NOTES.md`), but this route still calls `console.warn` and `setTimeout(250)`. Pure cosmetic latency. | Wire `useAction(api.subscriptions.actions.requestRefresh)` and call it with `{ subId: sub._id }`. **May auto-resolve** if fix-builder finishes the public-wrapper handoff. |
+| Low | Frontend | `frontend/src/routes/dashboard/index.tsx:42-43` | `refreshingByEmail`/`removingByEmail` use a plain object as a Map. Not a perf issue at ≤ 20 subs, but `setRefreshingByEmail((prev) => ({ ...prev, [email]: true }))` allocates a new object per click, triggering `SubscriptionCard` re-renders for every sibling card (since `forceRefreshing` is a per-card boolean derived from the same map). React Compiler is enabled (`vite.config.ts:27`), so it may already memoize. | Verify with `react-scan` once shipped. Otherwise switch to a `useReducer` and pass the per-card boolean down so siblings don't re-render. |
+| Info | Convex | `convex/subscriptions/crons.ts:33-40, 54-62` | `Promise.all(rows.map(row => ctx.runAction(...)))` fans out one Node-runtime action per sub. Per Convex docs each `ctx.runAction` is a separate function invocation (separate cold start). At spec-realistic 5–10 subs this is 5–10 Node cold-starts every 5/10 min. | Document, no fix needed. Convex action containers are reused within a single function invocation; the fanout is expected to amortize over the cron tick. |
+| Info | CLI | (binary build) | Cold-start: 1.04 s on first run, 35–40 ms warm (disk cache hot, kernel page cache). `bun build --compile` is used for distribution; `bun run src/index.ts` is used for development. | No action. 1 s cold-start is the Bun runtime initialization cost; cvault adds <30 ms on top of `hello-world`'s ~1 s baseline. |
+| Info | Convex | (write fanout cost) | With 20 subs and `pollUsage` every 5 min the cron costs **20 × 12/h = 240 Anthropic GETs/h, plus 240 internalQuery + 240 internalMutation reads/writes per hour, plus up to 240 Node cold-starts/h** (one per `fetchUsageForSub` action). That's ~5,760 actions/day. | Within Convex free-tier function-call budget for personal use. If cvault is rolled out to multiple users, raise to 10-min poll cadence (still well under Anthropic's 5-hour rate-limit reset window). |
+
+---
+
+## Per-layer summaries
+
+### Convex backend
+
+**Index health:** Almost all queries use `withIndex` correctly. The two exceptions are (a) `listAllActiveSubIds` in `subscriptions/internalReads.ts:108` doing a full-table `.collect()` and (b) `findExpiringSubs` doing a half-bounded range scan from the dawn of time. Both are latent bugs that bite at scale.
+
+**Dead code/indexes:** `refreshLog.bySubscriptionAndAt` index, `recentForSubscription` query, all of `organizations` + `organizationMembers` (table, indexes, actions, queries, webhook routes) — none read by any client.
+
+**Cron fanout cost:** `pollUsage` (5 min) × 20 subs = 240 Anthropic GETs/h is fine but worth keeping an eye on. The fanout uses `Promise.all` of `ctx.runAction` calls — each is a fresh Node-runtime cold start. Spec §10 explicitly accepts this trade-off (no exponential backoff in v1; failures retried on next tick).
+
+**Node-runtime cost:** Six `'use node'` files: `subscriptions/{actions,anthropic,crons,crypto}.ts`, `cli/{actions,clerk,syncAction}.ts`. The `pullForSwitch` hot path (CLI `cvault switch`) chains 4 transactions across V8 + Node runtimes. Master AES key is reloaded from `process.env` per `encrypt`/`decrypt` call — trivial cost individually, but a single CLI `sync --all` that encrypts/decrypts ~20 blobs hits this 40 times.
+
+**Mutation transaction size:** No mutation reads more than ~20 rows or writes more than 1 row. Well below Convex's 8000-rows / 16 MB transaction limit.
+
+**Real-time subscription count per dashboard route:**
+- `/dashboard/` — 1 sub (`listForUser`)
+- `/dashboard/audit` — 3 subs (`refreshLog.recentForUser`, `machineActivity.recentForUser`, `listForUser`)
+- `/dashboard/machines` — 1 sub (`distinctSessionsForUser`)
+- `/dashboard/settings` — 0 subs
+
+Total ≤ 3 concurrent `useQuery` per route; with route navigation each tab tears down on unmount and re-establishes on next mount. No fan-out concern.
+
+### Frontend
+
+**Build output (current `yarn build`):**
+
+| File | Size | gzip |
+|---|---|---|
+| `assets/main-GJJosk_z.js` | **688.29 kB** | **205.03 kB** ⚠️ |
+| `assets/styles-BE9p58dX.css` | 47.18 kB | 8.70 kB |
+| `assets/dashboard-ZP1yFDsd.js` (radix Dialog/etc.) | 38.17 kB | 14.16 kB |
+| `assets/settings-DthndMcJ.js` | 3.59 kB | 1.31 kB |
+| `assets/index-BuHe32xZ.js` | 1.18 kB | 0.64 kB |
+| **SSR `server.js`** | 37.99 kB | — |
+| **SSR `router-DuB8_pnI.js`** | 57.04 kB | — |
+
+The 688 KB main chunk contains routes for `/`, `/cli/link`, `/dashboard/`, `/dashboard/audit`, `/dashboard/machines`, plus Clerk + Convex react clients + react-router. Every signed-in user downloads all of them on first paint.
+
+**Tailwind CSS:** 47 KB unminified (8.7 KB gzip). Includes Tailwind v4 preflight + tw-animate-css plugin + the cursor-pointer base layer rule (from `styles.css:152-173`). No unused-class purging needed (Tailwind v4 generates only what's used).
+
+**React rendering perf:** `vite.config.ts:28-30` enables `babel-plugin-react-compiler`, so most `useMemo`/`useCallback` worries are auto-handled. Inline-object props in routes (`onForceRefresh={(args) => { void handleForceRefresh(args) }}`) would normally cause sibling re-renders, but React Compiler should hoist them. No manual `React.memo`/`useCallback` is in the source — relying on the compiler is fine.
+
+**Devtools in production:** `TanStackDevtools` and `TanStackRouterDevtoolsPanel` are imported in `__root.tsx` but `[@tanstack/devtools-vite] Removed devtools code from: /src/routes/__root.tsx` confirms they're tree-shaken. Verified by grepping the production chunks: 0 occurrences.
+
+### CLI
+
+**Binary:** `bun build --compile` produces a 59 MB single-file executable. 58.5 MB is the Bun runtime (matches a 1-line `console.log` baseline); cvault contributes ~160 KB. Stripping `--bytecode --minify` (which is broken on Bun 1.3.12 anyway) doesn't change size meaningfully — `--minify` saves ~50 KB out of 60 MB, in noise.
+
+**Cold-start:** ~1.0 s on first invocation after a fresh boot, 35–40 ms warm. Comparable Bun-compiled CLIs in the wild (e.g., `bunx`-built tools) sit in the same range; this is the cost of decompressing + initializing the embedded Bun runtime.
+
+**`Bun.spawn` overhead:** `claudeSwap.ts` shells to `claude-swap` synchronously via `Bun.spawnSync` for `--status`, `--export`, `--switch-to`, `--remove-account`, `--import`, `--add-account`. Each is one process spawn + the claude-swap Python interpreter cold-start (probably ~150 ms). Worst-case command path:
+- `cvault switch` — 1 Convex roundtrip + 2 claude-swap spawns (`importEnvelope` + `switchTo`) = ~500 ms server + ~300 ms local
+- `cvault add` — 3 claude-swap spawns (interactive `--add-account`, `--status`, `--export`) + 1 Convex action — interactive dominates
+- `cvault sync --all` — N+1 spawns (one `importEnvelope` per sub + `--status` if rendered) plus N Convex action calls
+
+No batched `claude-swap --status` cache exists. Adding one (e.g., a single `--status` call cached for the duration of one CLI command) would shave ~150 ms off `cvault switch` and `cvault list`.
+
+**Convex client request count per command:**
+
+| Command | Convex calls | Notes |
+|---|---|---|
+| `cvault list` | 1 query (`listForUser`) | Plus 1 claude-swap spawn for active-slot lookup |
+| `cvault status` | 1 query (`getMetaByEmail`) | Plus 1 claude-swap spawn |
+| `cvault switch` | 1 action (`pullForSwitch`) | Action internally does 4 transactions (query → maybe refresh → query → mutation) |
+| `cvault refresh` | 1 query + 1 action (`listForUser` then `requestRefresh`) | Could be 1 if `requestRefresh` accepted `slotOrEmail` |
+| `cvault remove` | 1 query + 1 mutation | Same — could be 1 |
+| `cvault add` | 1 action (`upsertFromPlaintext`) | Plus 3 claude-swap spawns |
+| `cvault sync --all` | 1 query + N actions | Sequential per sub; `Promise.all` over subs would parallelize |
+
+**`cvault sync --all` is sequential:** `cli/src/commands/sync.ts:92-100` uses `for (const sub of subs)`. Each `pullForSwitch` is independent. Switching to `Promise.all(subs.map(syncOne))` would shrink end-to-end time roughly N×, at the cost of `console.log` ordering becoming non-deterministic.
+
+---
+
+## Prioritized v1.1 perf backlog
+
+Rank-ordered by impact/effort:
+
+1. **Fix the broken bytecode build.** Drop `--bytecode` from `cli/package.json:39-42` build scripts until Bun ships a fix. The current published binary, if anyone ever shipped it, would not start. `cli/dist/cvault-darwin-arm64` produced by `yarn workspace cvault build:darwin-arm64` exits with `Bun internal error: Expected CommonJS module to have a function wrapper`. **Critical, 5-min fix.**
+2. **Add `byActive` index + use it in `listAllActiveSubIds`.** Eliminates the only full-table-scan in the codebase. ~10 lines in `convex/subscriptions/{schema,internalReads}.ts`. **High, 30-min fix.** May auto-resolve if fix-builder is on it.
+3. **Tighten `findExpiringSubs` range bound.** Add `q.gt('expiresAt', Date.now())` so the scan is bounded above and below. Prevents slow scans once tombstoned subs accumulate. **High, 5-min fix.**
+4. **Lazy-load dashboard routes.** Convert `dashboard/{index,audit,machines,settings}.tsx` and `cli/link.tsx` to `*.lazy.tsx` siblings using `createLazyFileRoute`. Drops main chunk by an estimated 250–350 KB. **High, 1-hr task.**
+5. **Delete the `organizations`/`organizationMembers` domain.** Single-tenant per spec; no client reads. Removes 1 schema file × 2, 1 actions file × 2, 4 unused indexes, 4 webhook event handlers. **Medium, 30-min cleanup.**
+6. **Delete dead Blueprint deps** from root `package.json`: `@tanstack/react-form`, `@tanstack/react-table`, `@tanstack/match-sorter-utils`, `@hookform/resolvers`, `react-hook-form`. Speeds up `yarn install` and removes ~12 transitive deps. **Medium, 5-min change + dep-update review.**
+7. **Decide on `recentForSubscription` + `bySubscriptionAndAt`.** Either wire to UI or delete. Today the index pays write amplification on every `refreshLog` insert for zero read benefit. **Medium, 30-min decision + cleanup.**
+8. **Live-tick `ExpiryCountdown`/`UsageBar`.** 30-s shared interval at dashboard layout. **Low, 1-hr task.**
+9. **Wire `Force Refresh` button to `requestRefresh`.** Replaces the placebo `setTimeout(250)`. Should auto-resolve via the fix-builder. **Low, 5-min fix.**
+10. **Cache AES key + memoize `loadMasterKey`** in `convex/subscriptions/crypto.ts`. Trivial today, slightly reduces per-call cost. **Low, 5-min fix.**
+11. **Delete unused shadcn components** (`dropdown-menu`, `separator`, `tabs`). **Low, 1-min cleanup.**
+12. **Parallelize `cvault sync --all`** with `Promise.all(subs.map(syncOne))`. Improves UX on machines bootstrapping > 5 subs. **Low, 15-min task.**
+
+---
+
+## Methodology notes
+
+- **Frontend:** `yarn build` from the repo root, output under `frontend/dist/client/assets/`. No source modifications.
+- **CLI cold-start measurement:** `bun build --compile --target=bun-darwin-arm64 ./src/index.ts --outfile dist/cvault-no-min` (without `--bytecode --minify` because `--bytecode` failed; `--minify` works but doesn't change cold-start), then `time ./dist/cvault-no-min --version` 5×. First run 1.04 s (kernel page-cache cold), subsequent runs 35–40 ms. Compared against a 1-line `bun build --compile` "hello world" baseline — same 58.5 MB / 1 s cold-start, confirming the cost is the Bun runtime.
+- **Convex query/index audit:** grep over `convex/**.ts` for `withIndex`, `.collect()`, `.filter`, `ctx.db.query`, plus full read of every public/internal function file. Cross-referenced index definitions in each `schema.ts` against `withIndex` call sites.
+- **Dead-code detection:** grep for query/mutation/component name in `frontend/src` and `cli/src` (excluding `__tests__`). Zero hits → unused.
+- **Bun-compile binary signing:** Required `codesign --remove-signature` + `codesign -s -` on the `--bytecode` binary to sidestep macOS Gatekeeper (exit 137) before discovering the binary itself is broken. Spec'd in `IMPLEMENTATION_NOTES.md:323-329` for release builds; locally rebuilt without `--bytecode` to get a functional binary.
+
+---
+
+## Caveats
+
+- A fix-builder is concurrently modifying `convex/`, `cli/`, and `frontend/`. Files seen edited in the last 60 minutes include `subscriptions/{queries,mutations,actions}.ts`, all CLI command files, and most test files. Findings flagged "may auto-resolve" should be re-checked after the fix-builder completes.
+- This audit measures the committed/working-tree state; it does not exercise live Convex deployment metrics (function-call latency p99, real-time subscription churn). Those would require running the dev server and instrumenting traffic.
+- Bundle-size estimates are based on Vite's reported chunk sizes from `yarn build`. Per-route impact estimates assume the routes' direct-import surface (Clerk/Convex client are shared and stay in main).
