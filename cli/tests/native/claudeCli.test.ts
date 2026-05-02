@@ -31,7 +31,10 @@ describe('addAccountInteractive', () => {
 
     const { addAccountInteractive } = await import('../../src/native/claudeCli')
     await addAccountInteractive()
-    expect(captured?.cmd[0]).toBe('claude')
+    // Must be `claude auth login` — bare `claude` opens the chat TUI and
+    // never actually runs the OAuth flow (verified empirically against
+    // claude v2.1.126).
+    expect(captured?.cmd).toEqual(['claude', 'auth', 'login'])
     expect(captured?.stdio.stdin).toBe('inherit')
     expect(captured?.stdio.stdout).toBe('inherit')
     expect(captured?.stdio.stderr).toBe('inherit')
