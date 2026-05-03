@@ -9,7 +9,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// eslint-disable-next-line import/first
 import { MachinesPage } from '../../routes/dashboard/machines'
 
 let sessionsResult: unknown = undefined

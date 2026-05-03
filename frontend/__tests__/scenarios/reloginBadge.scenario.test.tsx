@@ -20,7 +20,6 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// eslint-disable-next-line import/first
 import { SubsPage } from '../../src/routes/dashboard/index'
 
 const useQueryMock = vi.fn()

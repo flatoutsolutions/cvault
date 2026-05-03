@@ -24,7 +24,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// eslint-disable-next-line import/first
 import { MachinesPage } from '../../src/routes/dashboard/machines'
 
 let sessionsResult: unknown = undefined

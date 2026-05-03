@@ -10,7 +10,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// eslint-disable-next-line import/first
 import { SubsPage } from '../../routes/dashboard/index'
 
 const useQueryMock = vi.fn()

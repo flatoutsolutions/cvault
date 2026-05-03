@@ -27,7 +27,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Import AFTER mocks so the component picks up the stubbed hooks.
-// eslint-disable-next-line import/first
+
 import { CliLinkPage } from '../../routes/cli/link'
 
 const startLinkMock = vi.fn()
