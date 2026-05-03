@@ -38,11 +38,12 @@ async function seedSubscription(t: ReturnType<typeof vault>) {
       scopes: ['user:inference'],
     },
   })
-  const { ciphertext, nonce } = encrypt(plaintext)
+  const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
   return await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
     email: 'usage@example.com',
     ciphertext,
     nonce,
+    keyVersion,
     expiresAt: Date.now() + 60 * 60 * 1000,
     subscriptionType: 'max',
     rateLimitTier: 'tier1',

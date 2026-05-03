@@ -124,7 +124,7 @@ export const pullForSwitch = authenticatedAction({
       ...(machineLabel !== undefined ? { machineLabel } : {}),
     })
 
-    const plaintext = decrypt(fresh.ciphertext, fresh.nonce)
+    const plaintext = decrypt(fresh.ciphertext, fresh.nonce, fresh.keyVersion)
     const contentHash = await sha256Hex(plaintext)
     return {
       email: fresh.email,
@@ -174,12 +174,13 @@ export const upsertFromPlaintext = authenticatedAction({
     created: boolean
   }> => {
     const identity = getIdentity(ctx)
-    const { ciphertext, nonce } = encrypt(args.plaintextBlob)
+    const { ciphertext, nonce, keyVersion } = encrypt(args.plaintextBlob)
     const result = await ctx.runMutation(internal.subscriptions.mutations.upsertEncrypted, {
       externalId: identity.subject,
       email: args.email,
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: args.expiresAt,
       refreshExpiresAt: args.refreshExpiresAt,
       subscriptionType: args.subscriptionType,
@@ -330,11 +331,12 @@ export const refreshSub = authenticatedAction({
     let didPullFresh = false
     const localExpiresAt = parseLocalExpiresAt(localState)
     if (localState !== undefined && localExpiresAt !== undefined && localExpiresAt > sub.expiresAt) {
-      const { ciphertext, nonce } = encrypt(localState)
+      const { ciphertext, nonce, keyVersion } = encrypt(localState)
       const adopt = await ctx.runMutation(internal.subscriptions.mutations.adoptLocalState, {
         subId: sub._id,
         ciphertext,
         nonce,
+        keyVersion,
         localExpiresAt,
       })
       didAdoptLocal = adopt.adopted
@@ -428,7 +430,7 @@ export const refreshSub = authenticatedAction({
       ...(machineLabel !== undefined ? { machineLabel } : {}),
     })
 
-    const plaintext = decrypt(fresh.ciphertext, fresh.nonce)
+    const plaintext = decrypt(fresh.ciphertext, fresh.nonce, fresh.keyVersion)
     const contentHash = await sha256Hex(plaintext)
 
     // Precedence: a real Anthropic refresh wins over local-adoption /
@@ -606,7 +608,7 @@ export const refreshOAuthToken = internalAction({
     // log error w/ subId; surface as 'creds corrupt — re-add'".
     let plaintext: string
     try {
-      plaintext = decrypt(sub.ciphertext, sub.nonce)
+      plaintext = decrypt(sub.ciphertext, sub.nonce, sub.keyVersion)
     } catch (err) {
       await ctx.runMutation(internal.subscriptions.mutations.releaseRefreshLease, {
         subId,
@@ -713,7 +715,7 @@ export const refreshOAuthToken = internalAction({
       ...(result.scope ? { scopes: result.scope.split(' ') } : {}),
     }
     const newPlaintext = JSON.stringify({ ...blob, claudeAiOauth: newOauth })
-    const { ciphertext, nonce } = encrypt(newPlaintext)
+    const { ciphertext, nonce, keyVersion } = encrypt(newPlaintext)
 
     // Step 5: commit, releasing the lease atomically.
     await ctx.runMutation(internal.subscriptions.mutations.commitRefreshedTokens, {
@@ -721,6 +723,7 @@ export const refreshOAuthToken = internalAction({
       holderToken,
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: nowMs + result.expiresIn * 1000,
       lastRefreshedAt: nowMs,
     })
@@ -754,7 +757,7 @@ export const fetchUsageForSub = internalAction({
     // a quiet skip with a console.error so it shows up in Convex logs.
     let plaintext: string
     try {
-      plaintext = decrypt(sub.ciphertext, sub.nonce)
+      plaintext = decrypt(sub.ciphertext, sub.nonce, sub.keyVersion)
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error(`[cvault] fetchUsageForSub: decrypt failed for subId ${subId}: ${redactTokens(errMsg)}`)

@@ -19,6 +19,7 @@ const subscriptionRawValidator = v.object({
   label: v.optional(v.string()),
   ciphertext: v.bytes(),
   nonce: v.bytes(),
+  keyVersion: v.optional(v.string()),
   expiresAt: v.number(),
   refreshExpiresAt: v.optional(v.number()),
   subscriptionType: v.string(),

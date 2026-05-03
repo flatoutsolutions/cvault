@@ -120,7 +120,11 @@ describe('scenario: live Anthropic OAuth refresh', () => {
     // node'` module and we want the test runner to load it lazily under
     // Node, matching how the action loads it.
     const { decrypt } = await import('../subscriptions/crypto')
-    const newPlaintext = decrypt(after?.ciphertext ?? new ArrayBuffer(0), after?.nonce ?? new ArrayBuffer(0))
+    const newPlaintext = decrypt(
+      after?.ciphertext ?? new ArrayBuffer(0),
+      after?.nonce ?? new ArrayBuffer(0),
+      after?.keyVersion
+    )
     type OAuthBlob = {
       claudeAiOauth?: {
         accessToken?: string

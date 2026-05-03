@@ -79,11 +79,12 @@ describe('Scenario — RELOGIN_REQUIRED recovery via cvault add → cron resumes
     // writes after Anthropic answered `invalid_grant`.
     const accessExpires = Date.now() + 60_000
     const initialBlob = makePlaintextBlob({ expiresAt: accessExpires, versionSuffix: 'STALE' })
-    const { ciphertext: ct0, nonce: n0 } = encrypt(initialBlob)
+    const { ciphertext: ct0, nonce: n0, keyVersion: ct0KV } = encrypt(initialBlob)
     const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
       email: 'recover@example.com',
       ciphertext: ct0,
       nonce: n0,
+      keyVersion: ct0KV,
       expiresAt: accessExpires,
       subscriptionType: 'max',
       rateLimitTier: 'tier1',
@@ -133,7 +134,8 @@ describe('Scenario — RELOGIN_REQUIRED recovery via cvault add → cron resumes
     // The blob was rotated to FRESH.
     const recoveredPlaintext = decrypt(
       afterRecover?.ciphertext ?? new ArrayBuffer(0),
-      afterRecover?.nonce ?? new ArrayBuffer(0)
+      afterRecover?.nonce ?? new ArrayBuffer(0),
+      afterRecover?.keyVersion
     )
     expect(recoveredPlaintext).toContain('FRESH')
 
@@ -196,11 +198,12 @@ describe('Scenario — RELOGIN_REQUIRED recovery via cvault add → cron resumes
     await seedUser(t)
     const accessExpires = Date.now() + 60_000
     const blob = makePlaintextBlob({ expiresAt: accessExpires, versionSuffix: 'DEAD' })
-    const { ciphertext, nonce } = encrypt(blob)
+    const { ciphertext, nonce, keyVersion } = encrypt(blob)
     const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
       email: 'gating@example.com',
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: accessExpires,
       subscriptionType: 'max',
       rateLimitTier: 'tier1',
@@ -242,11 +245,12 @@ describe('Scenario — RELOGIN_REQUIRED recovery via cvault add → cron resumes
     await seedUser(t)
     const accessExpires = Date.now() + 60 * 60 * 1000
     const blob = makePlaintextBlob({ expiresAt: accessExpires, versionSuffix: 'DEAD' })
-    const { ciphertext, nonce } = encrypt(blob)
+    const { ciphertext, nonce, keyVersion } = encrypt(blob)
     const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
       email: 'pollskip@example.com',
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: accessExpires,
       subscriptionType: 'max',
       rateLimitTier: 'tier1',

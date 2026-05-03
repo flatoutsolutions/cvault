@@ -99,6 +99,13 @@ interface UpsertSubInput {
   email: string
   ciphertext: ArrayBuffer
   nonce: ArrayBuffer
+  /**
+   * Identifier of the master key version used to encrypt `ciphertext`.
+   * Required — the calling action always supplies it from `encrypt()`'s
+   * return value. Stored on the row so rotation can target stale rows
+   * by version filter.
+   */
+  keyVersion: string
   expiresAt: number
   refreshExpiresAt?: number
   subscriptionType: string
@@ -161,6 +168,7 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
     await ctx.db.patch('subscriptions', existing._id, {
       ciphertext: input.ciphertext,
       nonce: input.nonce,
+      keyVersion: input.keyVersion,
       expiresAt: input.expiresAt,
       refreshExpiresAt: input.refreshExpiresAt,
       subscriptionType: input.subscriptionType,
@@ -181,6 +189,7 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
     await ctx.db.patch('subscriptions', existing._id, {
       ciphertext: input.ciphertext,
       nonce: input.nonce,
+      keyVersion: input.keyVersion,
       slot: reviveSlot,
       expiresAt: input.expiresAt,
       refreshExpiresAt: input.refreshExpiresAt,
@@ -204,6 +213,7 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
     label: input.label,
     ciphertext: input.ciphertext,
     nonce: input.nonce,
+    keyVersion: input.keyVersion,
     expiresAt: input.expiresAt,
     refreshExpiresAt: input.refreshExpiresAt,
     subscriptionType: input.subscriptionType,
@@ -219,6 +229,7 @@ export const upsert = authenticatedMutation({
     email: v.string(),
     ciphertext: v.bytes(),
     nonce: v.bytes(),
+    keyVersion: v.string(),
     expiresAt: v.number(),
     refreshExpiresAt: v.optional(v.number()),
     subscriptionType: v.string(),
@@ -235,9 +246,9 @@ export const upsert = authenticatedMutation({
 /**
  * Internal-only path used by the `upsertFromPlaintext` Node action: the
  * action does the AES-GCM encrypt under VAULT_AES_KEY, then calls this
- * mutation with the resulting ciphertext+nonce. We accept `externalId`
- * directly so the action's pre-resolved Clerk subject is the source of
- * truth (no duplicate identity lookup).
+ * mutation with the resulting ciphertext+nonce+keyVersion. We accept
+ * `externalId` directly so the action's pre-resolved Clerk subject is
+ * the source of truth (no duplicate identity lookup).
  */
 export const upsertEncrypted = internalMutation({
   args: {
@@ -245,6 +256,7 @@ export const upsertEncrypted = internalMutation({
     email: v.string(),
     ciphertext: v.bytes(),
     nonce: v.bytes(),
+    keyVersion: v.string(),
     expiresAt: v.number(),
     refreshExpiresAt: v.optional(v.number()),
     subscriptionType: v.string(),
@@ -401,6 +413,15 @@ export const commitRefreshedTokens = internalMutation({
     holderToken: v.string(),
     ciphertext: v.bytes(),
     nonce: v.bytes(),
+    /**
+     * Key version under which `ciphertext` was just encrypted. Required
+     * for the rotation race fix (A1 in 2026-05-04 review): a
+     * concurrently-running rotation could have already advanced the
+     * row's `keyVersion`; without writing the encrypter's `keyVersion`
+     * here, the row would carry the rotation's label but the older
+     * ciphertext, and decrypt would AES-GCM-fail forever.
+     */
+    keyVersion: v.string(),
     expiresAt: v.number(),
     refreshExpiresAt: v.optional(v.number()),
     lastRefreshedAt: v.number(),
@@ -435,6 +456,7 @@ export const commitRefreshedTokens = internalMutation({
     await ctx.db.patch('subscriptions', args.subId, {
       ciphertext: args.ciphertext,
       nonce: args.nonce,
+      keyVersion: args.keyVersion,
       expiresAt: args.expiresAt,
       refreshExpiresAt: args.refreshExpiresAt ?? sub.refreshExpiresAt,
       lastRefreshedAt: args.lastRefreshedAt,
@@ -501,10 +523,16 @@ export const adoptLocalState = internalMutation({
     subId: v.id('subscriptions'),
     ciphertext: v.bytes(),
     nonce: v.bytes(),
+    /**
+     * Key version under which `ciphertext` was just encrypted. Required
+     * for the rotation race fix (A1 in 2026-05-04 review): see
+     * `commitRefreshedTokens` for the full rationale.
+     */
+    keyVersion: v.string(),
     localExpiresAt: v.number(),
   },
   returns: v.object({ adopted: v.boolean() }),
-  handler: async (ctx, { subId, ciphertext, nonce, localExpiresAt }) => {
+  handler: async (ctx, { subId, ciphertext, nonce, keyVersion, localExpiresAt }) => {
     const sub = await ctx.db.get('subscriptions', subId)
     if (!sub) {
       throw new ConvexError({ code: 'NOT_FOUND', message: 'Subscription does not exist' })
@@ -532,6 +560,7 @@ export const adoptLocalState = internalMutation({
     await ctx.db.patch('subscriptions', subId, {
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: localExpiresAt,
       lastRefreshedAt: now,
       // Adopting local clears any stale reloginRequired marker from a
@@ -570,6 +599,31 @@ export const markReloginRequired = internalMutation({
       patch.refreshLeaseUntil = undefined
     }
     await ctx.db.patch('subscriptions', subId, patch)
+    return null
+  },
+})
+
+/**
+ * Patch a single row with re-wrapped ciphertext + new keyVersion. Used
+ * exclusively by the `rotateAllSubscriptions` internal action.
+ *
+ * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §5.
+ */
+export const patchRotatedRow = internalMutation({
+  args: {
+    subId: v.id('subscriptions'),
+    ciphertext: v.bytes(),
+    nonce: v.bytes(),
+    keyVersion: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { subId, ciphertext, nonce, keyVersion }) => {
+    const sub = await ctx.db.get('subscriptions', subId)
+    if (!sub) return null
+    // CAS-style guard: do nothing if the row is already on the target
+    // version (idempotent re-runs / parallel rotation jobs).
+    if (sub.keyVersion === keyVersion) return null
+    await ctx.db.patch('subscriptions', subId, { ciphertext, nonce, keyVersion })
     return null
   },
 })

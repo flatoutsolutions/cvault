@@ -79,12 +79,13 @@ export async function seedSubscription(opts: {
   })
 
   const { encrypt } = await import('../subscriptions/crypto')
-  const { ciphertext, nonce } = encrypt(blob)
+  const { ciphertext, nonce, keyVersion } = encrypt(blob)
 
   const inserted = await t.withIdentity(identity).mutation(api.subscriptions.mutations.upsert, {
     email,
     ciphertext,
     nonce,
+    keyVersion,
     expiresAt,
     refreshExpiresAt,
     subscriptionType: 'max',

@@ -75,11 +75,12 @@ async function seedRtDeadSub(t: ReturnType<typeof vault>): Promise<{
       scopes: ['user:inference'],
     },
   })
-  const { ciphertext, nonce } = encrypt(plaintext)
+  const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
   const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
     email: 'rtdead@example.com',
     ciphertext,
     nonce,
+    keyVersion,
     expiresAt: Date.now() + 60_000,
     subscriptionType: 'max',
     rateLimitTier: 'tier1',

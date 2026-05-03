@@ -82,11 +82,12 @@ function makePlaintextBlob(opts: { expiresAt: number; rtSuffix: string }): strin
 async function seedSub(t: ReturnType<typeof vault>, opts: { expiresAt: number; rtSuffix: string }) {
   await seedUser(t)
   const plaintext = makePlaintextBlob(opts)
-  const { ciphertext, nonce } = encrypt(plaintext)
+  const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
   return await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
     email: 'multi@example.com',
     ciphertext,
     nonce,
+    keyVersion,
     expiresAt: opts.expiresAt,
     subscriptionType: 'max',
     rateLimitTier: 'tier1',
@@ -178,7 +179,11 @@ describe('subscriptions.actions.refreshSub', () => {
     // Vault row was rewritten with the new ciphertext + the local's expiresAt.
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
     expect(after?.expiresAt).toBe(newExpires)
-    const recovered = decrypt(after?.ciphertext ?? new ArrayBuffer(0), after?.nonce ?? new ArrayBuffer(0))
+    const recovered = decrypt(
+      after?.ciphertext ?? new ArrayBuffer(0),
+      after?.nonce ?? new ArrayBuffer(0),
+      after?.keyVersion
+    )
     const recoveredParsed = JSON.parse(recovered) as { claudeAiOauth: { refreshToken: string } }
     expect(recoveredParsed.claudeAiOauth.refreshToken).toContain('NEWLOCAL')
   })
@@ -317,7 +322,11 @@ describe('subscriptions.actions.refreshSub', () => {
     // local state.
     expect(result.action).not.toBe('adoptedLocal')
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
-    const recovered = decrypt(after?.ciphertext ?? new ArrayBuffer(0), after?.nonce ?? new ArrayBuffer(0))
+    const recovered = decrypt(
+      after?.ciphertext ?? new ArrayBuffer(0),
+      after?.nonce ?? new ArrayBuffer(0),
+      after?.keyVersion
+    )
     expect(recovered).toContain('GOOD')
   })
 
