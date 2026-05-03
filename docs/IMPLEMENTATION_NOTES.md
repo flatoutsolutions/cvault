@@ -5,6 +5,70 @@ agent; do not delete sections you don't own without coordinating in cccollab.
 
 ---
 
+## 2026-05-03 — CLI distribution: `bun --compile` → bundled JS + Homebrew shim
+
+Pivoted CLI distribution from `bun --compile` (single-binary Mach-O) to
+`bun runtime + bundled JS + Homebrew shim` after confirming Bun's compile
+output is structurally invalid for `codesign` on macOS (Bun 1.3.12). The
+new install path is a one-line `brew install flatoutsolutions/cvault/cvault`,
+which pulls in `bun` as a Homebrew dependency and writes a 5-line bash
+shim at `bin/cvault` that `exec`s the bundled `cvault.bundle.js` through
+the homebrew-installed bun. Lower friction (no signing pipeline, no
+per-arch matrix); only cost is the bun runtime dependency, which Homebrew
+manages alongside everything else.
+
+### What changed
+
+| Concern               | Before                                                  | After                                                                          |
+| --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Build orchestrator    | `cli/scripts/build.ts` (`bun --compile` per target)     | `cli/scripts/build-bundle.ts` (`bun build --target=bun`, single artifact)      |
+| Build outputs         | 4× `cvault-{darwin,linux}-{arm64,x64}` static binaries  | 1× `cvault.bundle.js` (portable; Bun reads it the same way everywhere)         |
+| Package scripts       | `build:darwin-arm64` / `build:darwin-x64` / `build:linux-x64` / `build:linux-arm64` / `build:all` | `build:bundle` (single script). `build:bunx` + `build:reset-info` unchanged. |
+| Homebrew formula      | Per-arch `url`+`sha256` blocks; static binaries dropped into `bin/` | Single `url`+`sha256`; `depends_on "bun"`; bundle in `libexec`, bash shim in `bin/cvault` that resolves bun via `Formula["bun"].opt_bin` |
+| Release workflow      | 4-target matrix (`build:` job per arch) + per-binary sha256 + tap PR | Single `bundle` job → tarball + sha256 → release → tap commit pushed direct to main |
+| Release asset         | 4 binaries + `SHA256SUMS.txt`                           | `cvault.bundle.js.tar.gz` + `SHA256SUMS.txt` (one entry)                       |
+| Owner placeholder     | `stefanasseg/cvault` everywhere (dev placeholder)       | `flatoutsolutions/cvault` everywhere (prod org)                                |
+
+### Key design decisions
+
+- **Shim resolves bun via `Formula["bun"].opt_bin`, not a hardcoded path.**
+  Hardcoding `/opt/homebrew/bin/bun` would silently break on Intel macOS
+  (`/usr/local/...`) and on Linuxbrew (`/home/linuxbrew/.linuxbrew/...`).
+  The Formula resolves bun's opt_bin at install time and bakes the
+  absolute path into the shim, so it works correctly regardless of the
+  user's PATH ordering.
+- **Single-platform release artifact.** The bundle is plain JS — Bun
+  reads the same bytes the same way on every supported OS/arch. The
+  per-platform matrix was a holdover from the `--compile` model and
+  added no value once we dropped compilation.
+- **Tap update commits directly to main, no PR.** Per the production
+  spec: the formula update on each release is a mechanical version+sha
+  bump that doesn't benefit from human review. The terminal-side
+  release approval is the gating step; opening a PR would only add
+  friction. The previous PR-based flow is preserved in git history if
+  we ever need to restore it.
+- **`build.ts` (compile orchestrator) is retained.** Its `writeBuildInfo`,
+  `EMPTY_BUILD_DEFAULTS`, and `resolveBuildDefaultsFromEnv` exports are
+  reused by `build-bundle.ts`. Keeping the file alive (even though no
+  package.json script invokes its CLI surface anymore) preserves the
+  shared helpers without a third extract module. The `build:reset-info`
+  npm script still imports from it.
+
+### What this means for callers
+
+- End users: `brew install flatoutsolutions/cvault/cvault` (after the
+  prod tap exists). The first install also pulls `bun` from Homebrew.
+- Dev loop: `cd cli && bun run build:bundle` produces `dist/cvault.bundle.js`
+  with empty `BUILD_DEFAULTS` (URLs are baked from CVAULT_*/VITE_*/CLERK_*
+  env at build time only — see `scripts/build-bundle.ts`). Use
+  `bun dist/cvault.bundle.js <subcommand>` to exercise the bundle.
+- CI: `release-cli.yml` is now ~120 lines shorter — no matrix, one upload
+  step, one tap-update step. New required secrets are unchanged from
+  the compile pipeline (`HOMEBREW_TAP_TOKEN`, plus the three URL
+  secrets `CVAULT_CONVEX_URL` / `CVAULT_FRONTEND_API_URL` / `CVAULT_DASHBOARD_URL`).
+
+---
+
 ## 2026-05-02 — `claude-swap` → native TypeScript Keychain module
 
 cvault no longer shells out to `claude-swap` (Python). The CLI now reads
