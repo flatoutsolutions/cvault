@@ -154,6 +154,11 @@ export const distinctSessionsForUser = authenticatedQuery({
       { clerkSessionId: string; lastSeenAt: number; lastIpHash?: string; machineLabel?: string }
     >()
     for (const r of rows) {
+      // 'unknown-session' is a backend sentinel for cron-driven server-side
+      // writes (Clerk JWT had no `sid` claim). Don't expose it as a
+      // "machine" — there's no real session to revoke and the dashboard
+      // would 500 if the user clicked Revoke on it.
+      if (r.clerkSessionId === 'unknown-session') continue
       if (map.has(r.clerkSessionId)) continue
       // Rows are .order('desc'), so the FIRST row we see for each
       // sessionId is its most-recent — that's where the freshest label

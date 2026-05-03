@@ -55,6 +55,17 @@ export const revokeSession = authenticatedAction({
   handler: async (ctx, { clerkSessionId, machineLabel }): Promise<{ revoked: boolean }> => {
     const identity = getIdentity(ctx)
 
+    // Reject the sentinel string up front. 'unknown-session' is a backend
+    // marker for cron-driven writes that lack a real Clerk session; the
+    // Clerk Backend API would 4xx on it and the user would see a confusing
+    // "Server Error" toast.
+    if (clerkSessionId === 'unknown-session') {
+      throw new ConvexError({
+        code: 'NOT_REVOCABLE',
+        message: 'This row represents server-side activity, not a real machine session.',
+      })
+    }
+
     // SECURITY: verify the caller actually owns the target session BEFORE
     // sending the revoke. Without this check, the deployment's
     // CLERK_SECRET_KEY acts as a confused deputy: any signed-in user could
