@@ -46,25 +46,33 @@ export const getSubscriptionRaw = internalQuery({
 export const getSubscriptionForActor = internalQuery({
   args: { externalId: v.string(), slotOrEmail: v.string() },
   returns: v.union(subscriptionRawValidator, v.null()),
-  handler: async (ctx, { externalId: _externalId, slotOrEmail }) => {
-    void _externalId
-    // Resolve sub globally; identity not used for scoping.
+  handler: async (ctx, { externalId, slotOrEmail }) => {
+    // SECURITY: scope the lookup to the caller's user. The previous
+    // implementation matched on `slot=` / `email=` globally and would
+    // return another user's row if their slot or email collided.
+    // Using `byUserAndSlot` / `byUserAndEmail` indexes also keeps the
+    // read bounded to one user instead of scanning the whole table.
+    const user = await ctx.db
+      .query('users')
+      .withIndex('byExternalId', (q) => q.eq('externalId', externalId))
+      .unique()
+    if (!user) return null
+
     const asNum = Number.parseInt(slotOrEmail, 10)
     if (!Number.isNaN(asNum) && asNum.toString() === slotOrEmail) {
       const subs = await ctx.db
         .query('subscriptions')
-        .filter((q) => q.eq(q.field('slot'), asNum))
+        .withIndex('byUserAndSlot', (q) => q.eq('userId', user._id).eq('slot', asNum))
         .collect()
       const sub = subs.find((s) => s.removedAt === undefined)
       return sub ?? null
     }
 
-    const subs = await ctx.db
+    const sub = await ctx.db
       .query('subscriptions')
-      .filter((q) => q.eq(q.field('email'), slotOrEmail))
-      .collect()
-    const sub = subs.find((s) => s.removedAt === undefined)
-    return sub ?? null
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', slotOrEmail))
+      .unique()
+    return sub && sub.removedAt === undefined ? sub : null
   },
 })
 

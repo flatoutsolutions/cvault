@@ -60,10 +60,19 @@ async function recordActivity(
 }
 
 /**
- * Allocate the next free slot for a user. Slots are 1-indexed and we
- * fill the lowest gap so removed-then-readded subs stay compact.
+ * Allocate the next free slot for `userId`. Slots are per-user, 1-indexed,
+ * and we fill the lowest gap so removed-then-readded subs stay compact.
+ *
+ * Uses the `byUserAndSlot` index to bound the scan to one user's rows.
+ * The previous implementation called `.collect()` on the entire global
+ * subscriptions table on every insert/revive, which was both unbounded
+ * and incorrectly conflated slot spaces across users.
  */
-function nextFreeSlot(rows: Array<Doc<'subscriptions'>>): number {
+async function nextFreeSlotForUser(ctx: MutationCtx, userId: Doc<'users'>['_id']): Promise<number> {
+  const rows = await ctx.db
+    .query('subscriptions')
+    .withIndex('byUserAndSlot', (q) => q.eq('userId', userId))
+    .collect()
   const taken = new Set<number>()
   for (const r of rows) {
     if (r.removedAt === undefined) {
@@ -114,12 +123,13 @@ interface UpsertSubResult {
  *  - no row -> allocate next free slot via `nextFreeSlot()` and insert
  */
 async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<UpsertSubResult> {
-  // Dedupe by email only.
-  const matches = await ctx.db
+  // Dedupe by (userId, email). The `byUserAndEmail` index makes this
+  // an O(matches) read instead of an O(allSubsGlobal) scan; matches per
+  // (user, email) is at most 1 by spec.
+  const existing = await ctx.db
     .query('subscriptions')
-    .filter((q) => q.eq(q.field('email'), input.email))
-    .collect()
-  const existing = matches[0] ?? null
+    .withIndex('byUserAndEmail', (q) => q.eq('userId', input.userId).eq('email', input.email))
+    .unique()
 
   const now = Date.now()
 
@@ -139,12 +149,11 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
 
   if (existing && existing.removedAt !== undefined) {
     // Reviving a tombstoned row: re-allocate to the lowest free slot
-    // instead of preserving the tombstoned slot. Otherwise removing
-    // slots 1+2 then re-adding email-from-slot-2 would silently revive
-    // at slot 2 and leave slot 1 hole — confusing for users who expect
-    // dense slot numbers.
-    const allSubsForRevive = await ctx.db.query('subscriptions').collect()
-    const reviveSlot = nextFreeSlot(allSubsForRevive)
+    // (per user) instead of preserving the tombstoned slot. Otherwise
+    // removing slots 1+2 then re-adding email-from-slot-2 would silently
+    // revive at slot 2 and leave slot 1 hole — confusing for users who
+    // expect dense slot numbers.
+    const reviveSlot = await nextFreeSlotForUser(ctx, input.userId)
     await ctx.db.patch('subscriptions', existing._id, {
       ciphertext: input.ciphertext,
       nonce: input.nonce,
@@ -160,9 +169,9 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
     return { subId: existing._id, userId: input.userId, slot: reviveSlot, created: false }
   }
 
-  // Slot space is global across all subs.
-  const allSubs = await ctx.db.query('subscriptions').collect()
-  const slot = nextFreeSlot(allSubs)
+  // Slot space is per-user (was global — that conflated different users'
+  // slot allocations and grew O(allSubs) per insert).
+  const slot = await nextFreeSlotForUser(ctx, input.userId)
 
   const subId = await ctx.db.insert('subscriptions', {
     userId: input.userId,
@@ -231,13 +240,16 @@ export const softRemove = authenticatedMutation({
   handler: async (ctx, { email }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
-    const matches = await ctx.db
+    // SECURITY+PERF: scope to (userId, email). Pre-fix used `.filter()` on
+    // a global table and would accept the first row matching the email
+    // regardless of owner — would let any signed-in user soft-remove any
+    // other user's sub (NOT_FOUND-by-luck, not by-policy).
+    const sub = await ctx.db
       .query('subscriptions')
-      .filter((q) => q.eq(q.field('email'), email))
-      .collect()
-    const sub = matches.find((s) => s.removedAt === undefined)
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', email))
+      .unique()
 
-    if (!sub) {
+    if (!sub || sub.removedAt !== undefined) {
       throw new ConvexError({ code: 'NOT_FOUND', message: `Subscription not found for email: ${email}` })
     }
 
@@ -253,13 +265,13 @@ export const rename = authenticatedMutation({
   handler: async (ctx, { email, label }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
-    const matches = await ctx.db
+    // Same scoping fix as `softRemove` above.
+    const sub = await ctx.db
       .query('subscriptions')
-      .filter((q) => q.eq(q.field('email'), email))
-      .collect()
-    const sub = matches.find((s) => s.removedAt === undefined)
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', email))
+      .unique()
 
-    if (!sub) {
+    if (!sub || sub.removedAt !== undefined) {
       throw new ConvexError({ code: 'NOT_FOUND', message: `Subscription not found for email: ${email}` })
     }
 
