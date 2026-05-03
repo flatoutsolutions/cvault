@@ -96,11 +96,16 @@ export const getMetaByEmail = authenticatedQuery({
   handler: async (ctx, { email }) => {
     // SECURITY: scope to the caller. A globally-keyed lookup would let
     // any signed-in user enumerate other users' subs by email.
+    //
+    // Email is lowercased to match the storage convention set in
+    // `mutations.ts:upsertSub`. The byUserAndEmail index is exact-string,
+    // so without this the lookup would miss rows persisted under a
+    // different case than the caller passed in.
     const userId = await callerUserId(ctx)
     if (userId === null) return null
     const subs = await ctx.db
       .query('subscriptions')
-      .withIndex('byUserAndEmail', (q) => q.eq('userId', userId).eq('email', email))
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', userId).eq('email', email.toLowerCase()))
       .collect()
     const sub = subs.find((s) => s.removedAt === undefined)
     return sub ? toMeta(sub) : null

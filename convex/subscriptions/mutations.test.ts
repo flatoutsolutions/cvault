@@ -148,6 +148,51 @@ describe('subscriptions.mutations.upsert', () => {
     expect(c.slot).toBe(2)
   })
 
+  it('canonicalizes email to lowercase on insert (case-insensitive storage)', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    const result = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'Stefan@Example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    const row = await t.run(async (ctx) => await ctx.db.get('subscriptions', result.subId))
+    expect(row?.email).toBe('stefan@example.com')
+  })
+
+  it('dedupes mixed-case email against existing lowercase row (no duplicate insert)', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    const first = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'stefan@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    expect(first.created).toBe(true)
+
+    const second = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'STEFAN@EXAMPLE.COM',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 120_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    // The second upsert must hit the same row, not create a new one.
+    expect(second.created).toBe(false)
+    expect(second.subId).toEqual(first.subId)
+    expect(second.slot).toBe(first.slot)
+  })
+
   it('reviving a tombstoned email picks the lowest free slot, not the original slot', async () => {
     const t = vault()
     await seedUser(t)
@@ -229,6 +274,48 @@ describe('subscriptions.mutations.softRemove', () => {
     ).rejects.toThrow(/not found/i)
   })
 
+  it('matches case-insensitively (insert lowercase, remove uppercase)', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'stefan@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // Remove via uppercase form — must match the lowercase-stored row.
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'STEFAN@EXAMPLE.COM',
+    })
+
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.removedAt).toBeTypeOf('number')
+  })
+
+  it('matches case-insensitively (insert mixed-case, remove lowercase)', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'Stefan@Example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // Insert canonicalizes to lowercase; remove via lowercase form must match.
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'stefan@example.com',
+    })
+
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.removedAt).toBeTypeOf('number')
+  })
+
   it("inserts a machineActivity row with action='remove'", async () => {
     const t = vault()
     await seedUser(t)
@@ -303,6 +390,28 @@ describe('subscriptions.mutations.rename', () => {
     const renameRow = rows.find((r) => r.action === 'rename')
     expect(renameRow).toBeDefined()
     expect(renameRow?.subscriptionId).toEqual(inserted.subId)
+  })
+
+  it('matches case-insensitively (insert lowercase, rename via uppercase)', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'rename-case@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // Rename via uppercase form must reach the lowercase-stored row.
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.rename, {
+      email: 'RENAME-CASE@EXAMPLE.COM',
+      label: 'Renamed',
+    })
+
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.label).toBe('Renamed')
   })
 })
 
