@@ -20,6 +20,7 @@ import { hostname } from 'node:os'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import pkg from '../../package.json' with { type: 'json' }
 import { startCallbackServer } from '../../src/auth/callbackServer'
 import { exchangeTicketForSession } from '../../src/auth/clerkFapi'
 import { openBrowser } from '../../src/auth/openBrowser'
@@ -37,7 +38,9 @@ vi.mock('../../src/auth/openBrowser', () => ({
 vi.mock('../../src/auth/clerkFapi', () => ({
   exchangeTicketForSession: vi.fn(),
   ClerkSessionExpiredError: class extends Error {},
-  cliUserAgent: () => 'cvault-cli/0.1.0 (test)',
+  // Read from cli/package.json so the mocked UA tracks every release bump
+  // automatically (matches the production CLI_VERSION source-of-truth fix).
+  cliUserAgent: () => `cvault-cli/${pkg.version} (test)`,
 }))
 
 vi.mock('../../src/auth/session', () => ({
