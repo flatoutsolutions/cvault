@@ -27,10 +27,13 @@ Bun's `--compile` output is structurally invalid for codesign on macOS (Bun 1.3.
 - Update `cli/package.json` build scripts to invoke the bundle orchestrator.
 - Rewrite `Formula/cvault.rb`:
   - `depends_on "bun"`
-  - `libexec/install "cvault.bundle.js"` and a `cvault` shim wrapper at `bin/`:
-    ```bash
-    #!/bin/bash
-    exec /opt/homebrew/bin/bun "#{libexec}/cvault.bundle.js" "$@"
+  - `libexec/install "cvault.bundle.js"` and a `cvault` shim wrapper at `bin/` (Ruby interpolates the helpers at install time so this works under Apple Silicon, Intel, and Linuxbrew prefixes):
+    ```ruby
+    (bin/"cvault").write <<~SHIM
+      #!/bin/bash
+      exec "#{Formula["bun"].opt_bin}/bun" "#{libexec}/cvault.bundle.js" "$@"
+    SHIM
+    chmod 0755, bin/"cvault"
     ```
   - Update caveats accordingly.
 - Owner placeholder swap: `stefanasseg` → `flatoutsolutions` everywhere in `Formula/cvault.rb` and `.github/workflows/release-cli.yml`.
@@ -45,24 +48,26 @@ Bun's `--compile` output is structurally invalid for codesign on macOS (Bun 1.3.
 
 Items 8–13 from the gap list:
 
-| # | File | Fix |
-|---|---|---|
-| 8 | `cli/tests/clean.test.ts` | Replace `require()`-style imports with ESM imports |
-| 9 | `frontend/src/routes/*` | Add lazy-loaded routes via TanStack Start `lazyRouteComponent` |
-| 10 | `convex/subscriptions/queries.ts` `findExpiringSubs` | Add Convex index on `expiresAt` |
-| 11 | `docs/research/perf-findings.md` | Refresh stale numbers, mark superseded entries |
-| 12 | `cli/tests/scenarios/*` | NEW scenario tests for: cross-machine race during rotation; concurrent same-machine `cvault switch` lock contention; mixed-case email roundtrip |
-| 13 | `docs/architecture/observability.md` (NEW) | Monitoring/alerting proposal — Convex logs + Cloudflare Web Analytics for v1; reserve Sentry for v2 if user signal indicates need |
+| #   | File                                                 | Fix                                                                                                                                             |
+| --- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 8   | `cli/tests/clean.test.ts`                            | Replace `require()`-style imports with ESM imports                                                                                              |
+| 9   | `frontend/src/routes/*`                              | Add lazy-loaded routes via TanStack Start `lazyRouteComponent`                                                                                  |
+| 10  | `convex/subscriptions/queries.ts` `findExpiringSubs` | Add Convex index on `expiresAt`                                                                                                                 |
+| 11  | `docs/research/perf-findings.md`                     | Refresh stale numbers, mark superseded entries                                                                                                  |
+| 12  | `cli/tests/scenarios/*`                              | NEW scenario tests for: cross-machine race during rotation; concurrent same-machine `cvault switch` lock contention; mixed-case email roundtrip |
+| 13  | `docs/architecture/observability.md` (NEW)           | Monitoring/alerting proposal — Convex logs + Cloudflare Web Analytics for v1; reserve Sentry for v2 if user signal indicates need               |
 
 ### Track C — Production credential setup (user does)
 
 User-blocked items, documented as a checklist:
 
 1. **Cloudflare Pages project:**
+
    ```
    yarn install && CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
      npx tsx scripts/setupCloudflareProject.ts --project-name cvault
    ```
+
    Returns the default domain `cvault.pages.dev`.
 
 2. **Clerk prod tenant:**

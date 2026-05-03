@@ -27,10 +27,7 @@ import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { internal } from '../_generated/api'
 import { findExpiringSubs } from './internalReads'
 
-async function seedSub(
-  t: ReturnType<typeof vault>,
-  opts: { email: string; expiresAt: number; removedAt?: number }
-) {
+async function seedSub(t: ReturnType<typeof vault>, opts: { email: string; expiresAt: number; removedAt?: number }) {
   const userId = await seedUser(t, {
     subject: TEST_IDENTITY.subject,
     name: TEST_IDENTITY.name,
