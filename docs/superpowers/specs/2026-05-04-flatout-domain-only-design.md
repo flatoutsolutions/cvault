@@ -1,6 +1,6 @@
-# Restrict cvault to `@flatout.solutions` accounts
+# Restrict cvault to allowlisted email domains (default: `@flatout.solutions`)
 
-**Status:** approved
+**Status:** approved (revised 2026-05-04 mid-flight per user direction)
 **Date:** 2026-05-04
 **Author:** domain-gate (cccollab session)
 **Branch:** `feat/flatout-domain-only`
@@ -8,16 +8,17 @@
 
 ## 1. Goal
 
-cvault is an internal FlatOut Solutions tool. Account creation and platform access must be restricted to people with a verified `@flatout.solutions` primary email. Anyone else who somehow lands in Clerk (typosquat, social-login leak, manual invite mistake) must be rejected at every server boundary so they cannot read or write any data.
+cvault is an internal FlatOut Solutions tool. Account creation and platform access must be restricted to people whose primary email is on the allowlist. The allowlist defaults to `flatout.solutions` and is **configurable via the dashboard UI** by any signed-in user. Anyone else who somehow lands in Clerk (typosquat, social-login leak, manual invite mistake) must be rejected at every server boundary so they cannot read or write any data.
 
-The user explicitly directed this implementation to **not** sit behind a feature flag — the restriction is permanent.
+The user explicitly directed this implementation to **not** sit behind a feature flag — the restriction is permanent. The allowlist is a runtime configuration, not a build-time constant.
 
 ## 2. Non-goals
 
 - Per-organization Clerk Organizations / multi-tenant access. cvault is single-tenant. Out of scope.
 - Email verification flow changes. Clerk already requires verified emails before `user.created` fires.
-- Admin override / allowlist exceptions. The design is intentionally absolute. If a future need arises, the central `domainGate.ts` module is the only file to extend.
-- Migration of pre-existing non-FlatOut users. Manual cleanup via Clerk dashboard if any have signed up.
+- Admin role / RBAC. Any signed-in user can manage the allowlist. (If a future need arises, gate the `add`/`remove` mutations on a `users.role === 'admin'` field; out of scope here.)
+- Migration of pre-existing non-allowlisted users. Manual cleanup via Clerk dashboard if any have signed up.
+- Per-user / individual-email allowlist. Domain-level only.
 
 ## 3. Architecture
 
@@ -37,22 +38,75 @@ Layer 1 is documented but not coded; layers 2-5 are this PR.
 
 ### 3.2 Single source of truth
 
+The allowlist is **stored in Convex** in a dedicated `allowedEmailDomains` table. All five layers consult that table at request time. A pure helper module exposes the matching algorithm.
+
 ```
-convex/utils/domainGate.ts
-─ ALLOWED_EMAIL_DOMAIN: 'flatout.solutions'
-─ isAllowedEmail(email: string | null | undefined): boolean
+convex/utils/domainGate.ts                       — pure (framework-free)
+─ BOOTSTRAP_ALLOWED_DOMAINS: ReadonlyArray<string> = ['flatout.solutions']
+─ isAllowedEmail(email: string | null | undefined, domains: ReadonlyArray<string>): boolean
+─ normalizeDomain(input: string): string  // lowercase, trim, strip leading '@'
+─ isValidDomain(input: string): boolean   // RFC-ish format check
 ─ DOMAIN_REJECTION_ERROR_CODE: 'EMAIL_DOMAIN_NOT_ALLOWED'
-─ DOMAIN_REJECTION_MESSAGE: 'Only @flatout.solutions accounts may use cvault.'
+─ DOMAIN_REJECTION_MESSAGE: 'Your email domain is not allowed to use cvault.'
+
+convex/utils/domainGateServer.ts                 — Convex query/mutation ctx
+─ loadAllowedDomains(ctx: QueryCtx | MutationCtx): Promise<string[]>
+    // Reads `allowedEmailDomains` table; if empty falls back to BOOTSTRAP.
+
+convex/utils/domainGateAction.ts                 — Convex action ctx
+─ loadAllowedDomainsFromAction(ctx: ActionCtx): Promise<string[]>
+    // Calls internal.allowedDomains.queries.loadInternal.
 ```
 
-The file imports nothing — it is a pure constants/helper module. This lets the frontend (`../../../../convex/utils/domainGate`) and CLI (`../../../convex/utils/domainGate`) both import it without dragging in Convex runtime types. ESLint `no-restricted-imports` is not needed because the module is small and intentionally framework-free.
+The pure module imports nothing — frontend (`../../../../convex/utils/domainGate`) and CLI can import it. The server modules import Convex types and the data-model helper queries.
 
-`isAllowedEmail` checks:
+`isAllowedEmail(email, domains)` checks:
 
-- Lowercase the input first (case-insensitive matching, mirroring the lowercase-email invariant in `subscriptions/queries.ts`).
-- Check `email.toLowerCase().endsWith('@flatout.solutions')`.
-- Reject `null`, `undefined`, empty string, malformed values lacking `@`.
-- Reject subdomain-suffix attacks: `evil.flatout.solutions` ends with `flatout.solutions` but lacks `@flatout.solutions` so the prefix check is enough.
+- Lowercase the email.
+- Reject if email lacks `@`, contains whitespace, or is `null`/`undefined`/empty.
+- For each `domain` in `domains` (already lowercased), accept if `email.endsWith('@' + domain)`.
+- The strict `@`-prefix check defeats subdomain-suffix attacks (`evil.flatout.solutions` does NOT end in `@flatout.solutions`).
+
+### 3.2.1 `allowedEmailDomains` schema
+
+```ts
+allowedEmailDomains: defineTable({
+  domain: v.string(), // normalized: lowercase, no '@'
+  addedAtMs: v.number(), // Date.now() at insert
+  addedByUserId: v.optional(v.id('users')), // who added (null if seeded by bootstrap)
+}).index('byDomain', ['domain'])
+```
+
+### 3.2.2 Bootstrap fallback
+
+If the `allowedEmailDomains` table is empty, every server-side helper returns `BOOTSTRAP_ALLOWED_DOMAINS = ['flatout.solutions']`. This guarantees:
+
+- Fresh deployment with no rows yet → still works for FlatOut users.
+- A future user accidentally removes every row → fallback prevents lockout.
+
+The bootstrap is **intentional fallback, not migration**. The table starts empty; rows accumulate as users add via the UI.
+
+### 3.2.3 Public API surface
+
+```
+api.allowedDomains.queries.list      (PUBLIC, no auth) → list of {_id, domain, addedAtMs}
+                                      Used by frontend DomainGuard + settings page.
+
+api.allowedDomains.queries.loadInternal  (internalQuery) → string[] with bootstrap applied
+                                      Used by mintAction (action context).
+
+api.allowedDomains.mutations.add     (authenticatedMutation) → Id<'allowedEmailDomains'>
+                                      args: { domain: string }
+                                      Validates, normalizes, idempotent.
+
+api.allowedDomains.mutations.remove  (authenticatedMutation) → null
+                                      args: { id: Id<'allowedEmailDomains'> }
+                                      No-op if id not found.
+```
+
+`queries.list` is intentionally **public** (no auth). The list of allowed domains is not sensitive — Clerk's signup page already shows it implicitly. Public access lets the frontend `DomainGuard` consult the allowlist before the user is authenticated, avoiding a chicken-and-egg with `authenticatedQuery`.
+
+Mutations are gated by `authenticatedMutation` so only signed-in (allowlisted) users can manage. Idempotent on `add` (returns existing id if domain already present).
 
 ### 3.3 Webhook flow (layer 2)
 
@@ -85,28 +139,34 @@ Webhook still returns 200 on rejection — Clerk retries on 4xx/5xx, and we don'
 
 ### 3.4 Authenticated function flow (layer 3)
 
-`authenticatedQuery`, `authenticatedMutation`, `authenticatedAction` are wrappers around `query`/`mutation`/`action` defined in `convex/utils/auth.ts`. They already check `ctx.auth.getUserIdentity()` is non-null. We extend them:
+`authenticatedQuery`, `authenticatedMutation`, `authenticatedAction` are wrappers around `query`/`mutation`/`action` defined in `convex/utils/auth.ts`. They already check `ctx.auth.getUserIdentity()` is non-null. We extend them to consult the **runtime** allowlist:
 
 ```ts
+// Query / Mutation:
 const identity = await ctx.auth.getUserIdentity()
 if (!identity) throw new Error('Not authenticated')
-if (!isAllowedEmail(identity.email)) {
+const domains = await loadAllowedDomains(ctx)              // reads allowedEmailDomains table
+if (!isAllowedEmail(identity.email, domains)) {
   throw new ConvexError({ code: DOMAIN_REJECTION_ERROR_CODE, message: DOMAIN_REJECTION_MESSAGE })
 }
 return await fn.handler(Object.assign(ctx, { identity }), args as Args)
+
+// Action (separate helper because actions can't use ctx.db):
+const domains = await loadAllowedDomainsFromAction(ctx)    // calls internalQuery
 ```
 
-`identity.email` comes from the Clerk JWT's `primary_email_address` claim (Clerk's `convex` JWT template includes it by default, but we will document the requirement explicitly in `MANUAL_TESTING.md`). If the claim is missing the helper returns `false` and the call is rejected — that's the correct safe-default.
+`identity.email` comes from the Clerk JWT's `primary_email_address` claim (Clerk's `convex` JWT template includes it by default, but we document the requirement explicitly in `MANUAL_TESTING.md`). If the claim is missing the helper returns `false` and the call is rejected — that's the correct safe-default.
 
-This is the strict-server enforcement layer. Even if every other layer is bypassed (somehow), no data leaves Convex without a `@flatout.solutions` identity.
+This is the strict-server enforcement layer. Every authenticated function pays the cost of one indexed table read on `allowedEmailDomains` per call — Convex query latency is ~ms in-region, and the table will hold at most a few rows. No caching needed.
 
 ### 3.5 CLI mint flow (layer 4)
 
-`convex/cli/mintAction.ts::mintConvexJwt` already verifies the supplied Clerk session JWT via `@clerk/backend.verifyToken`. The verified payload contains `email` (or we read the user via BAPI `/v1/users/{id}` if the JWT template doesn't include it — but Clerk's session JWT does include `email` by default). We add:
+`convex/cli/mintAction.ts::mintConvexJwt` already verifies the supplied Clerk session JWT via `@clerk/backend.verifyToken`. The verified payload contains `email` (or we read the user via BAPI `/v1/users/{id}` if the JWT template doesn't include it — but Clerk's session JWT does include `email` by default). We add the runtime-allowlist check:
 
 ```ts
 const email = typeof payload.email === 'string' ? payload.email : null
-if (!isAllowedEmail(email)) {
+const domains = await loadAllowedDomainsFromAction(ctx)
+if (!isAllowedEmail(email, domains)) {
   throw new ConvexError({
     code: DOMAIN_REJECTION_ERROR_CODE,
     message: DOMAIN_REJECTION_MESSAGE,
@@ -133,18 +193,55 @@ New component `frontend/src/components/auth/DomainGuard.tsx`:
 function DomainGuard({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, user } = useUser()
   const { signOut } = useClerk()
+  const allowedRows = useQuery(api.allowedDomains.queries.list, {})
   const email = user?.primaryEmailAddress?.emailAddress
 
-  if (!isLoaded) return null
-  if (!isSignedIn) return <>{children}</> // signed-out → let downstream Clerk gates handle
-  if (isAllowedEmail(email)) return <>{children}</>
-  return <DomainBlockedError onSignOut={() => signOut()} />
+  if (!isLoaded || allowedRows === undefined) return null
+
+  // Apply the same bootstrap fallback the server uses, so a brand-new
+  // deployment with no rows still works for FlatOut users.
+  const domains =
+    allowedRows.length > 0 ? allowedRows.map((r) => r.domain.toLowerCase()) : [...BOOTSTRAP_ALLOWED_DOMAINS]
+
+  if (!isSignedIn) return <>{children}</>
+  if (isAllowedEmail(email, domains)) return <>{children}</>
+  return <DomainBlockedError onSignOut={() => signOut()} email={email ?? null} domains={domains} />
 }
 ```
 
-Wraps both `<RootComponent>`'s children inside `ClerkProvider` (so it sees the Clerk context). The `DomainBlockedError` page tells the user the rule and offers a "Sign out and try again" button. Without this, a signed-in non-FlatOut user would see a broken dashboard (every Convex query throws `EMAIL_DOMAIN_NOT_ALLOWED`) — confusing UX.
+Wraps `<RootComponent>`'s children inside `ConvexProviderWithClerk` (so `useQuery` works). The `DomainBlockedError` page tells the user which domains are allowed and offers a "Sign out and try again" button. Without this, a signed-in non-allowlisted user would see a broken dashboard (every Convex query throws `EMAIL_DOMAIN_NOT_ALLOWED`) — confusing UX.
 
 The frontend guard is **UX only** — it must not be the only check. Server still enforces. A user disabling JS could bypass the guard; they'd then hit layer 3 errors on every Convex call.
+
+### 3.6.1 Settings UI (`/dashboard/settings/domains`)
+
+New route at `frontend/src/routes/dashboard/settings/domains.lazy.tsx`. (Could also be a tab/section on `/dashboard/settings` — keep simple by giving it its own route.)
+
+The page:
+
+- Lists current allowed domains (from `api.allowedDomains.queries.list`) in a small ShadCN table or list, each with a `Remove` button.
+- An input + `Add domain` button. On submit: client-validates with `isValidDomain`, calls `api.allowedDomains.mutations.add`. Shows a Convex error inline if validation fails server-side.
+- Empty-state hint: "No domains configured. Bootstrap fallback (`flatout.solutions`) is active. Add a domain to take control of the allowlist."
+- Confirmation dialog on `Remove` ("Remove `acme.com` from the allowlist? Users with this email domain will lose access.").
+- Add link to `/dashboard/settings/domains` inside the existing `/dashboard/settings` page.
+
+### 3.6.2 Self-removal guard
+
+Critical edge case: the user removes the domain that contains their own email. They'd lock themselves out. The `remove` mutation handler **rejects** an attempted self-removal:
+
+```ts
+// convex/allowedDomains/mutations.ts (in `remove`)
+const callerEmail = identity.email ?? ''
+const callerDomain = callerEmail.split('@')[1]?.toLowerCase()
+if (callerDomain && row.domain.toLowerCase() === callerDomain) {
+  throw new ConvexError({
+    code: 'CANNOT_REMOVE_OWN_DOMAIN',
+    message: 'You cannot remove the domain that your own email belongs to.',
+  })
+}
+```
+
+Frontend disables the `Remove` button for the matching row + shows a tooltip explaining why.
 
 ### 3.7 BAPI deleteClerkUser helper
 
@@ -203,30 +300,46 @@ This is the correct behavior — the rule is "current primary email must be flat
 
 ### 5.1 New files
 
-- `convex/utils/domainGate.ts` — pure constant + helper.
-- `convex/utils/domainGate.test.ts` — unit tests for `isAllowedEmail` boundary cases.
-- `convex/__scenarios__/flatoutDomainOnly.scenario.test.ts` — end-to-end: webhook rejects, BAPI delete fires, auth helpers reject, mint rejects.
+- `convex/utils/domainGate.ts` — pure helper module (`isAllowedEmail`, `normalizeDomain`, `isValidDomain`, constants, bootstrap fallback).
+- `convex/utils/domainGate.test.ts` — boundary tests.
+- `convex/utils/domainGateServer.ts` — `loadAllowedDomains(ctx)` for query/mutation contexts.
+- `convex/utils/domainGateAction.ts` — `loadAllowedDomainsFromAction(ctx)` for action contexts.
+- `convex/allowedDomains/schema.ts` — table definition.
+- `convex/allowedDomains/queries.ts` — `list` (public) + `loadInternal` (internal).
+- `convex/allowedDomains/mutations.ts` — `add`, `remove`.
+- `convex/allowedDomains/queries.test.ts` — query tests including bootstrap-fallback.
+- `convex/allowedDomains/mutations.test.ts` — mutation tests including self-removal block.
+- `convex/webhooks/clerk.test.ts` — webhook unit tests.
+- `convex/cli/mintAction.test.ts` — mint unit tests.
+- `convex/__scenarios__/flatoutDomainOnly.scenario.test.ts` — end-to-end.
 - `frontend/src/components/auth/DomainGuard.tsx` — UX guard component.
-- `frontend/src/components/auth/__tests__/DomainGuard.test.tsx` — RTL tests for guard.
+- `frontend/src/components/auth/__tests__/DomainGuard.test.tsx` — RTL tests.
+- `frontend/src/routes/dashboard/settings/domains.lazy.tsx` — settings UI.
+- `frontend/src/__tests__/routes/settingsDomains.test.tsx` — RTL tests for settings page.
 
 ### 5.2 Modified files
 
-- `convex/webhooks/clerk.ts` — Add domain check before `users.actions.upsert`. Call `deleteClerkUser` on rejection.
-- `convex/utils/auth.ts` — Extend the three wrappers to call `isAllowedEmail(identity.email)`.
-- `convex/utils/auth.test.ts` — Add cases for wrong-domain identity rejection on each wrapper.
-- `convex/cli/clerk.ts` — Add `deleteClerkUser` helper.
-- `convex/cli/mintAction.ts` — Reject mint for wrong-domain payloads.
-- `convex/cli/httpMint.ts` — Map `EMAIL_DOMAIN_NOT_ALLOWED` → HTTP 403.
-- `cli/src/auth/clerkFapi.ts` — `ClerkEmailDomainNotAllowedError` class + recognition in `mintConvexJwt`.
-- `cli/src/commands/login.ts` — Catch the new error, print friendly message, exit 1.
-- `frontend/src/routes/__root.tsx` — Wrap children in `<DomainGuard>`.
-- `docs/MANUAL_TESTING.md` — New section "Email-domain allowlist" with the Clerk dashboard steps.
+- `convex/schema.ts` — add `allowedEmailDomains` table.
+- `convex/webhooks/clerk.ts` — domain check before upsert; `deleteClerkUser` on reject.
+- `convex/utils/auth.ts` — extend wrappers to load domains and check via `isAllowedEmail`.
+- `convex/utils/auth.test.ts` — wrong-domain identity rejection tests.
+- `convex/__tests__/helpers.ts` — `TEST_IDENTITY.email` change to `alice@flatout.solutions`.
+- `convex/cli/clerk.ts` — `deleteClerkUser` BAPI helper.
+- `convex/cli/mintAction.ts` — reject mint for non-allowlisted payloads.
+- `convex/cli/httpMint.ts` — map `EMAIL_DOMAIN_NOT_ALLOWED` → HTTP 403.
+- `cli/src/auth/clerkFapi.ts` — new error class + 403 branch.
+- `cli/src/commands/login.ts` — friendly error path.
+- `cli/tests/auth/clerkFapi.test.ts` — 403 → new error class.
+- `cli/tests/commands/login.test.ts` — friendly error printed.
+- `frontend/src/routes/__root.tsx` — wrap in `<DomainGuard>`.
+- `frontend/src/routes/dashboard/settings.lazy.tsx` — link to `/dashboard/settings/domains`.
+- `frontend/vite.config.ts` — `resolve.dedupe` for react/react-dom (already committed in `9026054`).
+- `docs/MANUAL_TESTING.md` — new section.
 
 ### 5.3 No-touch zones
 
-- `convex/subscriptions/`, `convex/refreshLog/`, `convex/machineActivity/`, `convex/rateLimit/` — all use `authenticatedQuery/Mutation/Action` so they pick up the check transparently.
-- `cli/src/commands/{add,list,remove,refresh,status,switch,sync}.ts` — call Convex via `vaultClient`. They surface backend errors generically; no special-casing needed because mint already fails first.
-- Schema — no change. We're enforcing on the auth identity, not on stored rows.
+- `convex/subscriptions/`, `convex/refreshLog/`, `convex/machineActivity/`, `convex/rateLimit/` — they use `authenticatedQuery/Mutation/Action` so they pick up the gate transparently.
+- `cli/src/commands/{add,list,remove,refresh,status,switch,sync}.ts` — surface backend errors generically; mint already fails first.
 
 ## 6. Error handling
 
@@ -265,45 +378,82 @@ The 5xx case is the only path where we _do_ want to return 500 from the webhook.
 
 `convex/utils/domainGate.test.ts`:
 
-- `isAllowedEmail('alice@flatout.solutions')` → true
-- `isAllowedEmail('Alice@FlatOut.Solutions')` → true (case-insensitive)
-- `isAllowedEmail('alice@gmail.com')` → false
-- `isAllowedEmail('alice@evil.flatout.solutions')` → false (subdomain attack)
-- `isAllowedEmail('alice@flatout.solutions.attacker.com')` → false (suffix attack)
-- `isAllowedEmail('')`, `null`, `undefined`, `'no-at-sign'` → false
+- `isAllowedEmail('alice@flatout.solutions', ['flatout.solutions'])` → true
+- `isAllowedEmail('Alice@FlatOut.Solutions', ['flatout.solutions'])` → true (case-insensitive)
+- `isAllowedEmail('alice@gmail.com', ['flatout.solutions'])` → false
+- `isAllowedEmail('alice@flatout.solutions', [])` → false (empty list rejects all)
+- `isAllowedEmail('alice@acme.com', ['flatout.solutions', 'acme.com'])` → true (multi-domain)
+- `isAllowedEmail('alice@evil.flatout.solutions', ['flatout.solutions'])` → false (subdomain attack)
+- `isAllowedEmail('alice@flatout.solutions.attacker.com', ['flatout.solutions'])` → false (suffix attack)
+- `isAllowedEmail('', list)`, `null`, `undefined`, `'no-at-sign'` → false
+- `normalizeDomain('  @ACME.com  ')` → `'acme.com'`
+- `isValidDomain('acme.com')` → true; `'@acme.com'` → false; `'acme'` → false; `'a..b'` → false
+
+`convex/allowedDomains/queries.test.ts`:
+
+- `list` returns rows in domain-asc order.
+- `loadInternal` returns BOOTSTRAP_ALLOWED_DOMAINS when table empty.
+- `loadInternal` returns rows when table non-empty.
+
+`convex/allowedDomains/mutations.test.ts`:
+
+- `add({ domain: '  ACME.COM ' })` normalizes + inserts.
+- `add` is idempotent — returns existing id if domain already present.
+- `add` throws `INVALID_DOMAIN` for malformed input.
+- `add` throws auth error when caller has no identity.
+- `remove` deletes the row.
+- `remove` throws `CANNOT_REMOVE_OWN_DOMAIN` if removing the caller's own domain.
+- `remove` is no-op for an id that doesn't exist (or returns gracefully).
 
 `convex/utils/auth.test.ts` — extend existing:
 
-- Wrong-domain identity → ConvexError code `EMAIL_DOMAIN_NOT_ALLOWED` on each of query/mutation/action.
+- Wrong-domain identity (with bootstrap fallback table empty + `flatout.solutions` only) → ConvexError code `EMAIL_DOMAIN_NOT_ALLOWED` on each of query/mutation/action.
 - Identity with no email → rejected with same code.
+- Identity matching a domain seeded into the table → accepted.
+- After removing the only row, bootstrap kicks in → `flatout.solutions` users still accepted, others rejected.
 
-`convex/webhooks/clerk.test.ts` (new):
+`convex/webhooks/clerk.test.ts`:
 
-- Allowed email → upsert called once, deleteClerkUser not called.
-- Disallowed email → deleteClerkUser called with the right user_id, upsert NOT called, returns 200.
+- Allowed email (matches table or bootstrap) → upsert called, deleteClerkUser not called.
+- Disallowed email → deleteClerkUser called, upsert NOT called, returns 200.
 - BAPI delete returns 200 → webhook returns 200.
 - BAPI delete returns 5xx → webhook returns 500.
+- BAPI delete returns 404 → webhook returns 200.
 
-`convex/cli/mintAction.test.ts` (new):
+`convex/cli/mintAction.test.ts`:
 
-- verifyToken returns email `alice@flatout.solutions` → JWT minted.
-- verifyToken returns email `alice@gmail.com` → ConvexError `EMAIL_DOMAIN_NOT_ALLOWED`.
-- verifyToken returns no email claim → rejected with same code.
+- Allowed email → JWT minted.
+- Disallowed email → ConvexError `EMAIL_DOMAIN_NOT_ALLOWED`.
+- No email claim → same rejection.
+- Bootstrap-fallback path: empty table + `flatout.solutions` payload → minted.
 
 `frontend/src/components/auth/__tests__/DomainGuard.test.tsx`:
 
+- Loading (Clerk not loaded OR allowed-domains query undefined) → renders nothing.
 - Signed out → renders children unchanged.
 - Signed in with allowed email → renders children.
-- Signed in with disallowed email → renders blocked page; signOut button calls Clerk signOut.
+- Signed in with disallowed email → renders blocked page with the actual configured domain list; signOut button calls Clerk signOut.
+- Empty allowed-domains query result → uses bootstrap fallback (`flatout.solutions` users still pass).
+
+`frontend/src/__tests__/routes/settingsDomains.test.tsx`:
+
+- Renders the current allowlist.
+- "Add domain" form submits → `add` mutation called with normalized input.
+- Validation error from server displayed inline.
+- "Remove" button on a row triggers confirmation; confirming calls `remove` mutation.
+- "Remove" disabled (with tooltip) on the row matching the caller's own domain.
+- Empty state shows the bootstrap-active hint.
 
 ### 7.2 Scenario test
 
 `convex/__scenarios__/flatoutDomainOnly.scenario.test.ts` — end-to-end through real Convex test harness:
 
-1. **Allowed identity, full flow:** webhook upserts user; `subscriptions.queries.listForUser` succeeds; `subscriptions.actions.pullForSwitch` succeeds (after seeded sub).
+1. **Allowed identity, full flow:** webhook upserts user (table empty → bootstrap); `subscriptions.queries.listForUser` succeeds; `subscriptions.actions.pullForSwitch` succeeds (after seeded sub).
 2. **Disallowed identity, hard reject:** webhook deletes via stubbed BAPI; subsequent `listForUser` with the same identity throws `EMAIL_DOMAIN_NOT_ALLOWED`; `mintConvexJwt` action throws same code.
 3. **Boundary: case-insensitive allow:** identity with `Alice@FlatOut.Solutions` → all queries succeed.
 4. **Boundary: missing email claim:** identity with `email: undefined` → all queries throw `EMAIL_DOMAIN_NOT_ALLOWED` (safe-default-deny).
+5. **Dynamic allowlist round-trip:** signed-in alice@flatout.solutions adds `acme.com`; bob@acme.com identity webhook upserts cleanly; alice removes `acme.com`; bob's next call throws `EMAIL_DOMAIN_NOT_ALLOWED`.
+6. **Self-removal block:** alice@flatout.solutions tries to remove `flatout.solutions` while it's the only row → `CANNOT_REMOVE_OWN_DOMAIN`; row remains.
 
 The scenario uses the existing `__setClerkFetch` test seam to mock BAPI calls and `convex-test` for the in-memory deployment. Hermetic — no real network, no real Clerk.
 
