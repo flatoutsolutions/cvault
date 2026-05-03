@@ -25,36 +25,6 @@ export const clerkUsersWebhook = httpAction(async (ctx, request) => {
       break
     }
 
-    case 'organization.created':
-    // intentional fallthrough
-    case 'organization.updated':
-      await ctx.runMutation(internal.organizations.actions.upsert, {
-        data: event.data,
-      })
-      break
-
-    case 'organization.deleted': {
-      const clerkOrgId = event.data.id!
-      await ctx.runMutation(internal.organizations.actions.remove, {
-        clerkOrgId,
-      })
-      break
-    }
-
-    case 'organizationMembership.created':
-    // intentional fallthrough
-    case 'organizationMembership.updated':
-      await ctx.runMutation(internal.organizationMembers.actions.upsert, {
-        data: event.data,
-      })
-      break
-
-    case 'organizationMembership.deleted':
-      await ctx.runMutation(internal.organizationMembers.actions.remove, {
-        data: event.data,
-      })
-      break
-
     default:
       console.log('Ignored Clerk webhook event', event.type)
   }
