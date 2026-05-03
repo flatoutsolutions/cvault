@@ -84,6 +84,15 @@ jobs:
         working-directory: ${{ env.CLI_DIR }}
         run: bun install --frozen-lockfile
 
+      # CLI imports `@cvault/convex/api` (path alias to `convex/_generated/`).
+      # That directory is gitignored — regenerate from `convex/schema.ts`
+      # before typecheck. Codegen needs CONVEX_DEPLOY_KEY (which CI has set
+      # as a repo secret per the prod-deploy plan).
+      - name: Generate Convex types
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex codegen
+
       - name: Typecheck (tsc --noEmit)
         working-directory: ${{ env.CLI_DIR }}
         run: bunx tsc --noEmit
