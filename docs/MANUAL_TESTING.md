@@ -476,7 +476,7 @@ Per spec §14 + IMPLEMENTATION_NOTES "Open backend issues" + scenario plan §9. 
 - [ ] **Encryption key rotation tooling** — `VAULT_AES_KEY` cannot be rotated without manually re-adding every sub.
 - [ ] **Per-user mutation rate limiting** — deferred to v2 per spec §12. (Verify whether the M3 fix-builder added any rate limit on `/api/cli/sync` specifically; if so, that's a partial fix.)
 - [ ] **`cvault watch` daemon** — no background mode; pull-on-use only per spec §2.
-- [ ] **Multi-org / team sharing** — explicitly excluded per spec §2 (ToS reasons). The `organizations` Blueprint tables exist but are unused.
+- [ ] **Multi-org / team sharing** — explicitly excluded per spec §2 (ToS reasons). The `organizations` / `organizationMembers` Blueprint tables and webhook handlers were deleted in commit 4d9c55c; bringing them back is a v2 task.
 - [ ] **Linux / WSL** — supported by the native module (file-based credentials at `~/.claude/.credentials.json`) but untested in v1's manual testing harness.
 - [ ] **Windows** — `cvault` throws `PlatformUnsupportedError` on `process.platform === 'win32'`. Tracked as a follow-up issue.
 - [ ] **Hard-delete cron after 30d** — deferred per scenario plan §9. Soft-removed rows stay forever in v1.

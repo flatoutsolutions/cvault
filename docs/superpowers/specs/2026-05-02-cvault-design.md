@@ -85,7 +85,7 @@ Anthropic Max / Pro subscriptions are licensed per individual. v1 design serves 
 ### Existing (Blueprint, unchanged)
 
 - `users` — `{externalId, name, primaryEmail, otherEmails, imageUrl}`, indexed `byExternalId`.
-- `organizations`, `organizationMembers` — present, unused in v1.
+- ~~`organizations`, `organizationMembers`~~ — deleted in commit 4d9c55c (per perf-findings rec #5; v1 is single-tenant per §2 so the Blueprint default tables and webhook handlers were carrying write amplification with no readers).
 
 ### New
 
@@ -409,7 +409,7 @@ Mocking: `VaultClient` interface abstracts Convex calls; `FakeVaultClient` for u
 4. **Notification on refresh failure** (Slack / email webhook).
 5. **Encryption key rotation** (dual-key envelope + cron rewrap).
 6. **Per-user mutation rate limiting** via convex-helpers.
-7. **Multi-org / team sharing** — Q1=A excludes; existing `organizations` Blueprint tables stay unused, available for v2.
+7. **Multi-org / team sharing** — Q1=A excludes. The `organizations` / `organizationMembers` Blueprint tables and webhook handlers were deleted in commit 4d9c55c; reintroducing them is part of any v2 multi-tenant work.
 
 ---
 
