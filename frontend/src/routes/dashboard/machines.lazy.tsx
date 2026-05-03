@@ -84,10 +84,8 @@ export function MachinesPage() {
         </div>
       ) : (
         <div className="border-border bg-card overflow-hidden rounded-lg border">
-          <div className="border-border text-muted-foreground grid grid-cols-[1fr_140px_120px_120px] gap-3 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide">
-            <div>session</div>
-            <div>last ip</div>
-            <div>last seen</div>
+          <div className="border-border text-muted-foreground grid grid-cols-[1fr_auto] gap-3 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide">
+            <div>machine</div>
             <div className="text-right">action</div>
           </div>
           {sessions.map((s) => (
@@ -96,6 +94,7 @@ export function MachinesPage() {
                 clerkSessionId={s.clerkSessionId}
                 lastIpHash={s.lastIpHash}
                 lastSeenAt={s.lastSeenAt}
+                machineLabel={s.machineLabel}
                 onRevoke={(args) => {
                   void handleRevoke(args)
                 }}
