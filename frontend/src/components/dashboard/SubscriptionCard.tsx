@@ -32,7 +32,7 @@ import { Label } from '@/components/ui/label'
 import type { api } from '../../../../convex/_generated/api'
 import { ExpiryCountdown } from './ExpiryCountdown'
 import { ReloginBadge } from './ReloginBadge'
-import { UsageBar } from './UsageBar'
+import { UsageBar, formatRelativeAgo } from './UsageBar'
 
 /**
  * Element type of `api.subscriptions.queries.listForUser`'s return array.
@@ -93,10 +93,7 @@ export function SubscriptionCard({
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <ExpiryCountdown expiresAt={sub.expiresAt} />
           <span className="text-muted-foreground">
-            last refreshed{' '}
-            <span className="tabular-nums">
-              {Math.max(0, Math.floor((Date.now() - sub.lastRefreshedAt) / 60_000)).toString()}m ago
-            </span>
+            last refreshed <span className="tabular-nums">{formatRelativeAgo(sub.lastRefreshedAt)}</span>
           </span>
         </div>
 
