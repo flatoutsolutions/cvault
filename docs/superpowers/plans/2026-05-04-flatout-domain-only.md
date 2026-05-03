@@ -1849,6 +1849,7 @@ Add a card / link inside `frontend/src/routes/dashboard/settings.lazy.tsx` match
 import { Link } from '@tanstack/react-router'
 
 // ...
+
 ;<Link to="/dashboard/settings/domains" className="text-primary hover:underline text-sm">
   Manage allowed email domains →
 </Link>
