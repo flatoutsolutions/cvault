@@ -28,7 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Import AFTER mocks so the component picks up the stubbed hooks.
 
-import { CliLinkPage } from '../../routes/cli/link'
+import { CliLinkPage } from '../../routes/cli/link.lazy'
 
 const startLinkMock = vi.fn()
 const userState = {
@@ -47,9 +47,11 @@ vi.mock('convex/react', () => ({
 
 vi.mock('@tanstack/react-router', async () => {
   // Provide just the bits the component file imports. `createFileRoute`
-  // is called at module load time, so we make it a no-op factory.
+  // and `createLazyFileRoute` are called at module load time, so we make
+  // them no-op factories.
   return {
     createFileRoute: () => () => ({}),
+    createLazyFileRoute: () => () => ({}),
     useSearch: () => ({
       redirect: 'http://127.0.0.1:53200/callback',
       state: 'nonce-abcdef',

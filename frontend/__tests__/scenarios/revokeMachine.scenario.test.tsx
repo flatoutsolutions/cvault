@@ -24,7 +24,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MachinesPage } from '../../src/routes/dashboard/machines'
+import { MachinesPage } from '../../src/routes/dashboard/machines.lazy'
 
 let sessionsResult: unknown = undefined
 const revokeMock = vi.fn()
@@ -57,6 +57,7 @@ vi.mock('convex/react', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
+  createLazyFileRoute: () => () => ({}),
 }))
 
 function makeSession(overrides: Record<string, unknown> = {}) {
