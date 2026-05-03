@@ -86,8 +86,13 @@ jobs:
 
       # CLI imports `@cvault/convex/api` (path alias to `convex/_generated/`).
       # That directory is gitignored — regenerate from `convex/schema.ts`
-      # before typecheck. Codegen needs CONVEX_DEPLOY_KEY (which CI has set
-      # as a repo secret per the prod-deploy plan).
+      # before typecheck. Codegen needs root deps (convex package) plus the
+      # CONVEX_DEPLOY_KEY secret.
+      - name: Install root dependencies (for convex codegen)
+        run: |
+          corepack enable
+          yarn install --immutable
+
       - name: Generate Convex types
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
