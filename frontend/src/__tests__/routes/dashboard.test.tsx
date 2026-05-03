@@ -10,7 +10,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SubsPage } from '../../routes/dashboard/index'
+import { SubsPage } from '../../routes/dashboard/index.lazy'
 
 const useQueryMock = vi.fn()
 const mutationsByName = new Map<string, ReturnType<typeof vi.fn>>()
@@ -55,6 +55,7 @@ vi.mock('convex/react', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
+  createLazyFileRoute: () => () => ({}),
 }))
 
 function makeSub(overrides: Record<string, unknown> = {}) {
