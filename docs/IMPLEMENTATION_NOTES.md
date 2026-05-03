@@ -19,15 +19,15 @@ manages alongside everything else.
 
 ### What changed
 
-| Concern               | Before                                                  | After                                                                          |
-| --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Build orchestrator    | `cli/scripts/build.ts` (`bun --compile` per target)     | `cli/scripts/build-bundle.ts` (`bun build --target=bun`, single artifact)      |
-| Build outputs         | 4× `cvault-{darwin,linux}-{arm64,x64}` static binaries  | 1× `cvault.bundle.js` (portable; Bun reads it the same way everywhere)         |
-| Package scripts       | `build:darwin-arm64` / `build:darwin-x64` / `build:linux-x64` / `build:linux-arm64` / `build:all` | `build:bundle` (single script). `build:bunx` + `build:reset-info` unchanged. |
-| Homebrew formula      | Per-arch `url`+`sha256` blocks; static binaries dropped into `bin/` | Single `url`+`sha256`; `depends_on "bun"`; bundle in `libexec`, bash shim in `bin/cvault` that resolves bun via `Formula["bun"].opt_bin` |
-| Release workflow      | 4-target matrix (`build:` job per arch) + per-binary sha256 + tap PR | Single `bundle` job → tarball + sha256 → release → tap commit pushed direct to main |
-| Release asset         | 4 binaries + `SHA256SUMS.txt`                           | `cvault.bundle.js.tar.gz` + `SHA256SUMS.txt` (one entry)                       |
-| Owner placeholder     | `stefanasseg/cvault` everywhere (dev placeholder)       | `flatoutsolutions/cvault` everywhere (prod org)                                |
+| Concern            | Before                                                                                            | After                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Build orchestrator | `cli/scripts/build.ts` (`bun --compile` per target)                                               | `cli/scripts/build-bundle.ts` (`bun build --target=bun`, single artifact)                                                                |
+| Build outputs      | 4× `cvault-{darwin,linux}-{arm64,x64}` static binaries                                            | 1× `cvault.bundle.js` (portable; Bun reads it the same way everywhere)                                                                   |
+| Package scripts    | `build:darwin-arm64` / `build:darwin-x64` / `build:linux-x64` / `build:linux-arm64` / `build:all` | `build:bundle` (single script). `build:bunx` + `build:reset-info` unchanged.                                                             |
+| Homebrew formula   | Per-arch `url`+`sha256` blocks; static binaries dropped into `bin/`                               | Single `url`+`sha256`; `depends_on "bun"`; bundle in `libexec`, bash shim in `bin/cvault` that resolves bun via `Formula["bun"].opt_bin` |
+| Release workflow   | 4-target matrix (`build:` job per arch) + per-binary sha256 + tap PR                              | Single `bundle` job → tarball + sha256 → release → tap commit pushed direct to main                                                      |
+| Release asset      | 4 binaries + `SHA256SUMS.txt`                                                                     | `cvault.bundle.js.tar.gz` + `SHA256SUMS.txt` (one entry)                                                                                 |
+| Owner placeholder  | `stefanasseg/cvault` everywhere (dev placeholder)                                                 | `flatoutsolutions/cvault` everywhere (prod org)                                                                                          |
 
 ### Key design decisions
 
@@ -59,7 +59,7 @@ manages alongside everything else.
 - End users: `brew install flatoutsolutions/cvault/cvault` (after the
   prod tap exists). The first install also pulls `bun` from Homebrew.
 - Dev loop: `cd cli && bun run build:bundle` produces `dist/cvault.bundle.js`
-  with empty `BUILD_DEFAULTS` (URLs are baked from CVAULT_*/VITE_*/CLERK_*
+  with empty `BUILD_DEFAULTS` (URLs are baked from CVAULT*\*/VITE*_/CLERK\__
   env at build time only — see `scripts/build-bundle.ts`). Use
   `bun dist/cvault.bundle.js <subcommand>` to exercise the bundle.
 - CI: `release-cli.yml` is now ~120 lines shorter — no matrix, one upload
