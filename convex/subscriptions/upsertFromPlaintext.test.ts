@@ -7,19 +7,31 @@
  *
  * The CLI never holds the master key — only the Convex deployment does.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api } from '../_generated/api'
+import { __setAnthropicFetch } from './anthropic'
 import { decrypt } from './crypto'
 
 const ORIGINAL_KEY = process.env.VAULT_AES_KEY
 
 beforeEach(() => {
   process.env.VAULT_AES_KEY = Buffer.alloc(32, 13).toString('base64')
+  // upsertFromPlaintext schedules an immediate fetchUsageForSub. Stub the
+  // Anthropic call so the scheduled function completes (returns null on
+  // !ok) instead of trying to hit the real network from the test env.
+  __setAnthropicFetch((() => Promise.resolve(new Response('rate-limited', { status: 429 }))) as typeof fetch)
+  // Use fake timers so finishAllScheduledFunctions can drain inside the
+  // test transaction window — otherwise convex-test's scheduler fires
+  // on a real setTimeout AFTER the test ends, hitting an expired fake
+  // transaction and surfacing "Write outside of transaction" rejections.
+  vi.useFakeTimers()
 })
 
 afterEach(() => {
+  vi.useRealTimers()
+  __setAnthropicFetch(undefined)
   if (ORIGINAL_KEY === undefined) {
     delete process.env.VAULT_AES_KEY
   } else {
@@ -62,6 +74,12 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
       rateLimitTier: 'tier1',
     })
 
+    // Drain the scheduled fetchUsageForSub. It'll fail (no Anthropic
+    // fetch stub) but failure is caught inside the action itself; we
+    // only need to clear the scheduler queue so the test transaction
+    // window closes cleanly.
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
     expect(result.created).toBe(true)
     expect(result.slot).toBe(1)
 
@@ -89,6 +107,8 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
       subscriptionType: 'max',
       rateLimitTier: 'tier1',
     })
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
 
     const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     const addRow = rows.find((r) => r.action === 'add')
@@ -123,6 +143,8 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
       subscriptionType: 'max',
       rateLimitTier: 'tier1',
     })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
     expect(second.created).toBe(false)
     expect(second.subId).toEqual(first.subId)
     expect(second.slot).toBe(first.slot)

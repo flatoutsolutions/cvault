@@ -177,6 +177,14 @@ export const upsertFromPlaintext = authenticatedAction({
       subscriptionId: result.subId,
       at: Date.now(),
     })
+    // Kick off an immediate usage fetch so the dashboard shows
+    // the 5h/7d percentages as soon as the sub appears, rather than
+    // blank until the next pollUsage cron tick (up to 5 min later).
+    // Scheduled (not awaited) so cvault add stays snappy + a usage
+    // failure can never block the upsert from succeeding.
+    await ctx.scheduler.runAfter(0, internal.subscriptions.actions.fetchUsageForSub, {
+      subId: result.subId,
+    })
     return result
   },
 })
