@@ -1,423 +1,162 @@
-# `@flatout.solutions`-only Account Gate Implementation Plan
+# Allowlisted Email Domains — Implementation Plan v2
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restrict cvault account creation and platform access to `@flatout.solutions` email addresses, enforced server-side at every authentication boundary.
+**Goal:** Restrict cvault account creation and platform access to email domains on the runtime allowlist (default `flatout.solutions`, configurable via dashboard UI).
 
-**Architecture:** Five layers — (1) Clerk dashboard config (manual), (2) Convex webhook deletes wrong-domain users via Clerk BAPI, (3) Convex auth wrappers reject wrong-domain identities, (4) CLI JWT mint refuses wrong-domain payloads, (5) Frontend DomainGuard signs out wrong-domain users. Single source of truth in `convex/utils/domainGate.ts`.
+**Architecture:** Five layers (Clerk dashboard manual + Convex webhook + Convex auth wrappers + CLI mint + frontend guard) all consult an `allowedEmailDomains` Convex table at request time. A pure `domainGate.ts` module holds the matching helpers; `domainGateServer.ts` / `domainGateAction.ts` wrap the table read for query/mutation/action contexts. Bootstrap fallback returns `['flatout.solutions']` when the table is empty.
 
-**Tech Stack:** Convex (functions, http, webhooks), Clerk (`@clerk/backend`, FAPI, BAPI), TanStack Start + Clerk React (`@clerk/tanstack-react-start`), TypeScript on Bun (CLI), Vitest + convex-test + Testing Library.
+**Tech Stack:** Convex (functions, http, webhooks), Clerk (`@clerk/backend`, FAPI, BAPI), TanStack Start + Clerk React, TypeScript on Bun (CLI), Vitest + convex-test + Testing Library.
 
 **Spec:** `docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md`
 
 ---
 
-## File Structure
+## Already-landed commits on `feat/flatout-domain-only`
 
-### Created
+These are committed; do NOT redo (Tasks 3+ will modify them):
 
-| Path                                                          | Responsibility                                                                          |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `convex/utils/domainGate.ts`                                  | Pure constants + `isAllowedEmail` helper. Frontend + CLI + Convex all import from here. |
-| `convex/utils/domainGate.test.ts`                             | Boundary tests for `isAllowedEmail`.                                                    |
-| `convex/webhooks/clerk.test.ts`                               | Webhook handler unit tests for domain-rejection branch.                                 |
-| `convex/cli/mintAction.test.ts`                               | Mint-action unit tests for domain-rejection branch.                                     |
-| `convex/__scenarios__/flatoutDomainOnly.scenario.test.ts`     | End-to-end scenario covering all five layers.                                           |
-| `frontend/src/components/auth/DomainGuard.tsx`                | Client-side guard component. UX only.                                                   |
-| `frontend/src/components/auth/__tests__/DomainGuard.test.tsx` | RTL tests for DomainGuard.                                                              |
-
-### Modified
-
-| Path                               | Change                                                                                                                    |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `convex/webhooks/clerk.ts`         | On `user.created`/`user.updated`, branch on `isAllowedEmail`. Disallow → call `deleteClerkUser` + `users.actions.remove`. |
-| `convex/utils/auth.ts`             | Each of the three wrappers calls `isAllowedEmail(identity.email)` after the null check. ConvexError on mismatch.          |
-| `convex/utils/auth.test.ts`        | New cases for wrong-domain identity rejection on each wrapper.                                                            |
-| `convex/cli/clerk.ts`              | New `deleteClerkUser` BAPI helper.                                                                                        |
-| `convex/cli/mintAction.ts`         | After `verifyToken`, check `payload.email`. ConvexError on mismatch.                                                      |
-| `convex/cli/httpMint.ts`           | Map `EMAIL_DOMAIN_NOT_ALLOWED` ConvexError → HTTP 403.                                                                    |
-| `cli/src/auth/clerkFapi.ts`        | New `ClerkEmailDomainNotAllowedError`; `mintConvexJwt` recognizes 403 + code.                                             |
-| `cli/src/commands/login.ts`        | Catch the new error, print friendly message, exit 1.                                                                      |
-| `cli/tests/auth/clerkFapi.test.ts` | New tests for 403 → `ClerkEmailDomainNotAllowedError`.                                                                    |
-| `cli/tests/commands/login.test.ts` | Test friendly error printout.                                                                                             |
-| `frontend/src/routes/__root.tsx`   | Wrap `<Outlet />` in `<DomainGuard>` inside `ConvexProviderWithClerk`.                                                    |
-| `docs/MANUAL_TESTING.md`           | New section "Email-domain allowlist" + JWT template claims requirement.                                                   |
-
-### Untouched (verified by passing existing tests)
-
-`convex/subscriptions/`, `convex/refreshLog/`, `convex/machineActivity/`, `convex/rateLimit/`, all CLI commands except `login.ts`, schema files.
-
----
+| Commit    | What                                                                                                                                                                       |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `5745f74` | `convex/utils/domainGate.ts` + boundary tests (single-domain hardcoded version — Task 3 refactors to take `domains` param).                                                |
+| `a1d4af0` | `convex/webhooks/clerk.ts` domain-rejection branch + `convex/cli/clerk.ts::deleteClerkUser` + tests (uses old single-domain helper — Task 6 rewires to load runtime list). |
+| `9026054` | `frontend/vite.config.ts` `resolve.dedupe` fix for the React invalid-hook-call bug.                                                                                        |
 
 ## Branch + Worktree
 
-Already on `feat/flatout-domain-only` at `~/.config/superpowers/worktrees/cvault/feat-flatout-domain-only`, rebased on origin/main (HEAD `1ba4929`). Use this worktree for all tasks. Do NOT cd into `/Users/saadings/Desktop/cvault` — that's a different branch.
+Working in `~/.config/superpowers/worktrees/cvault/feat-flatout-domain-only` on branch `feat/flatout-domain-only`. NOT in `/Users/saadings/Desktop/cvault`.
 
 ---
 
-## Task 1: Domain-gate module + boundary tests
+## Task 3: Refactor `domainGate.ts` to take `domains` parameter
 
 **Files:**
 
-- Create: `convex/utils/domainGate.ts`
-- Create: `convex/utils/domainGate.test.ts`
+- Modify: `convex/utils/domainGate.ts`
+- Modify: `convex/utils/domainGate.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+The module currently has `isAllowedEmail(email)` checking the hardcoded `flatout.solutions`. Refactor to take a `domains` array. Replace `ALLOWED_EMAIL_DOMAIN` with `BOOTSTRAP_ALLOWED_DOMAINS`. Add `normalizeDomain` and `isValidDomain`.
+
+- [ ] **Step 1: Replace `convex/utils/domainGate.test.ts`**
 
 ```ts
-// convex/utils/domainGate.test.ts
 import { describe, expect, it } from 'vitest'
 
 import {
-  ALLOWED_EMAIL_DOMAIN,
+  BOOTSTRAP_ALLOWED_DOMAINS,
   DOMAIN_REJECTION_ERROR_CODE,
   DOMAIN_REJECTION_MESSAGE,
   isAllowedEmail,
+  isValidDomain,
+  normalizeDomain,
 } from './domainGate'
 
 describe('domainGate', () => {
-  describe('ALLOWED_EMAIL_DOMAIN', () => {
-    it('is the FlatOut Solutions domain', () => {
-      expect(ALLOWED_EMAIL_DOMAIN).toBe('flatout.solutions')
+  describe('BOOTSTRAP_ALLOWED_DOMAINS', () => {
+    it('contains flatout.solutions', () => {
+      expect(BOOTSTRAP_ALLOWED_DOMAINS).toContain('flatout.solutions')
+    })
+    it('is readonly array of lowercase strings', () => {
+      for (const d of BOOTSTRAP_ALLOWED_DOMAINS) expect(d).toBe(d.toLowerCase())
     })
   })
 
   describe('DOMAIN_REJECTION_ERROR_CODE', () => {
-    it('is a stable string identifier', () => {
+    it('is EMAIL_DOMAIN_NOT_ALLOWED', () => {
       expect(DOMAIN_REJECTION_ERROR_CODE).toBe('EMAIL_DOMAIN_NOT_ALLOWED')
     })
   })
 
   describe('DOMAIN_REJECTION_MESSAGE', () => {
-    it('mentions the domain', () => {
-      expect(DOMAIN_REJECTION_MESSAGE).toMatch(/flatout\.solutions/)
+    it('mentions allowed/domain', () => {
+      expect(DOMAIN_REJECTION_MESSAGE).toMatch(/domain/i)
     })
   })
 
   describe('isAllowedEmail', () => {
-    it('accepts canonical FlatOut Solutions email', () => {
-      expect(isAllowedEmail('alice@flatout.solutions')).toBe(true)
-    })
+    const FLATOUT = ['flatout.solutions'] as const
 
-    it('accepts uppercase variants (case-insensitive)', () => {
-      expect(isAllowedEmail('Alice@FlatOut.Solutions')).toBe(true)
-      expect(isAllowedEmail('ALICE@FLATOUT.SOLUTIONS')).toBe(true)
+    it('accepts canonical', () => {
+      expect(isAllowedEmail('alice@flatout.solutions', FLATOUT)).toBe(true)
     })
-
-    it('accepts plus-tag addresses on the allowed domain', () => {
-      expect(isAllowedEmail('alice+work@flatout.solutions')).toBe(true)
+    it('case-insensitive', () => {
+      expect(isAllowedEmail('Alice@FlatOut.Solutions', FLATOUT)).toBe(true)
+      expect(isAllowedEmail('ALICE@FLATOUT.SOLUTIONS', FLATOUT)).toBe(true)
     })
-
+    it('plus-tag', () => {
+      expect(isAllowedEmail('alice+work@flatout.solutions', FLATOUT)).toBe(true)
+    })
     it('rejects different TLD', () => {
-      expect(isAllowedEmail('alice@flatout.com')).toBe(false)
+      expect(isAllowedEmail('alice@flatout.com', FLATOUT)).toBe(false)
     })
-
     it('rejects subdomain attack', () => {
-      expect(isAllowedEmail('alice@evil.flatout.solutions')).toBe(false)
+      expect(isAllowedEmail('alice@evil.flatout.solutions', FLATOUT)).toBe(false)
     })
-
-    it('rejects domain-suffix attack', () => {
-      expect(isAllowedEmail('alice@flatout.solutions.attacker.com')).toBe(false)
+    it('rejects suffix attack', () => {
+      expect(isAllowedEmail('alice@flatout.solutions.attacker.com', FLATOUT)).toBe(false)
     })
-
-    it('rejects similar-but-different domains', () => {
-      expect(isAllowedEmail('alice@gmail.com')).toBe(false)
-      expect(isAllowedEmail('alice@flatout.io')).toBe(false)
+    it('rejects empty list', () => {
+      expect(isAllowedEmail('alice@flatout.solutions', [])).toBe(false)
     })
-
-    it('rejects empty, null, undefined', () => {
-      expect(isAllowedEmail('')).toBe(false)
-      expect(isAllowedEmail(null)).toBe(false)
-      expect(isAllowedEmail(undefined)).toBe(false)
+    it('multi-domain', () => {
+      const list = ['flatout.solutions', 'acme.com']
+      expect(isAllowedEmail('alice@acme.com', list)).toBe(true)
+      expect(isAllowedEmail('alice@flatout.solutions', list)).toBe(true)
+      expect(isAllowedEmail('alice@gmail.com', list)).toBe(false)
     })
-
-    it('rejects malformed values lacking @', () => {
-      expect(isAllowedEmail('aliceflatout.solutions')).toBe(false)
-      expect(isAllowedEmail('alice')).toBe(false)
+    it('rejects empty/null/undefined', () => {
+      expect(isAllowedEmail('', FLATOUT)).toBe(false)
+      expect(isAllowedEmail(null, FLATOUT)).toBe(false)
+      expect(isAllowedEmail(undefined, FLATOUT)).toBe(false)
     })
-
-    it('rejects whitespace-padded values (does not trim)', () => {
-      // We do not trim — Clerk should never give us padded emails. Reject defensively.
-      expect(isAllowedEmail(' alice@flatout.solutions ')).toBe(false)
+    it('rejects malformed', () => {
+      expect(isAllowedEmail('aliceflatout.solutions', FLATOUT)).toBe(false)
+      expect(isAllowedEmail('alice', FLATOUT)).toBe(false)
+    })
+    it('rejects whitespace-padded', () => {
+      expect(isAllowedEmail(' alice@flatout.solutions ', FLATOUT)).toBe(false)
+    })
+    it('handles uppercase domain in list (defensive)', () => {
+      expect(isAllowedEmail('alice@flatout.solutions', ['FLATOUT.SOLUTIONS'])).toBe(true)
     })
   })
-})
-```
 
-- [ ] **Step 2: Run tests to verify they fail**
-
-```
-yarn test convex/utils/domainGate.test.ts
-```
-
-Expected: FAIL — module not found.
-
-- [ ] **Step 3: Implement minimal module**
-
-```ts
-// convex/utils/domainGate.ts
-/**
- * Domain-gate: single source of truth for the email-domain allowlist.
- *
- * Imports nothing — keep it framework-free so frontend (TanStack Start) and
- * CLI (Bun) can import it without dragging Convex runtime types.
- *
- * Rule: the user's primary email must end with `@flatout.solutions`,
- * case-insensitively. No subdomains. No suffix-attacks.
- *
- * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.2
- */
-
-export const ALLOWED_EMAIL_DOMAIN = 'flatout.solutions'
-
-export const DOMAIN_REJECTION_ERROR_CODE = 'EMAIL_DOMAIN_NOT_ALLOWED'
-
-export const DOMAIN_REJECTION_MESSAGE = 'Only @flatout.solutions accounts may use cvault.'
-
-const ALLOWED_SUFFIX = `@${ALLOWED_EMAIL_DOMAIN}`.toLowerCase()
-
-export function isAllowedEmail(email: string | null | undefined): boolean {
-  if (typeof email !== 'string') return false
-  if (email.length === 0) return false
-  // Reject any whitespace anywhere in the email — Clerk should never send it,
-  // and we don't want to accidentally accept '  alice@flatout.solutions  '.
-  if (/\s/.test(email)) return false
-  return email.toLowerCase().endsWith(ALLOWED_SUFFIX)
-}
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-```
-yarn test convex/utils/domainGate.test.ts
-```
-
-Expected: PASS, 13/13 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add convex/utils/domainGate.ts convex/utils/domainGate.test.ts
-git commit -m "feat(domain-gate): add isAllowedEmail helper + boundary tests"
-```
-
----
-
-## Task 2: Webhook handler — domain branch + BAPI delete
-
-**Files:**
-
-- Modify: `convex/cli/clerk.ts` (new `deleteClerkUser` export)
-- Modify: `convex/webhooks/clerk.ts` (branch on domain)
-- Create: `convex/webhooks/clerk.test.ts`
-
-- [ ] **Step 1: Write failing webhook tests**
-
-Place these in a new file. They mock `validateRequest` to bypass Svix signature checks (the webhook flow is what we're testing, not Svix), and stub Clerk BAPI via `__setClerkFetch`.
-
-```ts
-// convex/webhooks/clerk.test.ts
-/**
- * Webhook handler tests — domain-rejection branch.
- *
- * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.3
- *
- * We test the *flow*: was the right Clerk BAPI call made, was upsert called
- * vs skipped, was the orphan users row removed if present.
- */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-import { vault } from '../__tests__/helpers'
-import { __setClerkFetch } from '../cli/clerk'
-
-const ORIGINAL_CLERK_KEY = process.env.CLERK_SECRET_KEY
-const ORIGINAL_WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET
-
-beforeEach(() => {
-  process.env.CLERK_SECRET_KEY = 'sk_test_dummy_for_unit_tests'
-  // Use any value — validateRequest is mocked in these tests, so the
-  // secret never actually verifies anything.
-  process.env.CLERK_WEBHOOK_SECRET = 'whsec_dummy_for_unit_tests'
-})
-
-afterEach(() => {
-  if (ORIGINAL_CLERK_KEY === undefined) delete process.env.CLERK_SECRET_KEY
-  else process.env.CLERK_SECRET_KEY = ORIGINAL_CLERK_KEY
-  if (ORIGINAL_WEBHOOK_SECRET === undefined) delete process.env.CLERK_WEBHOOK_SECRET
-  else process.env.CLERK_WEBHOOK_SECRET = ORIGINAL_WEBHOOK_SECRET
-  __setClerkFetch(undefined)
-  vi.restoreAllMocks()
-})
-
-// Helper: build a Clerk webhook envelope that validateRequest will accept
-// after we mock it. We mock `validateRequest` itself to return our event
-// directly — Svix verification is out of scope for this test.
-function makeWebhookRequest(body: object): Request {
-  return new Request('http://localhost/webhooks/clerk', {
-    method: 'POST',
-    headers: {
-      'svix-id': 'test',
-      'svix-timestamp': String(Date.now()),
-      'svix-signature': 'test',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-}
-
-function userCreatedEvent(opts: { userId: string; primaryEmail: string; primaryEmailId?: string }): object {
-  const primaryEmailId = opts.primaryEmailId ?? `idn_primary_${opts.userId}`
-  return {
-    type: 'user.created',
-    data: {
-      id: opts.userId,
-      first_name: 'Alice',
-      last_name: 'Tester',
-      primary_email_address_id: primaryEmailId,
-      email_addresses: [{ id: primaryEmailId, email_address: opts.primaryEmail }],
-      image_url: null,
-    },
-  }
-}
-
-describe('clerkUsersWebhook (domain gate)', () => {
-  it('upserts the user when primary email is on the allowed domain', async () => {
-    const t = vault()
-    const event = userCreatedEvent({ userId: 'user_alice', primaryEmail: 'alice@flatout.solutions' })
-
-    // Mock validateRequest to return our event directly.
-    const validateRequest = await import('../utils/validateRequest')
-    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
-
-    const fetchStub = vi.fn(() => Promise.resolve(new Response('', { status: 200 })))
-    __setClerkFetch(fetchStub as unknown as typeof fetch)
-
-    const res = await t.fetch('/webhooks/clerk', {
-      method: 'POST',
-      body: JSON.stringify(event),
-      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+  describe('normalizeDomain', () => {
+    it('lowercases', () => {
+      expect(normalizeDomain('FlatOut.Solutions')).toBe('flatout.solutions')
     })
-
-    expect(res.status).toBe(200)
-    // BAPI delete must NOT have been called for an allowed user.
-    expect(fetchStub).not.toHaveBeenCalled()
-    // users row should exist.
-    const userRow = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query('users')
-          .withIndex('byExternalId', (q) => q.eq('externalId', 'user_alice'))
-          .unique()
-    )
-    expect(userRow).not.toBeNull()
-    expect(userRow?.primaryEmail).toBe('alice@flatout.solutions')
+    it('trims', () => {
+      expect(normalizeDomain('  acme.com  ')).toBe('acme.com')
+    })
+    it('strips leading @', () => {
+      expect(normalizeDomain('@acme.com')).toBe('acme.com')
+    })
+    it('combo', () => {
+      expect(normalizeDomain('  @ACME.com  ')).toBe('acme.com')
+    })
   })
 
-  it('deletes the Clerk user via BAPI when primary email is wrong-domain', async () => {
-    const t = vault()
-    const event = userCreatedEvent({ userId: 'user_bob', primaryEmail: 'bob@gmail.com' })
-
-    const validateRequest = await import('../utils/validateRequest')
-    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
-
-    const fetchStub = vi.fn((url: string, init: RequestInit) => {
-      expect(url).toBe('https://api.clerk.com/v1/users/user_bob')
-      expect(init.method).toBe('DELETE')
-      expect((init.headers as Record<string, string>).Authorization).toMatch(/^Bearer sk_test_/)
-      return Promise.resolve(new Response('', { status: 200 }))
+  describe('isValidDomain', () => {
+    it('accepts simple', () => {
+      expect(isValidDomain('acme.com')).toBe(true)
+      expect(isValidDomain('flatout.solutions')).toBe(true)
+      expect(isValidDomain('example.co.uk')).toBe(true)
     })
-    __setClerkFetch(fetchStub as unknown as typeof fetch)
-
-    const res = await t.fetch('/webhooks/clerk', {
-      method: 'POST',
-      body: JSON.stringify(event),
-      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    it('rejects no dot', () => {
+      expect(isValidDomain('acme')).toBe(false)
     })
-
-    expect(res.status).toBe(200)
-    expect(fetchStub).toHaveBeenCalledTimes(1)
-    // users row should NOT have been inserted.
-    const userRow = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query('users')
-          .withIndex('byExternalId', (q) => q.eq('externalId', 'user_bob'))
-          .unique()
-    )
-    expect(userRow).toBeNull()
-  })
-
-  it('removes orphan users row if disallowed user already had one', async () => {
-    const t = vault()
-    // Seed an orphan row for someone whose email later turned wrong-domain.
-    await t.run(async (ctx) => {
-      await ctx.db.insert('users', {
-        externalId: 'user_carol',
-        name: 'Carol',
-        primaryEmail: 'carol@gmail.com',
-        otherEmails: [],
-      })
+    it('rejects leading @', () => {
+      expect(isValidDomain('@acme.com')).toBe(false)
     })
-
-    const event = userCreatedEvent({ userId: 'user_carol', primaryEmail: 'carol@gmail.com' })
-    const validateRequest = await import('../utils/validateRequest')
-    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
-
-    __setClerkFetch(vi.fn(() => Promise.resolve(new Response('', { status: 200 }))) as unknown as typeof fetch)
-
-    const res = await t.fetch('/webhooks/clerk', {
-      method: 'POST',
-      body: JSON.stringify(event),
-      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    it('rejects double dots', () => {
+      expect(isValidDomain('a..b')).toBe(false)
     })
-
-    expect(res.status).toBe(200)
-    const userRow = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query('users')
-          .withIndex('byExternalId', (q) => q.eq('externalId', 'user_carol'))
-          .unique()
-    )
-    expect(userRow).toBeNull()
-  })
-
-  it('returns 500 when BAPI delete fails with 5xx (Clerk should retry)', async () => {
-    const t = vault()
-    const event = userCreatedEvent({ userId: 'user_dan', primaryEmail: 'dan@gmail.com' })
-
-    const validateRequest = await import('../utils/validateRequest')
-    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
-
-    __setClerkFetch(
-      vi.fn(() => Promise.resolve(new Response('clerk down', { status: 503 }))) as unknown as typeof fetch
-    )
-
-    const res = await t.fetch('/webhooks/clerk', {
-      method: 'POST',
-      body: JSON.stringify(event),
-      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    it('rejects spaces', () => {
+      expect(isValidDomain('acme com')).toBe(false)
     })
-
-    expect(res.status).toBe(500)
-  })
-
-  it('treats BAPI 404 as success (user already deleted)', async () => {
-    const t = vault()
-    const event = userCreatedEvent({ userId: 'user_evan', primaryEmail: 'evan@gmail.com' })
-
-    const validateRequest = await import('../utils/validateRequest')
-    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
-
-    __setClerkFetch(vi.fn(() => Promise.resolve(new Response('not found', { status: 404 }))) as unknown as typeof fetch)
-
-    const res = await t.fetch('/webhooks/clerk', {
-      method: 'POST',
-      body: JSON.stringify(event),
-      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    it('rejects empty', () => {
+      expect(isValidDomain('')).toBe(false)
     })
-
-    expect(res.status).toBe(200)
   })
 })
 ```
@@ -425,62 +164,708 @@ describe('clerkUsersWebhook (domain gate)', () => {
 - [ ] **Step 2: Run failing tests**
 
 ```
-yarn test convex/webhooks/clerk.test.ts
+yarn test convex/utils/domainGate.test.ts
 ```
 
-Expected: FAIL — `deleteClerkUser` is undefined / handler doesn't branch on domain.
+Expected: FAIL.
 
-- [ ] **Step 3: Add `deleteClerkUser` BAPI helper**
-
-Edit `convex/cli/clerk.ts`. Append at the end of the file:
+- [ ] **Step 3: Replace `convex/utils/domainGate.ts`**
 
 ```ts
-interface DeleteUserSuccess {
-  ok: true
+/**
+ * Domain-gate: pure helper module for the email-domain allowlist.
+ *
+ * No imports — keep framework-free so frontend (TanStack Start) and CLI
+ * (Bun) can import without dragging Convex runtime types.
+ *
+ * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.2
+ */
+
+export const BOOTSTRAP_ALLOWED_DOMAINS: ReadonlyArray<string> = ['flatout.solutions']
+
+export const DOMAIN_REJECTION_ERROR_CODE = 'EMAIL_DOMAIN_NOT_ALLOWED'
+
+export const DOMAIN_REJECTION_MESSAGE = 'Your email domain is not allowed to use cvault.'
+
+export function isAllowedEmail(email: string | null | undefined, domains: ReadonlyArray<string>): boolean {
+  if (typeof email !== 'string') return false
+  if (email.length === 0) return false
+  if (/\s/.test(email)) return false
+  if (!email.includes('@')) return false
+  const lower = email.toLowerCase()
+  for (const d of domains) {
+    const dLower = d.toLowerCase()
+    if (dLower.length === 0) continue
+    if (lower.endsWith(`@${dLower}`)) return true
+  }
+  return false
 }
 
-interface DeleteUserError {
-  ok: false
-  status: number
-  body: string
+/** Lowercase, trim, strip a single leading `@`. */
+export function normalizeDomain(input: string): string {
+  return input.trim().toLowerCase().replace(/^@/, '')
 }
-
-export type DeleteUserResult = DeleteUserSuccess | DeleteUserError
 
 /**
- * Delete a Clerk user by id. Used by the Convex webhook to nuke users whose
- * primary email is not on the allowed domain.
- *
- * BAPI: DELETE https://api.clerk.com/v1/users/{user_id}
- *
- * Treats 404 as success — the user is gone, which is the intended end state.
+ * Conservative domain validator. Caller should `normalizeDomain` first.
  */
-export async function deleteClerkUser(userId: string): Promise<DeleteUserResult> {
-  const secret = loadSecretKey()
-  const fn = activeFetch()
-
-  const resp = await fn(`${CLERK_API_BASE}/v1/users/${userId}`, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${secret}`,
-    },
-  })
-
-  if (resp.status === 404) {
-    // Already deleted — that's the goal.
-    return { ok: true }
-  }
-  if (!resp.ok) {
-    const body = await resp.text()
-    return { ok: false, status: resp.status, body }
-  }
-  return { ok: true }
+export function isValidDomain(input: string): boolean {
+  if (typeof input !== 'string') return false
+  if (input.length === 0 || input.length > 253) return false
+  if (input.startsWith('@')) return false
+  if (input.includes(' ')) return false
+  const labels = input.split('.')
+  if (labels.length < 2) return false
+  return labels.every((lbl) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(lbl))
 }
 ```
 
-- [ ] **Step 4: Refactor webhook handler with domain check**
+- [ ] **Step 4: Run tests**
 
-Replace `convex/webhooks/clerk.ts` entirely:
+```
+yarn test convex/utils/domainGate.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit (other tests will FAIL — expected, fixed in Tasks 5/6)**
+
+```bash
+git add convex/utils/domainGate.ts convex/utils/domainGate.test.ts
+git commit -m "refactor(domain-gate): take domains list as param + add normalize/validate helpers"
+```
+
+---
+
+## Task 4: `allowedEmailDomains` schema + queries + mutations
+
+**Files:**
+
+- Create: `convex/allowedDomains/schema.ts`
+- Create: `convex/allowedDomains/queries.ts`
+- Create: `convex/allowedDomains/mutations.ts`
+- Create: `convex/allowedDomains/queries.test.ts`
+- Create: `convex/allowedDomains/mutations.test.ts`
+- Modify: `convex/schema.ts`
+
+- [ ] **Step 1: Schema**
+
+```ts
+// convex/allowedDomains/schema.ts
+import { defineTable } from 'convex/server'
+import { v } from 'convex/values'
+
+export const allowedEmailDomainsSchema = defineTable({
+  domain: v.string(),
+  addedAtMs: v.number(),
+  addedByUserId: v.optional(v.id('users')),
+}).index('byDomain', ['domain'])
+```
+
+- [ ] **Step 2: Wire root schema**
+
+```ts
+// convex/schema.ts
+import { defineSchema } from 'convex/server'
+
+import { allowedEmailDomainsSchema } from './allowedDomains/schema'
+import { machineActivitySchema } from './machineActivity/schema'
+import { rateLimitSchema } from './rateLimit/schema'
+import { refreshLogSchema } from './refreshLog/schema'
+import { subscriptionsSchema } from './subscriptions/schema'
+import { usersSchema } from './users/schema'
+
+export default defineSchema({
+  allowedEmailDomains: allowedEmailDomainsSchema,
+  machineActivity: machineActivitySchema,
+  rateLimit: rateLimitSchema,
+  refreshLog: refreshLogSchema,
+  subscriptions: subscriptionsSchema,
+  users: usersSchema,
+})
+```
+
+- [ ] **Step 3: Query tests**
+
+```ts
+// convex/allowedDomains/queries.test.ts
+import { describe, expect, it } from 'vitest'
+
+import { vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
+import { BOOTSTRAP_ALLOWED_DOMAINS } from '../utils/domainGate'
+
+describe('allowedDomains.queries', () => {
+  describe('list (public)', () => {
+    it('returns empty array when table empty', async () => {
+      const t = vault()
+      const rows = await t.query(api.allowedDomains.queries.list, {})
+      expect(rows).toEqual([])
+    })
+
+    it('returns rows in domain-asc order', async () => {
+      const t = vault()
+      await t.run(async (ctx) => {
+        await ctx.db.insert('allowedEmailDomains', { domain: 'zeta.io', addedAtMs: 100 })
+        await ctx.db.insert('allowedEmailDomains', { domain: 'acme.com', addedAtMs: 200 })
+      })
+      const rows = await t.query(api.allowedDomains.queries.list, {})
+      expect(rows.map((r) => r.domain)).toEqual(['acme.com', 'zeta.io'])
+    })
+
+    it('does not require auth', async () => {
+      const t = vault()
+      const rows = await t.query(api.allowedDomains.queries.list, {})
+      expect(Array.isArray(rows)).toBe(true)
+    })
+  })
+
+  describe('loadInternal', () => {
+    it('returns BOOTSTRAP when table empty', async () => {
+      const t = vault()
+      const rows = await t.query(internal.allowedDomains.queries.loadInternal, {})
+      expect(rows).toEqual([...BOOTSTRAP_ALLOWED_DOMAINS])
+    })
+
+    it('returns lowercased domains when non-empty', async () => {
+      const t = vault()
+      await t.run(async (ctx) => {
+        await ctx.db.insert('allowedEmailDomains', { domain: 'ACME.com', addedAtMs: 1 })
+      })
+      const rows = await t.query(internal.allowedDomains.queries.loadInternal, {})
+      expect(rows).toEqual(['acme.com'])
+    })
+  })
+})
+```
+
+- [ ] **Step 4: Mutation tests**
+
+```ts
+// convex/allowedDomains/mutations.test.ts
+import { describe, expect, it } from 'vitest'
+
+import { TEST_IDENTITY, vault } from '../__tests__/helpers'
+import { api } from '../_generated/api'
+
+async function seedAlice(t: ReturnType<typeof vault>) {
+  await t.run(async (ctx) => {
+    await ctx.db.insert('users', {
+      externalId: TEST_IDENTITY.subject,
+      name: TEST_IDENTITY.name,
+      primaryEmail: TEST_IDENTITY.email,
+      otherEmails: [],
+    })
+    await ctx.db.insert('allowedEmailDomains', { domain: 'flatout.solutions', addedAtMs: 1 })
+  })
+}
+
+describe('allowedDomains.mutations', () => {
+  describe('add', () => {
+    it('throws when caller is not authenticated', async () => {
+      const t = vault()
+      await expect(t.mutation(api.allowedDomains.mutations.add, { domain: 'acme.com' })).rejects.toThrow(
+        /authenticated|EMAIL_DOMAIN_NOT_ALLOWED/i
+      )
+    })
+
+    it('normalizes and inserts', async () => {
+      const t = vault()
+      await seedAlice(t)
+      const id = await t
+        .withIdentity(TEST_IDENTITY)
+        .mutation(api.allowedDomains.mutations.add, { domain: '  ACME.COM ' })
+      expect(id).toBeDefined()
+      const row = await t.run(async (ctx) => await ctx.db.get(id))
+      expect(row?.domain).toBe('acme.com')
+      expect(row?.addedByUserId).toBeDefined()
+    })
+
+    it('is idempotent — returns existing id when domain already present', async () => {
+      const t = vault()
+      await seedAlice(t)
+      const first = await t
+        .withIdentity(TEST_IDENTITY)
+        .mutation(api.allowedDomains.mutations.add, { domain: 'acme.com' })
+      const second = await t
+        .withIdentity(TEST_IDENTITY)
+        .mutation(api.allowedDomains.mutations.add, { domain: 'ACME.COM' })
+      expect(second).toBe(first)
+    })
+
+    it('throws INVALID_DOMAIN for malformed input', async () => {
+      const t = vault()
+      await seedAlice(t)
+      await expect(
+        t.withIdentity(TEST_IDENTITY).mutation(api.allowedDomains.mutations.add, { domain: 'not a domain' })
+      ).rejects.toThrow(/INVALID_DOMAIN/i)
+    })
+  })
+
+  describe('remove', () => {
+    it('throws when caller is not authenticated', async () => {
+      const t = vault()
+      const fakeId = 'jd7000000000000000000000000' as never
+      await expect(t.mutation(api.allowedDomains.mutations.remove, { id: fakeId })).rejects.toThrow(
+        /authenticated|EMAIL_DOMAIN_NOT_ALLOWED/i
+      )
+    })
+
+    it('deletes a row', async () => {
+      const t = vault()
+      await seedAlice(t)
+      const id = await t.run(
+        async (ctx) => await ctx.db.insert('allowedEmailDomains', { domain: 'acme.com', addedAtMs: 1 })
+      )
+      const result = await t.withIdentity(TEST_IDENTITY).mutation(api.allowedDomains.mutations.remove, { id })
+      expect(result).toBeNull()
+      const row = await t.run(async (ctx) => await ctx.db.get(id))
+      expect(row).toBeNull()
+    })
+
+    it('throws CANNOT_REMOVE_OWN_DOMAIN when removing the caller domain', async () => {
+      const t = vault()
+      await seedAlice(t)
+      const flatoutRow = await t.run(
+        async (ctx) =>
+          await ctx.db
+            .query('allowedEmailDomains')
+            .withIndex('byDomain', (q) => q.eq('domain', 'flatout.solutions'))
+            .unique()
+      )
+      expect(flatoutRow).not.toBeNull()
+      await expect(
+        t.withIdentity(TEST_IDENTITY).mutation(api.allowedDomains.mutations.remove, { id: flatoutRow!._id })
+      ).rejects.toThrow(/CANNOT_REMOVE_OWN_DOMAIN/i)
+    })
+  })
+})
+```
+
+- [ ] **Step 5: Run failing tests**
+
+```
+yarn test convex/allowedDomains/
+```
+
+Expected: FAIL — modules don't exist yet.
+
+- [ ] **Step 6: Implement queries**
+
+```ts
+// convex/allowedDomains/queries.ts
+import { v } from 'convex/values'
+
+import { internalQuery, query } from '../_generated/server'
+import { BOOTSTRAP_ALLOWED_DOMAINS } from '../utils/domainGate'
+
+export const list = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id('allowedEmailDomains'),
+      domain: v.string(),
+      addedAtMs: v.number(),
+    })
+  ),
+  handler: async (ctx) => {
+    const rows = await ctx.db.query('allowedEmailDomains').collect()
+    return rows
+      .map((r) => ({ _id: r._id, domain: r.domain, addedAtMs: r.addedAtMs }))
+      .sort((a, b) => a.domain.localeCompare(b.domain))
+  },
+})
+
+export const loadInternal = internalQuery({
+  args: {},
+  returns: v.array(v.string()),
+  handler: async (ctx) => {
+    const rows = await ctx.db.query('allowedEmailDomains').collect()
+    if (rows.length === 0) return [...BOOTSTRAP_ALLOWED_DOMAINS]
+    return rows.map((r) => r.domain.toLowerCase())
+  },
+})
+```
+
+- [ ] **Step 7: Implement mutations**
+
+```ts
+// convex/allowedDomains/mutations.ts
+import { ConvexError, v } from 'convex/values'
+
+import { authenticatedMutation, getIdentity } from '../utils/auth'
+import { isValidDomain, normalizeDomain } from '../utils/domainGate'
+
+export const add = authenticatedMutation({
+  args: { domain: v.string() },
+  returns: v.id('allowedEmailDomains'),
+  handler: async (ctx, { domain }) => {
+    const normalized = normalizeDomain(domain)
+    if (!isValidDomain(normalized)) {
+      throw new ConvexError({
+        code: 'INVALID_DOMAIN',
+        message: `'${domain}' is not a valid domain.`,
+      })
+    }
+    const existing = await ctx.db
+      .query('allowedEmailDomains')
+      .withIndex('byDomain', (q) => q.eq('domain', normalized))
+      .unique()
+    if (existing) return existing._id
+
+    const identity = getIdentity(ctx)
+    const userRow = await ctx.db
+      .query('users')
+      .withIndex('byExternalId', (q) => q.eq('externalId', identity.subject))
+      .unique()
+
+    return await ctx.db.insert('allowedEmailDomains', {
+      domain: normalized,
+      addedAtMs: Date.now(),
+      addedByUserId: userRow?._id,
+    })
+  },
+})
+
+export const remove = authenticatedMutation({
+  args: { id: v.id('allowedEmailDomains') },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    const row = await ctx.db.get(id)
+    if (!row) return null
+
+    const identity = getIdentity(ctx)
+    const callerEmail = typeof identity.email === 'string' ? identity.email : ''
+    const callerDomain = callerEmail.split('@')[1]?.toLowerCase()
+    if (callerDomain && row.domain.toLowerCase() === callerDomain) {
+      throw new ConvexError({
+        code: 'CANNOT_REMOVE_OWN_DOMAIN',
+        message: 'You cannot remove the domain that your own email belongs to.',
+      })
+    }
+
+    await ctx.db.delete(id)
+    return null
+  },
+})
+```
+
+- [ ] **Step 8: Run tests**
+
+```
+yarn test convex/allowedDomains/
+```
+
+Expected: queries.test.ts → 5/5 PASS. mutations.test.ts → mostly FAIL because `authenticatedMutation` is the OLD wrapper that doesn't yet load runtime list. Task 5 fixes this.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add convex/schema.ts convex/allowedDomains/
+git commit -m "feat(allowed-domains): convex table + public list + add/remove mutations"
+```
+
+---
+
+## Task 5: Auth wrappers consult runtime allowlist
+
+**Files:**
+
+- Create: `convex/utils/domainGateServer.ts`
+- Create: `convex/utils/domainGateAction.ts`
+- Modify: `convex/utils/auth.ts`
+- Modify: `convex/utils/auth.test.ts`
+- Modify: `convex/__tests__/helpers.ts`
+
+- [ ] **Step 1: Update TEST_IDENTITY**
+
+```ts
+// convex/__tests__/helpers.ts (replace identity blocks)
+export const TEST_IDENTITY = {
+  subject: 'user_test_alice',
+  issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+  tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_alice',
+  name: 'Alice Tester',
+  email: 'alice@flatout.solutions',
+} as const
+
+export const SECOND_IDENTITY = {
+  subject: 'user_test_bob',
+  issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+  tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
+  name: 'Bob Tester',
+  email: 'bob@flatout.solutions',
+} as const
+```
+
+Some downstream tests pass `email: 'x@example.com'` literals to mutations like `softRemove({ email })`. Those args are subscription-row emails (storage), not auth-identity emails — leave them unchanged.
+
+- [ ] **Step 2: domainGateServer.ts**
+
+```ts
+// convex/utils/domainGateServer.ts
+import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server'
+
+import type { DataModel } from '../_generated/dataModel'
+import { BOOTSTRAP_ALLOWED_DOMAINS } from './domainGate'
+
+export async function loadAllowedDomains(
+  ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>
+): Promise<string[]> {
+  const rows = await ctx.db.query('allowedEmailDomains').collect()
+  if (rows.length === 0) return [...BOOTSTRAP_ALLOWED_DOMAINS]
+  return rows.map((r) => r.domain.toLowerCase())
+}
+```
+
+- [ ] **Step 3: domainGateAction.ts**
+
+```ts
+// convex/utils/domainGateAction.ts
+import type { GenericActionCtx } from 'convex/server'
+
+import { internal } from '../_generated/api'
+import type { DataModel } from '../_generated/dataModel'
+
+export async function loadAllowedDomainsFromAction(ctx: GenericActionCtx<DataModel>): Promise<string[]> {
+  return await ctx.runQuery(internal.allowedDomains.queries.loadInternal, {})
+}
+```
+
+- [ ] **Step 4: Append failing auth tests**
+
+Append to `convex/utils/auth.test.ts`:
+
+```ts
+describe('authenticated wrappers — runtime allowlist', () => {
+  const evilIdentity = {
+    subject: 'user_test_evil',
+    issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+    tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_evil',
+    name: 'Evil',
+    email: 'evil@gmail.com',
+  } as const
+
+  const noEmailIdentity = {
+    subject: 'user_test_no_email',
+    issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+    tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_no_email',
+    name: 'NoEmail',
+  } as const
+
+  it('rejects wrong-domain identity on query (bootstrap fallback)', async () => {
+    const t = vault()
+    await expect(t.withIdentity(evilIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
+    )
+  })
+
+  it('rejects wrong-domain on mutation', async () => {
+    const t = vault()
+    await expect(
+      t.withIdentity(evilIdentity).mutation(api.subscriptions.mutations.softRemove, { email: 'x@example.com' })
+    ).rejects.toThrow(/EMAIL_DOMAIN_NOT_ALLOWED|domain/i)
+  })
+
+  it('rejects wrong-domain on action', async () => {
+    const t = vault()
+    await expect(
+      t.withIdentity(evilIdentity).action(api.subscriptions.actions.pullForSwitch, { slotOrEmail: 'x@example.com' })
+    ).rejects.toThrow(/EMAIL_DOMAIN_NOT_ALLOWED|domain/i)
+  })
+
+  it('rejects no-email identity', async () => {
+    const t = vault()
+    await expect(t.withIdentity(noEmailIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
+    )
+  })
+
+  it('accepts identity matching a domain that was added to the table', async () => {
+    const t = vault()
+    await t.run(async (ctx) => {
+      await ctx.db.insert('allowedEmailDomains', { domain: 'acme.com', addedAtMs: 1 })
+      await ctx.db.insert('users', {
+        externalId: 'user_test_acme',
+        name: 'Acme',
+        primaryEmail: 'bob@acme.com',
+        otherEmails: [],
+      })
+    })
+    const acmeIdentity = {
+      subject: 'user_test_acme',
+      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_acme',
+      name: 'Acme',
+      email: 'bob@acme.com',
+    } as const
+    const result = await t.withIdentity(acmeIdentity).query(api.subscriptions.queries.listForUser, {})
+    expect(Array.isArray(result)).toBe(true)
+  })
+})
+```
+
+- [ ] **Step 5: Run failing tests**
+
+```
+yarn test convex/utils/auth.test.ts
+```
+
+Expected: FAIL.
+
+- [ ] **Step 6: Replace `convex/utils/auth.ts`**
+
+```ts
+/**
+ * Authenticated Convex function wrappers.
+ *
+ *  1. Verify ctx.auth.getUserIdentity() is non-null.
+ *  2. Load runtime allowlist (allowedEmailDomains table or BOOTSTRAP).
+ *  3. Verify identity.email is on the allowlist.
+ *  4. Pass UserIdentity through as ctx.identity.
+ *
+ * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.4
+ */
+import {
+  type ActionBuilder,
+  type DefaultFunctionArgs,
+  type GenericActionCtx,
+  type GenericMutationCtx,
+  type GenericQueryCtx,
+  type MutationBuilder,
+  type QueryBuilder,
+  type UserIdentity,
+} from 'convex/server'
+import { ConvexError, type PropertyValidators } from 'convex/values'
+
+import type { DataModel } from '../_generated/dataModel'
+import { action, mutation, query } from '../_generated/server'
+import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from './domainGate'
+import { loadAllowedDomainsFromAction } from './domainGateAction'
+import { loadAllowedDomains } from './domainGateServer'
+
+export function getIdentity(
+  ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel> | GenericActionCtx<DataModel>
+): UserIdentity {
+  const augmented = ctx as { identity?: unknown }
+  const id = augmented.identity
+  if (!id || typeof id !== 'object') {
+    throw new Error('getIdentity called on a non-authenticated ctx. Use authenticatedQuery/Mutation/Action.')
+  }
+  const candidate = id as Record<string, unknown>
+  if (
+    typeof candidate.subject !== 'string' ||
+    typeof candidate.issuer !== 'string' ||
+    typeof candidate.tokenIdentifier !== 'string'
+  ) {
+    throw new Error('Augmented identity is malformed')
+  }
+  return id as UserIdentity
+}
+
+function rejectDomain(): never {
+  throw new ConvexError({
+    code: DOMAIN_REJECTION_ERROR_CODE,
+    message: DOMAIN_REJECTION_MESSAGE,
+  })
+}
+
+async function resolveServer(ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>): Promise<UserIdentity> {
+  const identity = await ctx.auth.getUserIdentity()
+  if (!identity) throw new Error('Not authenticated')
+  const domains = await loadAllowedDomains(ctx)
+  if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains)) {
+    rejectDomain()
+  }
+  return identity
+}
+
+async function resolveAction(ctx: GenericActionCtx<DataModel>): Promise<UserIdentity> {
+  const identity = await ctx.auth.getUserIdentity()
+  if (!identity) throw new Error('Not authenticated')
+  const domains = await loadAllowedDomainsFromAction(ctx)
+  if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains)) {
+    rejectDomain()
+  }
+  return identity
+}
+
+export const authenticatedQuery = (<Args extends DefaultFunctionArgs>(fn: {
+  args?: PropertyValidators
+  returns?: import('convex/values').Validator<unknown>
+  handler: (ctx: GenericQueryCtx<DataModel>, args: Args) => Promise<unknown>
+}) => {
+  return query({
+    args: fn.args ?? {},
+    ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
+    handler: async (ctx, args) => {
+      const identity = await resolveServer(ctx)
+      return await fn.handler(Object.assign(ctx, { identity }), args as Args)
+    },
+  })
+}) as QueryBuilder<DataModel, 'public'>
+
+export const authenticatedMutation = (<Args extends DefaultFunctionArgs>(fn: {
+  args?: PropertyValidators
+  returns?: import('convex/values').Validator<unknown>
+  handler: (ctx: GenericMutationCtx<DataModel>, args: Args) => Promise<unknown>
+}) => {
+  return mutation({
+    args: fn.args ?? {},
+    ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
+    handler: async (ctx, args) => {
+      const identity = await resolveServer(ctx)
+      return await fn.handler(Object.assign(ctx, { identity }), args as Args)
+    },
+  })
+}) as MutationBuilder<DataModel, 'public'>
+
+export const authenticatedAction = (<Args extends DefaultFunctionArgs>(fn: {
+  args?: PropertyValidators
+  returns?: import('convex/values').Validator<unknown>
+  handler: (ctx: GenericActionCtx<DataModel>, args: Args) => Promise<unknown>
+}) => {
+  return action({
+    args: fn.args ?? {},
+    ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
+    handler: async (ctx, args) => {
+      const identity = await resolveAction(ctx)
+      return await fn.handler(Object.assign(ctx, { identity }), args as Args)
+    },
+  })
+}) as ActionBuilder<DataModel, 'public'>
+```
+
+- [ ] **Step 7: Run full convex tests**
+
+```
+yarn test convex/
+```
+
+Expected: PASS — auth tests + allowedDomains.mutations.test.ts (which depends on the new wrapper). webhook + mintAction tests still using old isAllowedEmail signature → may FAIL; Task 6 fixes.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add convex/__tests__/helpers.ts convex/utils/auth.ts convex/utils/auth.test.ts convex/utils/domainGateServer.ts convex/utils/domainGateAction.ts
+git commit -m "feat(auth): authenticated wrappers consult runtime allowedEmailDomains"
+```
+
+---
+
+## Task 6: Wire webhook + mintAction to runtime allowlist
+
+**Files:**
+
+- Modify: `convex/webhooks/clerk.ts`
+- Modify: `convex/webhooks/clerk.test.ts`
+- Modify: `convex/cli/mintAction.ts`
+- Create: `convex/cli/mintAction.test.ts`
+- Modify: `convex/cli/httpMint.ts`
+
+- [ ] **Step 1: Update webhook**
+
+Replace `convex/webhooks/clerk.ts`:
 
 ```ts
 'use node'
@@ -506,29 +891,21 @@ export const clerkUsersWebhook = httpAction(async (ctx, request) => {
 
   switch (event.type) {
     case 'user.created':
-    // intentional fallthrough
     case 'user.updated': {
       const data = event.data
       const email = primaryEmailFromUserJSON(data)
-      if (!isAllowedEmail(email)) {
-        // Disallowed domain. Nuke via BAPI + remove any orphan users row.
+      const domains = await ctx.runQuery(internal.allowedDomains.queries.loadInternal, {})
+      if (!isAllowedEmail(email, domains)) {
         const userId = data.id
         const result = await deleteClerkUser(userId)
         if (!result.ok) {
-          // 5xx from Clerk — return 500 so Clerk retries the webhook later.
-          // (404 was treated as success inside deleteClerkUser.)
           console.error(
-            `domainGate: BAPI delete failed for ${userId} (${data.email_addresses
-              .map((e) => e.email_address)
-              .join(',')}) — status=${String(result.status)}, body=${result.body.slice(0, 200)}`
+            `domainGate: BAPI delete failed for ${userId} (${email ?? '<missing>'}) — status=${String(result.status)}, body=${result.body.slice(0, 200)}`
           )
           return new Response('clerk delete failed', { status: 500 })
         }
-        // Belt-and-braces: clear any orphan users row that may exist from a
-        // prior allowed state (rare — only happens if the user changed their
-        // primary email after signup).
         await ctx.runMutation(internal.users.actions.remove, { clerkUserId: userId })
-        console.warn(`domainGate: rejected ${userId} primary email ${email ?? '<missing>'} — deleted via BAPI`)
+        console.warn(`domainGate: rejected ${userId} (${email ?? '<missing>'}) — deleted via BAPI`)
         return new Response(null, { status: 200 })
       }
       await ctx.runMutation(internal.users.actions.upsert, { data })
@@ -549,502 +926,127 @@ export const clerkUsersWebhook = httpAction(async (ctx, request) => {
 })
 ```
 
-- [ ] **Step 5: Run webhook tests**
+- [ ] **Step 2: Webhook tests still work**
+
+The existing tests pass primary emails (`alice@flatout.solutions` → allowed; `bob@gmail.com` → blocked). Both still match correct behavior with bootstrap fallback (table empty in tests → flatout allowed). Run:
 
 ```
 yarn test convex/webhooks/clerk.test.ts
 ```
 
-Expected: PASS, 5/5 tests.
+Expected: PASS, 5/5.
 
-- [ ] **Step 6: Run all convex tests to catch regressions**
+If a test relies on the old `isAllowedEmail(email)` 1-arg signature inline, update the test to use 2-arg form OR use the public `api.allowedDomains.queries.list` flow.
 
-```
-yarn test convex/
-```
-
-Expected: PASS (no failures introduced in adjacent test files).
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add convex/cli/clerk.ts convex/webhooks/clerk.ts convex/webhooks/clerk.test.ts
-git commit -m "feat(webhook): reject non-flatout.solutions users via Clerk BAPI delete"
-```
-
----
-
-## Task 3: Auth wrappers — reject wrong-domain identity
-
-**Files:**
-
-- Modify: `convex/utils/auth.ts`
-- Modify: `convex/utils/auth.test.ts`
-
-- [ ] **Step 1: Add failing tests for domain rejection**
-
-Append to `convex/utils/auth.test.ts`:
-
-```ts
-describe('authenticated wrappers — domain gate', () => {
-  it('throws EMAIL_DOMAIN_NOT_ALLOWED for wrong-domain identity on query', async () => {
-    const t = vault()
-    const wrongDomainIdentity = {
-      subject: 'user_test_evil',
-      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_evil',
-      name: 'Evil Tester',
-      email: 'evil@gmail.com',
-    } as const
-    await expect(t.withIdentity(wrongDomainIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
-      /EMAIL_DOMAIN_NOT_ALLOWED|flatout\.solutions/i
-    )
-  })
-
-  it('throws EMAIL_DOMAIN_NOT_ALLOWED for wrong-domain identity on mutation', async () => {
-    const t = vault()
-    const wrongDomainIdentity = {
-      subject: 'user_test_evil',
-      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_evil',
-      name: 'Evil Tester',
-      email: 'evil@gmail.com',
-    } as const
-    await expect(
-      t.withIdentity(wrongDomainIdentity).mutation(api.subscriptions.mutations.softRemove, { email: 'x@example.com' })
-    ).rejects.toThrow(/EMAIL_DOMAIN_NOT_ALLOWED|flatout\.solutions/i)
-  })
-
-  it('throws EMAIL_DOMAIN_NOT_ALLOWED for wrong-domain identity on action', async () => {
-    const t = vault()
-    const wrongDomainIdentity = {
-      subject: 'user_test_evil',
-      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_evil',
-      name: 'Evil Tester',
-      email: 'evil@gmail.com',
-    } as const
-    await expect(
-      t
-        .withIdentity(wrongDomainIdentity)
-        .action(api.subscriptions.actions.pullForSwitch, { slotOrEmail: 'x@example.com' })
-    ).rejects.toThrow(/EMAIL_DOMAIN_NOT_ALLOWED|flatout\.solutions/i)
-  })
-
-  it('throws EMAIL_DOMAIN_NOT_ALLOWED when identity has no email claim at all', async () => {
-    const t = vault()
-    const noEmailIdentity = {
-      subject: 'user_test_no_email',
-      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_no_email',
-      name: 'NoEmail Tester',
-      // email omitted entirely
-    } as const
-    await expect(t.withIdentity(noEmailIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
-      /EMAIL_DOMAIN_NOT_ALLOWED|flatout\.solutions/i
-    )
-  })
-
-  it('accepts case-insensitive allowed domain', async () => {
-    const t = vault()
-    const allowedIdentity = {
-      subject: 'user_test_caps',
-      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_caps',
-      name: 'CapsTester',
-      email: 'CapsTester@FlatOut.Solutions',
-    } as const
-    // Seed the row so the underlying query has something to return.
-    await t.run(async (ctx) => {
-      await ctx.db.insert('users', {
-        externalId: allowedIdentity.subject,
-        name: allowedIdentity.name,
-        primaryEmail: allowedIdentity.email,
-        otherEmails: [],
-      })
-    })
-
-    const result = await t.withIdentity(allowedIdentity).query(api.subscriptions.queries.listForUser, {})
-    expect(Array.isArray(result)).toBe(true)
-  })
-})
-```
-
-- [ ] **Step 2: Run failing tests**
-
-```
-yarn test convex/utils/auth.test.ts
-```
-
-Expected: FAIL — wrappers don't enforce domain yet.
-
-- [ ] **Step 3: Extend wrappers with domain check**
-
-Replace `convex/utils/auth.ts` entirely:
-
-````ts
-/**
- * Authenticated Convex function wrappers.
- *
- * These wrap `query` / `mutation` / `action` and:
- *  1. Verify `ctx.auth.getUserIdentity()` is non-null (else throw).
- *  2. Verify `identity.email` is on the FlatOut Solutions domain
- *     (else throw a ConvexError with code `EMAIL_DOMAIN_NOT_ALLOWED`).
- *  3. Pass the verified `UserIdentity` as `ctx.identity`.
- *
- * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.4
- *
- * USAGE
- * -----
- * Inside an authenticated handler, read the identity via `getIdentity(ctx)`
- * (NOT `ctx.identity` — the runtime augmentation is invisible to TS through
- * the registered-function cast, but `getIdentity` re-asserts it safely):
- *
- * ```ts
- * export const myQuery = authenticatedQuery({
- *   args: {},
- *   handler: async (ctx) => {
- *     const identity = getIdentity(ctx)
- *     return identity.subject
- *   },
- * })
- * ```
- */
-import {
-  type ActionBuilder,
-  type DefaultFunctionArgs,
-  type GenericActionCtx,
-  type GenericMutationCtx,
-  type GenericQueryCtx,
-  type MutationBuilder,
-  type QueryBuilder,
-  type UserIdentity,
-} from 'convex/server'
-import { ConvexError, type PropertyValidators } from 'convex/values'
-
-import type { DataModel } from '../_generated/dataModel'
-import { action, mutation, query } from '../_generated/server'
-import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from './domainGate'
-
-/**
- * Read the verified Clerk identity from a ctx that has been augmented by
- * one of the `authenticated*` wrappers.
- *
- * Throws if called from a ctx that wasn't routed through a wrapper (i.e.
- * `identity` was never attached). This indicates a programming error —
- * use the appropriate wrapper instead of calling `getIdentity` from a
- * plain `query`/`mutation`/`action`.
- */
-export function getIdentity(
-  ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel> | GenericActionCtx<DataModel>
-): UserIdentity {
-  const augmented = ctx as { identity?: unknown }
-  const id = augmented.identity
-  if (!id || typeof id !== 'object') {
-    throw new Error('getIdentity called on a non-authenticated ctx. Use authenticatedQuery/Mutation/Action.')
-  }
-  const candidate = id as Record<string, unknown>
-  if (
-    typeof candidate.subject !== 'string' ||
-    typeof candidate.issuer !== 'string' ||
-    typeof candidate.tokenIdentifier !== 'string'
-  ) {
-    throw new Error('Augmented identity is malformed')
-  }
-  return id as UserIdentity
-}
-
-function assertIdentityEmailAllowed(identity: UserIdentity): void {
-  // `identity.email` is typed as `string | undefined` on UserIdentity. Clerk's
-  // convex JWT template includes it by default; if it's missing the helper
-  // returns false and we reject — that's the safe default.
-  const email = typeof identity.email === 'string' ? identity.email : null
-  if (!isAllowedEmail(email)) {
-    throw new ConvexError({
-      code: DOMAIN_REJECTION_ERROR_CODE,
-      message: DOMAIN_REJECTION_MESSAGE,
-    })
-  }
-}
-
-async function resolveAuthenticatedIdentity(
-  ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel> | GenericActionCtx<DataModel>
-): Promise<UserIdentity> {
-  const identity = await ctx.auth.getUserIdentity()
-  if (!identity) {
-    throw new Error('Not authenticated')
-  }
-  assertIdentityEmailAllowed(identity)
-  return identity
-}
-
-export const authenticatedQuery = (<Args extends DefaultFunctionArgs>(fn: {
-  args?: PropertyValidators
-  returns?: import('convex/values').Validator<unknown>
-  handler: (ctx: GenericQueryCtx<DataModel>, args: Args) => Promise<unknown>
-}) => {
-  return query({
-    args: fn.args ?? {},
-    ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
-    handler: async (ctx, args) => {
-      const identity = await resolveAuthenticatedIdentity(ctx)
-      return await fn.handler(Object.assign(ctx, { identity }), args as Args)
-    },
-  })
-}) as QueryBuilder<DataModel, 'public'>
-
-export const authenticatedMutation = (<Args extends DefaultFunctionArgs>(fn: {
-  args?: PropertyValidators
-  returns?: import('convex/values').Validator<unknown>
-  handler: (ctx: GenericMutationCtx<DataModel>, args: Args) => Promise<unknown>
-}) => {
-  return mutation({
-    args: fn.args ?? {},
-    ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
-    handler: async (ctx, args) => {
-      const identity = await resolveAuthenticatedIdentity(ctx)
-      return await fn.handler(Object.assign(ctx, { identity }), args as Args)
-    },
-  })
-}) as MutationBuilder<DataModel, 'public'>
-
-export const authenticatedAction = (<Args extends DefaultFunctionArgs>(fn: {
-  args?: PropertyValidators
-  returns?: import('convex/values').Validator<unknown>
-  handler: (ctx: GenericActionCtx<DataModel>, args: Args) => Promise<unknown>
-}) => {
-  return action({
-    args: fn.args ?? {},
-    ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
-    handler: async (ctx, args) => {
-      const identity = await resolveAuthenticatedIdentity(ctx)
-      return await fn.handler(Object.assign(ctx, { identity }), args as Args)
-    },
-  })
-}) as ActionBuilder<DataModel, 'public'>
-````
-
-- [ ] **Step 4: Update existing TEST_IDENTITY in helpers**
-
-The existing `TEST_IDENTITY` in `convex/__tests__/helpers.ts` uses `alice@example.com`. With the new domain gate, this would break every existing test that uses `withIdentity(TEST_IDENTITY)`.
-
-Edit `convex/__tests__/helpers.ts`:
-
-Change:
-
-```ts
-export const TEST_IDENTITY = {
-  subject: 'user_test_alice',
-  issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-  tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_alice',
-  name: 'Alice Tester',
-  email: 'alice@example.com',
-} as const
-
-export const SECOND_IDENTITY = {
-  subject: 'user_test_bob',
-  issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-  tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
-  name: 'Bob Tester',
-  email: 'bob@example.com',
-} as const
-```
-
-To:
-
-```ts
-export const TEST_IDENTITY = {
-  subject: 'user_test_alice',
-  issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-  tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_alice',
-  name: 'Alice Tester',
-  email: 'alice@flatout.solutions',
-} as const
-
-export const SECOND_IDENTITY = {
-  subject: 'user_test_bob',
-  issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-  tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
-  name: 'Bob Tester',
-  email: 'bob@flatout.solutions',
-} as const
-```
-
-- [ ] **Step 5: Run full convex test suite**
-
-```
-yarn test convex/
-```
-
-Expected: PASS. The fixed `TEST_IDENTITY` now matches the allowed domain, so every existing authenticated test still works. New auth tests pass.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add convex/utils/auth.ts convex/utils/auth.test.ts convex/__tests__/helpers.ts
-git commit -m "feat(auth): reject wrong-domain identity in authenticated wrappers"
-```
-
----
-
-## Task 4: CLI mint route — domain rejection
-
-**Files:**
-
-- Modify: `convex/cli/mintAction.ts`
-- Modify: `convex/cli/httpMint.ts`
-- Create: `convex/cli/mintAction.test.ts`
-
-- [ ] **Step 1: Write failing mintAction tests**
+- [ ] **Step 3: Mint tests**
 
 ```ts
 // convex/cli/mintAction.test.ts
-/**
- * mintAction tests — domain rejection branch.
- *
- * verifyToken is mocked via vi.spyOn to return whatever email we want.
- * BAPI mint is mocked via __setClerkFetch.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { vault } from '../__tests__/helpers'
 import { internal } from '../_generated/api'
 import { __setClerkFetch } from './clerk'
 
-const ORIGINAL_CLERK_KEY = process.env.CLERK_SECRET_KEY
+const ORIG = process.env.CLERK_SECRET_KEY
 
 beforeEach(() => {
-  process.env.CLERK_SECRET_KEY = 'sk_test_dummy_for_unit_tests'
+  process.env.CLERK_SECRET_KEY = 'sk_test_dummy'
 })
 
 afterEach(() => {
-  if (ORIGINAL_CLERK_KEY === undefined) delete process.env.CLERK_SECRET_KEY
-  else process.env.CLERK_SECRET_KEY = ORIGINAL_CLERK_KEY
+  if (ORIG === undefined) delete process.env.CLERK_SECRET_KEY
+  else process.env.CLERK_SECRET_KEY = ORIG
   __setClerkFetch(undefined)
   vi.restoreAllMocks()
 })
 
-async function mockVerifyToken(payload: object) {
+async function mockVerify(payload: object) {
   const mod = await import('@clerk/backend')
   vi.spyOn(mod, 'verifyToken').mockResolvedValue(payload as never)
 }
 
 describe('cli.mintAction.mintConvexJwt — domain gate', () => {
-  it('mints when verified payload email is on allowed domain', async () => {
+  it('mints when bootstrap-allowed email', async () => {
     const t = vault()
-    await mockVerifyToken({
-      sid: 'sess_alice',
-      sub: 'user_alice',
-      email: 'alice@flatout.solutions',
-    })
-
+    await mockVerify({ sid: 'sess', sub: 'user_a', email: 'alice@flatout.solutions' })
     __setClerkFetch(
       vi.fn(() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ jwt: 'fake-convex-jwt' }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        )
+        Promise.resolve(new Response(JSON.stringify({ jwt: 'fake-jwt' }), { status: 200 }))
       ) as unknown as typeof fetch
     )
-
     const result = await t.action(internal.cli.mintAction.mintConvexJwt, {
-      clerkSessionToken: 'fake-session-jwt',
+      clerkSessionToken: 'tok',
     })
-    expect(result.jwt).toBe('fake-convex-jwt')
+    expect(result.jwt).toBe('fake-jwt')
   })
 
-  it('rejects with EMAIL_DOMAIN_NOT_ALLOWED when email is wrong domain', async () => {
+  it('rejects wrong-domain email', async () => {
     const t = vault()
-    await mockVerifyToken({
-      sid: 'sess_bob',
-      sub: 'user_bob',
-      email: 'bob@gmail.com',
-    })
-
+    await mockVerify({ sid: 'sess', sub: 'user_b', email: 'bob@gmail.com' })
     __setClerkFetch(
       vi.fn(() =>
-        Promise.resolve(new Response(JSON.stringify({ jwt: 'should-not-mint' }), { status: 200 }))
+        Promise.resolve(new Response(JSON.stringify({ jwt: 'should-not' }), { status: 200 }))
       ) as unknown as typeof fetch
     )
-
-    await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'fake' })).rejects.toThrow(
-      /EMAIL_DOMAIN_NOT_ALLOWED|flatout\.solutions/i
+    await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })).rejects.toThrow(
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
     )
   })
 
-  it('rejects with EMAIL_DOMAIN_NOT_ALLOWED when email claim is missing', async () => {
+  it('rejects no-email payload', async () => {
     const t = vault()
-    await mockVerifyToken({ sid: 'sess_x', sub: 'user_x' })
-
+    await mockVerify({ sid: 'sess', sub: 'user_x' })
     __setClerkFetch(vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))) as unknown as typeof fetch)
-
-    await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'fake' })).rejects.toThrow(
-      /EMAIL_DOMAIN_NOT_ALLOWED|flatout\.solutions/i
+    await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })).rejects.toThrow(
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
     )
+  })
+
+  it('accepts an added (non-bootstrap) domain', async () => {
+    const t = vault()
+    await t.run(async (ctx) => {
+      await ctx.db.insert('allowedEmailDomains', { domain: 'acme.com', addedAtMs: 1 })
+    })
+    await mockVerify({ sid: 'sess', sub: 'user_c', email: 'carol@acme.com' })
+    __setClerkFetch(
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ jwt: 'jwt-acme' }), { status: 200 }))
+      ) as unknown as typeof fetch
+    )
+    const result = await t.action(internal.cli.mintAction.mintConvexJwt, {
+      clerkSessionToken: 'tok',
+    })
+    expect(result.jwt).toBe('jwt-acme')
   })
 })
 ```
 
-- [ ] **Step 2: Run failing tests**
+- [ ] **Step 4: Run failing tests**
 
 ```
 yarn test convex/cli/mintAction.test.ts
 ```
 
-Expected: FAIL — mintAction does not check email yet.
+Expected: FAIL.
 
-- [ ] **Step 3: Add domain check to mintAction**
-
-Replace `convex/cli/mintAction.ts`:
+- [ ] **Step 5: Replace mintAction.ts**
 
 ```ts
 'use node'
 
-/**
- * `cli.mintAction.mintConvexJwt` — internal action invoked by the
- * `/api/cli/mint-token` HTTP route. Verifies a CLI-supplied Clerk session
- * JWT via `@clerk/backend`, rejects wrong-domain emails, then mints a
- * convex-template JWT for the underlying session via Clerk Backend API.
- *
- * Why this exists:
- *   The CLI obtains a Clerk session JWT via FAPI's ticket exchange
- *   (`/v1/client/sign_ins`), but cannot mint subsequent template JWTs via
- *   FAPI because `/v1/client/sessions/<sid>/tokens/<template>` authenticates
- *   the *client* (browser cookie context). From a headless caller without
- *   the `__client` cookie, FAPI rejects every Authorization Bearer with 401
- *   `signed_out`. BAPI does not have that constraint — it only requires the
- *   server-side `CLERK_SECRET_KEY`, which lives on the Convex deployment.
- *
- * Domain gate:
- *   Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.5
- *   We check the verified payload's `email` claim against the allowlist. If
- *   it doesn't match, mint is refused — the CLI cannot get a Convex JWT and
- *   therefore cannot make any Convex calls.
- *
- * Security model:
- *   - We `verifyToken` the supplied JWT against Clerk's JWKS first. This
- *     proves the caller actually possesses a current Clerk session token —
- *     they are not asking us to mint for an arbitrary `sid` they guessed.
- *   - The `sid` claim from the verified payload is what we pass to BAPI;
- *     `clerkSessionToken` is never trusted as input beyond its `sid`/`sub`
- *     /`email` claims.
- *   - Without verification, a user holding any Clerk JWT could pass a
- *     stolen `sid` and mint a convex JWT for someone else. The secret key
- *     would be a confused deputy.
- */
 import { verifyToken } from '@clerk/backend'
 import { ConvexError, v } from 'convex/values'
 
 import { internalAction } from '../_generated/server'
 import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from '../utils/domainGate'
+import { loadAllowedDomainsFromAction } from '../utils/domainGateAction'
 import { createSessionTokenFromTemplate } from './clerk'
 
 export const mintConvexJwt = internalAction({
   args: { clerkSessionToken: v.string() },
   returns: v.object({ jwt: v.string() }),
-  handler: async (_ctx, { clerkSessionToken }): Promise<{ jwt: string }> => {
+  handler: async (ctx, { clerkSessionToken }): Promise<{ jwt: string }> => {
     const secretKey = process.env.CLERK_SECRET_KEY
     if (!secretKey) {
       throw new ConvexError({
@@ -1075,7 +1077,8 @@ export const mintConvexJwt = internalAction({
     }
 
     const email = typeof payload.email === 'string' ? payload.email : null
-    if (!isAllowedEmail(email)) {
+    const domains = await loadAllowedDomainsFromAction(ctx)
+    if (!isAllowedEmail(email, domains)) {
       throw new ConvexError({
         code: DOMAIN_REJECTION_ERROR_CODE,
         message: DOMAIN_REJECTION_MESSAGE,
@@ -1095,24 +1098,9 @@ export const mintConvexJwt = internalAction({
 })
 ```
 
-- [ ] **Step 4: Map domain error to HTTP 403 in httpMint.ts**
+- [ ] **Step 6: httpMint.ts → 403 mapping**
 
-Edit `convex/cli/httpMint.ts`. Update the status mapping in `cliMintHandler`:
-
-Change the status assignment block:
-
-```ts
-const status =
-  code === 'SESSION_TOKEN_INVALID'
-    ? 401
-    : code === 'JWT_TEMPLATE_NOT_FOUND'
-      ? 404
-      : code === 'CONFIGURATION_ERROR'
-        ? 500
-        : 500
-```
-
-To:
+In `convex/cli/httpMint.ts`, update the status mapping to include `EMAIL_DOMAIN_NOT_ALLOWED → 403`. Also update the docstring `Errors:` block to mention 403.
 
 ```ts
 const status =
@@ -1127,36 +1115,7 @@ const status =
           : 500
 ```
 
-Also update the docstring near the top — the `Errors:` block should now list 403:
-
-Replace:
-
-```
- *   - 400 — body missing / malformed
- *   - 401 — `SESSION_TOKEN_INVALID` (signature, expiry, revocation)
- *   - 404 — `JWT_TEMPLATE_NOT_FOUND` (no `convex` template in Clerk)
- *   - 500 — `CONFIGURATION_ERROR` / `CLERK_BACKEND_ERROR`
-```
-
-With:
-
-```
- *   - 400 — body missing / malformed
- *   - 401 — `SESSION_TOKEN_INVALID` (signature, expiry, revocation)
- *   - 403 — `EMAIL_DOMAIN_NOT_ALLOWED` (caller's primary email is not on the FlatOut Solutions domain)
- *   - 404 — `JWT_TEMPLATE_NOT_FOUND` (no `convex` template in Clerk)
- *   - 500 — `CONFIGURATION_ERROR` / `CLERK_BACKEND_ERROR`
-```
-
-- [ ] **Step 5: Run mint tests**
-
-```
-yarn test convex/cli/mintAction.test.ts
-```
-
-Expected: PASS, 3/3.
-
-- [ ] **Step 6: Run full convex test suite**
+- [ ] **Step 7: Run all convex tests**
 
 ```
 yarn test convex/
@@ -1164,122 +1123,31 @@ yarn test convex/
 
 Expected: PASS overall.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add convex/cli/mintAction.ts convex/cli/mintAction.test.ts convex/cli/httpMint.ts
-git commit -m "feat(cli-mint): refuse JWT mint for non-flatout.solutions emails"
+git add convex/webhooks/clerk.ts convex/cli/mintAction.ts convex/cli/mintAction.test.ts convex/cli/httpMint.ts
+git commit -m "feat(webhook+mint): consult runtime allowedEmailDomains table"
 ```
 
 ---
 
-## Task 5: CLI client — recognize 403 + friendly error
+## Task 7: CLI client recognizes 403 + friendly error
 
 **Files:**
 
 - Modify: `cli/src/auth/clerkFapi.ts`
 - Modify: `cli/src/commands/login.ts`
 - Modify: `cli/tests/auth/clerkFapi.test.ts`
+- Modify: `cli/tests/commands/login.test.ts`
 
-- [ ] **Step 1: Add failing test for new error class**
+- [ ] **Step 1: Add ClerkEmailDomainNotAllowedError class**
 
-Append to `cli/tests/auth/clerkFapi.test.ts`:
-
-```ts
-describe('mintConvexJwt — 403 EMAIL_DOMAIN_NOT_ALLOWED', () => {
-  it('throws ClerkEmailDomainNotAllowedError on 403 with the matching error code', async () => {
-    const session = {
-      version: 1,
-      clerkSessionId: 'sess_test',
-      clerkSessionToken: 'fake-session-jwt',
-      convexJwt: '',
-      convexJwtExpiry: 0,
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      convexUrl: 'https://x.convex.cloud',
-      issuedAt: Math.floor(Date.now() / 1000),
-    } as const
-
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = vi.fn(() =>
-      Promise.resolve(
-        new Response(
-          JSON.stringify({
-            error: 'EMAIL_DOMAIN_NOT_ALLOWED',
-            message: 'Only @flatout.solutions accounts may use cvault.',
-          }),
-          { status: 403, headers: { 'Content-Type': 'application/json' } }
-        )
-      )
-    ) as unknown as typeof fetch
-
-    try {
-      await expect(mintConvexJwt(session)).rejects.toBeInstanceOf(ClerkEmailDomainNotAllowedError)
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-  })
-
-  it('preserves ClerkSessionExpiredError for plain 401/404', async () => {
-    const session = {
-      version: 1,
-      clerkSessionId: 'sess_test',
-      clerkSessionToken: 'fake-session-jwt',
-      convexJwt: '',
-      convexJwtExpiry: 0,
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      convexUrl: 'https://x.convex.cloud',
-      issuedAt: Math.floor(Date.now() / 1000),
-    } as const
-
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = vi.fn(() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ error: 'SESSION_TOKEN_INVALID' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      )
-    ) as unknown as typeof fetch
-
-    try {
-      await expect(mintConvexJwt(session)).rejects.toBeInstanceOf(ClerkSessionExpiredError)
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-  })
-})
-```
-
-Add the new import at the top of the test file:
-
-```ts
-import {
-  ClerkEmailDomainNotAllowedError,
-  ClerkSessionExpiredError,
-  decodeJwtExp,
-  exchangeTicketForSession,
-  mintConvexJwt,
-} from '../../src/auth/clerkFapi'
-```
-
-(If only some of these are already imported, merge with the existing import.)
-
-- [ ] **Step 2: Run failing tests**
-
-```
-cd cli && bunx --bun vitest run tests/auth/clerkFapi.test.ts
-```
-
-Expected: FAIL — `ClerkEmailDomainNotAllowedError` does not exist.
-
-- [ ] **Step 3: Add the error class + 403 branch in mintConvexJwt**
-
-Edit `cli/src/auth/clerkFapi.ts`. After the existing `ClerkSessionExpiredError` class, add:
+After existing `ClerkSessionExpiredError` in `cli/src/auth/clerkFapi.ts`:
 
 ```ts
 export class ClerkEmailDomainNotAllowedError extends Error {
   override readonly name = 'ClerkEmailDomainNotAllowedError'
-  /** Server-supplied message, e.g. "Only @flatout.solutions accounts may use cvault." */
   readonly serverMessage: string
   constructor(serverMessage: string) {
     super(serverMessage)
@@ -1288,24 +1156,13 @@ export class ClerkEmailDomainNotAllowedError extends Error {
 }
 ```
 
-Inside `mintConvexJwt`, replace the body that handles non-2xx responses. Find the block:
+- [ ] **Step 2: Update mintConvexJwt to recognize 403 + EMAIL_DOMAIN_NOT_ALLOWED**
 
-```ts
-if (res.status === 401 || res.status === 403 || res.status === 404) {
-  const body = await res.text().catch(() => '<no body>')
-  throw new ClerkSessionExpiredError(res.status, body)
-}
-if (!res.ok) {
-  throw new Error(`Convex mint endpoint failed: ${String(res.status)} ${await res.text()}`)
-}
-```
-
-Replace with:
+Replace the non-2xx handling block (currently throws ClerkSessionExpiredError on 401/403/404) with:
 
 ```ts
 if (!res.ok) {
   const rawBody = await res.text().catch(() => '<no body>')
-  // Try to parse the JSON envelope `{ error: <code>, message: <human> }`.
   let parsed: { error?: unknown; message?: unknown } | null = null
   try {
     parsed = JSON.parse(rawBody) as { error?: unknown; message?: unknown }
@@ -1324,98 +1181,111 @@ if (!res.ok) {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 3: Append to `cli/tests/auth/clerkFapi.test.ts`**
 
+```ts
+describe('mintConvexJwt — 403 EMAIL_DOMAIN_NOT_ALLOWED', () => {
+  it('throws ClerkEmailDomainNotAllowedError on 403 + matching code', async () => {
+    const session = {
+      version: 1,
+      clerkSessionId: 'sess',
+      clerkSessionToken: 'tok',
+      convexJwt: '',
+      convexJwtExpiry: 0,
+      frontendApiUrl: 'https://x.clerk.accounts.dev',
+      convexUrl: 'https://x.convex.cloud',
+      issuedAt: Math.floor(Date.now() / 1000),
+    } as const
+    const original = globalThis.fetch
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: 'EMAIL_DOMAIN_NOT_ALLOWED',
+            message: 'Your email domain is not allowed to use cvault.',
+          }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    ) as unknown as typeof fetch
+    try {
+      await expect(mintConvexJwt(session)).rejects.toBeInstanceOf(ClerkEmailDomainNotAllowedError)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it('preserves ClerkSessionExpiredError on plain 401', async () => {
+    const session = {
+      version: 1,
+      clerkSessionId: 'sess',
+      clerkSessionToken: 'tok',
+      convexJwt: '',
+      convexJwtExpiry: 0,
+      frontendApiUrl: 'https://x.clerk.accounts.dev',
+      convexUrl: 'https://x.convex.cloud',
+      issuedAt: Math.floor(Date.now() / 1000),
+    } as const
+    const original = globalThis.fetch
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ error: 'SESSION_TOKEN_INVALID' }), { status: 401 }))
+    ) as unknown as typeof fetch
+    try {
+      await expect(mintConvexJwt(session)).rejects.toBeInstanceOf(ClerkSessionExpiredError)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+})
 ```
-cd cli && bunx --bun vitest run tests/auth/clerkFapi.test.ts
-```
 
-Expected: PASS, including new 403 cases AND existing 401 case still passing.
+Merge `ClerkEmailDomainNotAllowedError` into the existing import from `'../../src/auth/clerkFapi'`.
 
-- [ ] **Step 5: Update login.ts to surface friendly error**
+- [ ] **Step 4: Update `cli/src/commands/login.ts`**
 
-Edit `cli/src/commands/login.ts`. Find the `try { ... } catch (err) { ... }` block around the `exchangeTicketForSession` / mint flow.
-
-Add to the imports near the top:
+Read the file first; the existing try/catch around mint/exchange handles errors. Add to the imports:
 
 ```ts
 import { ClerkEmailDomainNotAllowedError } from '../auth/clerkFapi'
 ```
 
-Wherever the catch block currently handles errors from mint/exchange (typically just before `process.exit(1)` or a generic console.error), add a branch:
+In the catch block (place above any generic console.error), add:
 
 ```ts
 if (err instanceof ClerkEmailDomainNotAllowedError) {
   console.error(`Error: ${err.serverMessage}`)
-  console.error('Sign out at the cvault dashboard and try again with your @flatout.solutions email.')
+  console.error('Sign out at the cvault dashboard and try again with an allowlisted email.')
   process.exit(1)
 }
 ```
 
-If the existing catch is `console.error(err.message); process.exit(1)`, place the new branch above the generic line.
+- [ ] **Step 5: login.ts test**
 
-- [ ] **Step 6: Add login.ts test for friendly message**
+Read `cli/tests/commands/login.test.ts` for the harness. Add a test that mocks `exchangeTicketForSession` to throw `ClerkEmailDomainNotAllowedError` and asserts:
 
-Locate `cli/tests/commands/login.test.ts` (or create alongside if missing — check directory first via `ls cli/tests/commands/`).
+- `console.error` called with a domain-mentioning message.
+- `process.exit(1)` called.
 
-Add a test that mocks the mint to throw the new error and asserts the console output. The exact mock harness should mirror existing login tests (use `__setExchange` / `__setMint` test seams if they exist, or `vi.spyOn(import('../../src/auth/clerkFapi'), 'exchangeTicketForSession')` pattern).
+If the existing tests don't drive a clean entrypoint, mirror their pattern minimally (just enough to verify the catch branch is reached).
 
-Append to the file:
-
-```ts
-it('prints a friendly error and exits 1 when mint returns EMAIL_DOMAIN_NOT_ALLOWED', async () => {
-  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-  const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-    throw new Error('process.exit called')
-  })
-
-  // Mock exchangeTicketForSession (or whatever entrypoint login uses) to
-  // throw ClerkEmailDomainNotAllowedError. Adjust this to match the actual
-  // login.ts internals you find.
-  const fapi = await import('../../src/auth/clerkFapi')
-  vi.spyOn(fapi, 'exchangeTicketForSession').mockRejectedValue(
-    new fapi.ClerkEmailDomainNotAllowedError('Only @flatout.solutions accounts may use cvault.')
-  )
-
-  // Drive login() with a fake ticket + minimal opts; the test setup may
-  // already have a helper for this — reuse it. If not, the simplest path is
-  // to invoke whatever function login.ts exports and pass a stub callback
-  // server. Match the existing pattern in this file.
-  const { runLogin } = await import('../../src/commands/login')
-  await expect(
-    runLogin({
-      /* fill from existing tests in this file */
-    } as Parameters<typeof runLogin>[0])
-  ).rejects.toThrow(/process\.exit called/)
-
-  expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/flatout\.solutions/i))
-  expect(exitSpy).toHaveBeenCalledWith(1)
-
-  errorSpy.mockRestore()
-  exitSpy.mockRestore()
-})
-```
-
-> **Implementer note:** The exact shape of `runLogin`'s args depends on existing login.ts internals. Read `cli/src/commands/login.ts` first and pattern-match this test on whatever harness the existing login.ts tests use. Do NOT reinvent — reuse.
-
-- [ ] **Step 7: Run CLI tests**
+- [ ] **Step 6: Run CLI tests**
 
 ```
 cd cli && bunx --bun vitest run
 ```
 
-Expected: PASS overall.
+Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add cli/src/auth/clerkFapi.ts cli/src/commands/login.ts cli/tests/auth/clerkFapi.test.ts cli/tests/commands/login.test.ts
-git commit -m "feat(cli): surface @flatout.solutions-only error from mint endpoint"
+git commit -m "feat(cli): surface EMAIL_DOMAIN_NOT_ALLOWED with friendly login error"
 ```
 
 ---
 
-## Task 6: Frontend DomainGuard
+## Task 8: Frontend DomainGuard reads runtime list
 
 **Files:**
 
@@ -1423,50 +1293,61 @@ git commit -m "feat(cli): surface @flatout.solutions-only error from mint endpoi
 - Create: `frontend/src/components/auth/__tests__/DomainGuard.test.tsx`
 - Modify: `frontend/src/routes/__root.tsx`
 
-- [ ] **Step 1: Write failing RTL tests**
+- [ ] **Step 1: RTL tests (failing)**
 
 ```tsx
 // frontend/src/components/auth/__tests__/DomainGuard.test.tsx
-/**
- * DomainGuard — UX layer of the @flatout.solutions allowlist. Backend already
- * enforces the gate; this component shows a friendly error rather than letting
- * the user see broken Convex calls everywhere.
- *
- * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.6
- */
 import { useClerk, useUser } from '@clerk/tanstack-react-start'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useQuery } from 'convex/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { DomainGuard } from '../DomainGuard'
 
-// Per Clerk's testing docs, mock the hook surface. The shape mirrors what
-// `useUser()` and `useClerk()` return — only the fields we read.
 vi.mock('@clerk/tanstack-react-start', () => ({
   useUser: vi.fn(),
   useClerk: vi.fn(),
 }))
+vi.mock('convex/react', () => ({ useQuery: vi.fn() }))
 
 const mockedUseUser = vi.mocked(useUser)
 const mockedUseClerk = vi.mocked(useClerk)
+const mockedUseQuery = vi.mocked(useQuery)
+
+function setRows(value: Array<{ _id: string; domain: string; addedAtMs: number }> | undefined) {
+  mockedUseQuery.mockReturnValue(value as never)
+}
 
 describe('DomainGuard', () => {
-  it('renders children while Clerk is still loading', () => {
+  it('renders nothing while Clerk is loading', () => {
     mockedUseUser.mockReturnValue({ isLoaded: false, isSignedIn: false, user: null } as never)
     mockedUseClerk.mockReturnValue({ signOut: vi.fn() } as never)
+    setRows([])
     render(
       <DomainGuard>
         <div>protected</div>
       </DomainGuard>
     )
-    // While loading, render null. Test that protected child is NOT visible.
     expect(screen.queryByText('protected')).toBeNull()
   })
 
-  it('renders children when signed out (downstream gate handles it)', () => {
+  it('renders nothing while allowed-domains is loading', () => {
+    mockedUseUser.mockReturnValue({ isLoaded: true, isSignedIn: true, user: null } as never)
+    mockedUseClerk.mockReturnValue({ signOut: vi.fn() } as never)
+    setRows(undefined)
+    render(
+      <DomainGuard>
+        <div>protected</div>
+      </DomainGuard>
+    )
+    expect(screen.queryByText('protected')).toBeNull()
+  })
+
+  it('renders children when signed out', () => {
     mockedUseUser.mockReturnValue({ isLoaded: true, isSignedIn: false, user: null } as never)
     mockedUseClerk.mockReturnValue({ signOut: vi.fn() } as never)
+    setRows([])
     render(
       <DomainGuard>
         <div>protected</div>
@@ -1475,13 +1356,14 @@ describe('DomainGuard', () => {
     expect(screen.getByText('protected')).toBeInTheDocument()
   })
 
-  it('renders children when signed in with allowed-domain email', () => {
+  it('signed in + allowed (bootstrap fallback)', () => {
     mockedUseUser.mockReturnValue({
       isLoaded: true,
       isSignedIn: true,
       user: { primaryEmailAddress: { emailAddress: 'alice@flatout.solutions' } },
     } as never)
     mockedUseClerk.mockReturnValue({ signOut: vi.fn() } as never)
+    setRows([])
     render(
       <DomainGuard>
         <div>protected</div>
@@ -1490,55 +1372,72 @@ describe('DomainGuard', () => {
     expect(screen.getByText('protected')).toBeInTheDocument()
   })
 
-  it('renders blocked-error page when signed in with disallowed-domain email', () => {
+  it('signed in + matches a configured (non-bootstrap) domain', () => {
     mockedUseUser.mockReturnValue({
       isLoaded: true,
       isSignedIn: true,
-      user: { primaryEmailAddress: { emailAddress: 'bob@gmail.com' } },
+      user: { primaryEmailAddress: { emailAddress: 'bob@acme.com' } },
     } as never)
     mockedUseClerk.mockReturnValue({ signOut: vi.fn() } as never)
+    setRows([{ _id: '1', domain: 'acme.com', addedAtMs: 1 }])
+    render(
+      <DomainGuard>
+        <div>protected</div>
+      </DomainGuard>
+    )
+    expect(screen.getByText('protected')).toBeInTheDocument()
+  })
+
+  it('signed in + disallowed → blocked page', () => {
+    mockedUseUser.mockReturnValue({
+      isLoaded: true,
+      isSignedIn: true,
+      user: { primaryEmailAddress: { emailAddress: 'eve@gmail.com' } },
+    } as never)
+    mockedUseClerk.mockReturnValue({ signOut: vi.fn() } as never)
+    setRows([{ _id: '1', domain: 'flatout.solutions', addedAtMs: 1 }])
     render(
       <DomainGuard>
         <div>protected</div>
       </DomainGuard>
     )
     expect(screen.queryByText('protected')).toBeNull()
-    expect(screen.getByText(/flatout\.solutions/i)).toBeInTheDocument()
+    expect(screen.getByText(/cvault is restricted/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
   })
 
-  it('blocked page sign-out button calls Clerk signOut', async () => {
+  it('sign-out button calls Clerk signOut', async () => {
     const signOut = vi.fn()
     mockedUseUser.mockReturnValue({
       isLoaded: true,
       isSignedIn: true,
-      user: { primaryEmailAddress: { emailAddress: 'bob@gmail.com' } },
+      user: { primaryEmailAddress: { emailAddress: 'eve@gmail.com' } },
     } as never)
     mockedUseClerk.mockReturnValue({ signOut } as never)
+    setRows([])
     render(
       <DomainGuard>
         <div>protected</div>
       </DomainGuard>
     )
-    const btn = screen.getByRole('button', { name: /sign out/i })
-    await userEvent.click(btn)
+    await userEvent.click(screen.getByRole('button', { name: /sign out/i }))
     expect(signOut).toHaveBeenCalledTimes(1)
   })
 
-  it('blocked when signed in but user has no primary email', () => {
+  it('user with no primary email → blocked', () => {
     mockedUseUser.mockReturnValue({
       isLoaded: true,
       isSignedIn: true,
       user: { primaryEmailAddress: null },
     } as never)
     mockedUseClerk.mockReturnValue({ signOut: vi.fn() } as never)
+    setRows([])
     render(
       <DomainGuard>
         <div>protected</div>
       </DomainGuard>
     )
     expect(screen.queryByText('protected')).toBeNull()
-    expect(screen.getByText(/flatout\.solutions/i)).toBeInTheDocument()
   })
 })
 ```
@@ -1549,50 +1448,60 @@ describe('DomainGuard', () => {
 yarn test frontend/src/components/auth/__tests__/DomainGuard.test.tsx
 ```
 
-Expected: FAIL — DomainGuard doesn't exist.
+Expected: FAIL.
 
 - [ ] **Step 3: Implement DomainGuard**
 
 ```tsx
 // frontend/src/components/auth/DomainGuard.tsx
-/**
- * Client-side guard that enforces the @flatout.solutions email-domain rule
- * for UX purposes only. The backend already rejects every non-matching
- * identity at the Convex auth wrapper layer; without this guard, a wrong-
- * domain user would see the dashboard render and then break with errors
- * everywhere. Cleaner: show them an explicit "you can't use this app"
- * page and a sign-out button.
- *
- * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.6
- */
 import { useClerk, useUser } from '@clerk/tanstack-react-start'
+import { useQuery } from 'convex/react'
 import type { ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
 
-import { ALLOWED_EMAIL_DOMAIN, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from '../../../../convex/utils/domainGate'
+import { api } from '../../../../convex/_generated/api'
+import { BOOTSTRAP_ALLOWED_DOMAINS, isAllowedEmail } from '../../../../convex/utils/domainGate'
 
 export function DomainGuard({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, user } = useUser()
   const { signOut } = useClerk()
+  const allowedRows = useQuery(api.allowedDomains.queries.list, {})
 
-  if (!isLoaded) return null
+  if (!isLoaded || allowedRows === undefined) return null
+
+  const domains =
+    allowedRows.length > 0 ? allowedRows.map((r) => r.domain.toLowerCase()) : [...BOOTSTRAP_ALLOWED_DOMAINS]
+
   if (!isSignedIn) return <>{children}</>
 
   const email = user?.primaryEmailAddress?.emailAddress ?? null
-  if (isAllowedEmail(email)) return <>{children}</>
+  if (isAllowedEmail(email, domains)) return <>{children}</>
 
-  return <DomainBlocked onSignOut={() => signOut()} email={email} />
+  return <DomainBlocked onSignOut={() => void signOut()} email={email} domains={domains} />
 }
 
-function DomainBlocked({ onSignOut, email }: { onSignOut: () => void; email: string | null }) {
+function DomainBlocked({
+  onSignOut,
+  email,
+  domains,
+}: {
+  onSignOut: () => void
+  email: string | null
+  domains: string[]
+}) {
   return (
     <div className="bg-background text-foreground flex min-h-screen flex-col items-center justify-center gap-6 p-8">
       <div className="text-center">
         <h1 className="text-2xl font-semibold">cvault is restricted</h1>
         <p className="text-muted-foreground mt-2 max-w-md text-sm">
-          {DOMAIN_REJECTION_MESSAGE} Your current account
-          {email ? ` (${email})` : ''} is not on the <code>@{ALLOWED_EMAIL_DOMAIN}</code> domain.
+          Your account{email ? ` (${email})` : ''} is not on the cvault allowlist. Allowed domains:{' '}
+          {domains.map((d) => (
+            <code key={d} className="bg-muted mx-0.5 rounded px-1 py-0.5 text-xs">
+              @{d}
+            </code>
+          ))}
+          .
         </p>
       </div>
       <Button onClick={onSignOut} size="lg" variant="default">
@@ -1603,41 +1512,15 @@ function DomainBlocked({ onSignOut, email }: { onSignOut: () => void; email: str
 }
 ```
 
-- [ ] **Step 4: Run RTL tests**
+- [ ] **Step 4: Wire \_\_root.tsx**
 
-```
-yarn test frontend/src/components/auth/__tests__/DomainGuard.test.tsx
-```
-
-Expected: PASS, 6/6.
-
-- [ ] **Step 5: Wire DomainGuard into the root route**
-
-Edit `frontend/src/routes/__root.tsx`. Add to the imports:
+In `frontend/src/routes/__root.tsx`, add:
 
 ```ts
 import { DomainGuard } from '../components/auth/DomainGuard'
 ```
 
-In `RootComponent`, wrap `<Outlet />` inside the guard:
-
-Replace:
-
-```tsx
-function RootComponent() {
-  const { convexClient } = Route.useRouteContext()
-
-  return (
-    <ClerkProvider appearance={{ baseTheme: dark }}>
-      <ConvexProviderWithClerk client={convexClient} useAuth={useAuth}>
-        <Outlet />
-      </ConvexProviderWithClerk>
-    </ClerkProvider>
-  )
-}
-```
-
-With:
+Wrap `<Outlet />` inside the existing providers:
 
 ```tsx
 function RootComponent() {
@@ -1655,183 +1538,445 @@ function RootComponent() {
 }
 ```
 
-- [ ] **Step 6: Run frontend tests**
+- [ ] **Step 5: Run frontend tests**
 
 ```
 yarn test frontend/
 ```
 
-Expected: PASS overall — DomainGuard tests + existing component/route tests still green.
+Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/components/auth/DomainGuard.tsx frontend/src/components/auth/__tests__/DomainGuard.test.tsx frontend/src/routes/__root.tsx
-git commit -m "feat(frontend): DomainGuard for @flatout.solutions-only access"
+git add frontend/src/components/auth/ frontend/src/routes/__root.tsx
+git commit -m "feat(frontend): DomainGuard reads runtime allowedDomains list"
 ```
 
 ---
 
-## Task 7: End-to-end scenario test
+## Task 9: Settings UI page
+
+**Files:**
+
+- Create: `frontend/src/routes/dashboard/settings/domains.lazy.tsx`
+- Create: `frontend/src/__tests__/routes/settingsDomains.test.tsx`
+- Modify: `frontend/src/routes/dashboard/settings.lazy.tsx`
+
+- [ ] **Step 1: Read existing settings.lazy.tsx**
+
+Note its style (cards, typography). Match it.
+
+- [ ] **Step 2: Failing RTL tests**
+
+```tsx
+// frontend/src/__tests__/routes/settingsDomains.test.tsx
+import { useUser } from '@clerk/tanstack-react-start'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useMutation, useQuery } from 'convex/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { DomainsPage } from '../../routes/dashboard/settings/domains.lazy'
+
+vi.mock('@clerk/tanstack-react-start', () => ({ useUser: vi.fn() }))
+vi.mock('convex/react', () => ({ useQuery: vi.fn(), useMutation: vi.fn() }))
+
+const mockedUseUser = vi.mocked(useUser)
+const mockedUseQuery = vi.mocked(useQuery)
+const mockedUseMutation = vi.mocked(useMutation)
+
+let addMock = vi.fn()
+let removeMock = vi.fn()
+
+beforeEach(() => {
+  addMock = vi.fn(() => Promise.resolve('jd_new_id'))
+  removeMock = vi.fn(() => Promise.resolve(null))
+  mockedUseMutation.mockImplementation((ref) => {
+    const refStr = String(ref)
+    if (refStr.includes('add')) return addMock as never
+    if (refStr.includes('remove')) return removeMock as never
+    return vi.fn() as never
+  })
+  mockedUseUser.mockReturnValue({
+    user: { primaryEmailAddress: { emailAddress: 'alice@flatout.solutions' } },
+  } as never)
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
+
+describe('DomainsPage', () => {
+  it('renders the current allowlist', () => {
+    mockedUseQuery.mockReturnValue([
+      { _id: '1', domain: 'flatout.solutions', addedAtMs: 1 },
+      { _id: '2', domain: 'acme.com', addedAtMs: 2 },
+    ] as never)
+    render(<DomainsPage />)
+    expect(screen.getByText('flatout.solutions')).toBeInTheDocument()
+    expect(screen.getByText('acme.com')).toBeInTheDocument()
+  })
+
+  it('shows bootstrap-active hint when empty', () => {
+    mockedUseQuery.mockReturnValue([] as never)
+    render(<DomainsPage />)
+    expect(screen.getByText(/bootstrap fallback/i)).toBeInTheDocument()
+  })
+
+  it('add submits the typed domain', async () => {
+    mockedUseQuery.mockReturnValue([] as never)
+    render(<DomainsPage />)
+    const input = screen.getByLabelText(/add domain/i)
+    await userEvent.type(input, '  ACME.COM ')
+    await userEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    expect(addMock).toHaveBeenCalledWith({ domain: '  ACME.COM ' })
+  })
+
+  it('remove asks for confirmation then calls mutation', async () => {
+    mockedUseQuery.mockReturnValue([{ _id: '1', domain: 'acme.com', addedAtMs: 1 }] as never)
+    render(<DomainsPage />)
+    await userEvent.click(screen.getByRole('button', { name: /remove acme\.com/i }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.click(within(dialog).getByRole('button', { name: /confirm/i }))
+    expect(removeMock).toHaveBeenCalledWith({ id: '1' })
+  })
+
+  it('disables remove on the row matching caller domain', () => {
+    mockedUseQuery.mockReturnValue([
+      { _id: '1', domain: 'flatout.solutions', addedAtMs: 1 },
+      { _id: '2', domain: 'acme.com', addedAtMs: 2 },
+    ] as never)
+    render(<DomainsPage />)
+    const flatBtn = screen.getByRole('button', { name: /remove flatout\.solutions/i })
+    expect(flatBtn).toBeDisabled()
+    const acmeBtn = screen.getByRole('button', { name: /remove acme\.com/i })
+    expect(acmeBtn).not.toBeDisabled()
+  })
+
+  it('surfaces server validation error on add', async () => {
+    addMock = vi.fn(() => {
+      throw new Error('INVALID_DOMAIN: not a valid domain')
+    })
+    mockedUseMutation.mockImplementation((ref) => {
+      const refStr = String(ref)
+      if (refStr.includes('add')) return addMock as never
+      return vi.fn() as never
+    })
+    mockedUseQuery.mockReturnValue([] as never)
+    render(<DomainsPage />)
+    await userEvent.type(screen.getByLabelText(/add domain/i), 'not a domain')
+    await userEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    expect(await screen.findByText(/INVALID_DOMAIN/i)).toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 3: Run failing tests**
+
+```
+yarn test frontend/src/__tests__/routes/settingsDomains.test.tsx
+```
+
+Expected: FAIL.
+
+- [ ] **Step 4: Implement page**
+
+```tsx
+// frontend/src/routes/dashboard/settings/domains.lazy.tsx
+import { useUser } from '@clerk/tanstack-react-start'
+import { createLazyFileRoute } from '@tanstack/react-router'
+import { useMutation, useQuery } from 'convex/react'
+import { useState } from 'react'
+
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+
+import { api } from '../../../../../convex/_generated/api'
+import type { Id } from '../../../../../convex/_generated/dataModel'
+
+export const Route = createLazyFileRoute('/dashboard/settings/domains')({
+  component: DomainsPage,
+})
+
+export function DomainsPage() {
+  const { user } = useUser()
+  const callerEmail = user?.primaryEmailAddress?.emailAddress ?? ''
+  const callerDomain = callerEmail.split('@')[1]?.toLowerCase()
+
+  const rows = useQuery(api.allowedDomains.queries.list, {})
+  const add = useMutation(api.allowedDomains.mutations.add)
+  const remove = useMutation(api.allowedDomains.mutations.remove)
+
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [pendingRemoveId, setPendingRemoveId] = useState<Id<'allowedEmailDomains'> | null>(null)
+  const [pendingRemoveDomain, setPendingRemoveDomain] = useState<string>('')
+
+  async function onAdd(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    if (draft.trim().length === 0) return
+    try {
+      await add({ domain: draft })
+      setDraft('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function onConfirmRemove() {
+    if (!pendingRemoveId) return
+    setError(null)
+    try {
+      await remove({ id: pendingRemoveId })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPendingRemoveId(null)
+      setPendingRemoveDomain('')
+    }
+  }
+
+  if (rows === undefined) {
+    return <div className="text-muted-foreground p-6 text-sm">Loading…</div>
+  }
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Allowed email domains</h1>
+        <p className="text-muted-foreground text-sm">
+          Anyone with a primary email on these domains can sign in to cvault. Empty list falls back to{' '}
+          <code className="bg-muted rounded px-1">flatout.solutions</code>.
+        </p>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="border-border bg-card rounded-lg border p-4 text-sm">
+          No domains configured. Bootstrap fallback (<code className="bg-muted rounded px-1">flatout.solutions</code>)
+          is active. Add a domain to take control of the allowlist.
+        </div>
+      ) : (
+        <ul className="border-border bg-card divide-border divide-y rounded-lg border">
+          {rows.map((r) => {
+            const isOwn = callerDomain && r.domain.toLowerCase() === callerDomain
+            return (
+              <li key={r._id} className="flex items-center justify-between p-3">
+                <span className="font-mono text-sm">{r.domain}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={Boolean(isOwn)}
+                  onClick={() => {
+                    setPendingRemoveId(r._id)
+                    setPendingRemoveDomain(r.domain)
+                  }}
+                  aria-label={`Remove ${r.domain}`}
+                  title={isOwn ? 'You cannot remove your own domain' : undefined}
+                >
+                  Remove
+                </Button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      <form onSubmit={onAdd} className="flex flex-col gap-2">
+        <Label htmlFor="add-domain">Add domain</Label>
+        <div className="flex items-center gap-2">
+          <Input
+            id="add-domain"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="acme.com"
+            className="max-w-xs"
+          />
+          <Button type="submit" size="sm">
+            Add
+          </Button>
+        </div>
+      </form>
+
+      {error !== null && (
+        <div className="bg-destructive/10 text-destructive rounded-lg p-3 text-sm" role="alert">
+          {error}
+        </div>
+      )}
+
+      <Dialog open={pendingRemoveId !== null} onOpenChange={(o) => !o && setPendingRemoveId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove allowed domain?</DialogTitle>
+            <DialogDescription>
+              Removing <code className="bg-muted rounded px-1">{pendingRemoveDomain}</code> will revoke access for users
+              with this email domain on their next sign-in.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" size="sm">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button variant="default" size="sm" onClick={onConfirmRemove}>
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 5: Wire link from settings.lazy.tsx**
+
+Add a card / link inside `frontend/src/routes/dashboard/settings.lazy.tsx` matching the existing style. Minimal:
+
+```tsx
+import { Link } from '@tanstack/react-router'
+
+// ...
+;<Link to="/dashboard/settings/domains" className="text-primary hover:underline text-sm">
+  Manage allowed email domains →
+</Link>
+```
+
+Place it inside the existing settings layout where it fits stylistically.
+
+- [ ] **Step 6: Run tests**
+
+```
+yarn test frontend/
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add frontend/src/routes/dashboard/settings frontend/src/routes/dashboard/settings.lazy.tsx frontend/src/__tests__/routes/settingsDomains.test.tsx
+git commit -m "feat(frontend): /dashboard/settings/domains UI for managing allowlist"
+```
+
+---
+
+## Task 10: End-to-end scenario test
 
 **Files:**
 
 - Create: `convex/__scenarios__/flatoutDomainOnly.scenario.test.ts`
 
-- [ ] **Step 1: Write the scenario**
+- [ ] **Step 1: Write scenario**
 
 ```ts
 // convex/__scenarios__/flatoutDomainOnly.scenario.test.ts
-/**
- * Scenario — `@flatout.solutions`-only allowlist end-to-end.
- *
- * What this asserts:
- *  - Webhook for an allowed user inserts the users row.
- *  - Webhook for a disallowed user calls Clerk BAPI DELETE /v1/users/{id}
- *    and does NOT insert a users row.
- *  - Authenticated query rejects wrong-domain identities.
- *  - cli.mintAction.mintConvexJwt rejects wrong-domain payloads.
- *  - Case-insensitive: Alice@FlatOut.Solutions is allowed.
- *  - Missing email claim defaults to deny.
- *
- * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §7.2
- *
- * Hermetic: convex-test in-memory + __setClerkFetch stub + verifyToken vi.spyOn.
- * No real network.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { vault } from '../__tests__/helpers'
+import { TEST_IDENTITY, vault } from '../__tests__/helpers'
 import { api, internal } from '../_generated/api'
 import { __setClerkFetch } from '../cli/clerk'
 
-const ORIGINAL_CLERK_KEY = process.env.CLERK_SECRET_KEY
-const ORIGINAL_WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET
+const ORIGINAL_KEY = process.env.CLERK_SECRET_KEY
+const ORIGINAL_HOOK = process.env.CLERK_WEBHOOK_SECRET
 
 beforeEach(() => {
-  process.env.CLERK_SECRET_KEY = 'sk_test_dummy_for_scenario'
-  process.env.CLERK_WEBHOOK_SECRET = 'whsec_dummy_for_scenario'
+  process.env.CLERK_SECRET_KEY = 'sk_test_dummy'
+  process.env.CLERK_WEBHOOK_SECRET = 'whsec_dummy'
 })
 
 afterEach(() => {
-  if (ORIGINAL_CLERK_KEY === undefined) delete process.env.CLERK_SECRET_KEY
-  else process.env.CLERK_SECRET_KEY = ORIGINAL_CLERK_KEY
-  if (ORIGINAL_WEBHOOK_SECRET === undefined) delete process.env.CLERK_WEBHOOK_SECRET
-  else process.env.CLERK_WEBHOOK_SECRET = ORIGINAL_WEBHOOK_SECRET
+  if (ORIGINAL_KEY === undefined) delete process.env.CLERK_SECRET_KEY
+  else process.env.CLERK_SECRET_KEY = ORIGINAL_KEY
+  if (ORIGINAL_HOOK === undefined) delete process.env.CLERK_WEBHOOK_SECRET
+  else process.env.CLERK_WEBHOOK_SECRET = ORIGINAL_HOOK
   __setClerkFetch(undefined)
   vi.restoreAllMocks()
 })
 
 function userEvent(opts: { type: 'user.created' | 'user.updated'; userId: string; email: string }) {
-  const primaryEmailId = `idn_primary_${opts.userId}`
+  const idn = `idn_${opts.userId}`
   return {
     type: opts.type,
     data: {
       id: opts.userId,
-      first_name: 'Test',
-      last_name: 'User',
-      primary_email_address_id: primaryEmailId,
-      email_addresses: [{ id: primaryEmailId, email_address: opts.email }],
+      first_name: 'X',
+      last_name: 'Y',
+      primary_email_address_id: idn,
+      email_addresses: [{ id: idn, email_address: opts.email }],
       image_url: null,
     },
   }
 }
 
-async function mockValidateRequestReturning(event: object) {
+async function mockValidate(event: object) {
   const mod = await import('../utils/validateRequest')
   vi.spyOn(mod, 'validateRequest').mockResolvedValue(event as never)
 }
 
-async function mockVerifyTokenReturning(payload: object) {
+async function mockVerify(payload: object) {
   const mod = await import('@clerk/backend')
   vi.spyOn(mod, 'verifyToken').mockResolvedValue(payload as never)
 }
 
-describe('scenario — @flatout.solutions allowlist', () => {
-  it('full happy path: allowed webhook → users row → authenticated query succeeds → mint succeeds', async () => {
+describe('scenario — runtime allowlist', () => {
+  it('full happy path with bootstrap fallback', async () => {
     const t = vault()
     const event = userEvent({ type: 'user.created', userId: 'user_alice', email: 'alice@flatout.solutions' })
-    await mockValidateRequestReturning(event)
-
-    // Webhook should NOT call BAPI for an allowed user.
+    await mockValidate(event)
     const fetchStub = vi.fn(() => Promise.resolve(new Response('', { status: 200 })))
     __setClerkFetch(fetchStub as unknown as typeof fetch)
-
-    const webhookRes = await t.fetch('/webhooks/clerk', {
+    const wh = await t.fetch('/webhooks/clerk', {
       method: 'POST',
       body: JSON.stringify(event),
       headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
     })
-    expect(webhookRes.status).toBe(200)
+    expect(wh.status).toBe(200)
     expect(fetchStub).not.toHaveBeenCalled()
 
-    const userRow = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query('users')
-          .withIndex('byExternalId', (q) => q.eq('externalId', 'user_alice'))
-          .unique()
-    )
-    expect(userRow?.primaryEmail).toBe('alice@flatout.solutions')
-
-    // Authenticated query succeeds with allowed identity.
-    const aliceIdentity = {
-      subject: 'user_alice',
-      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_alice',
-      name: 'Alice',
-      email: 'alice@flatout.solutions',
-    } as const
-    const subs = await t.withIdentity(aliceIdentity).query(api.subscriptions.queries.listForUser, {})
+    const subs = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
     expect(Array.isArray(subs)).toBe(true)
 
-    // Mint succeeds.
-    await mockVerifyTokenReturning({ sid: 'sess_alice', sub: 'user_alice', email: 'alice@flatout.solutions' })
-    const mintFetch = vi.fn(() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ jwt: 'fake-convex-jwt' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      )
+    await mockVerify({ sid: 'sess', sub: 'user_alice', email: 'alice@flatout.solutions' })
+    __setClerkFetch(
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ jwt: 'jwt-ok' }), { status: 200 }))
+      ) as unknown as typeof fetch
     )
-    __setClerkFetch(mintFetch as unknown as typeof fetch)
-    const mintResult = await t.action(internal.cli.mintAction.mintConvexJwt, {
-      clerkSessionToken: 'fake',
-    })
-    expect(mintResult.jwt).toBe('fake-convex-jwt')
+    const m = await t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })
+    expect(m.jwt).toBe('jwt-ok')
   })
 
-  it('disallowed flow: webhook deletes via BAPI, query rejects, mint rejects', async () => {
+  it('disallowed flow: webhook BAPI-deletes, query rejects, mint rejects', async () => {
     const t = vault()
     const event = userEvent({ type: 'user.created', userId: 'user_bob', email: 'bob@gmail.com' })
-    await mockValidateRequestReturning(event)
-
-    // BAPI DELETE responds 200.
+    await mockValidate(event)
     const deleteFetch = vi.fn((url: string, init: RequestInit) => {
       expect(url).toBe('https://api.clerk.com/v1/users/user_bob')
       expect(init.method).toBe('DELETE')
       return Promise.resolve(new Response('', { status: 200 }))
     })
     __setClerkFetch(deleteFetch as unknown as typeof fetch)
-
-    const webhookRes = await t.fetch('/webhooks/clerk', {
+    const wh = await t.fetch('/webhooks/clerk', {
       method: 'POST',
       body: JSON.stringify(event),
       headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
     })
-    expect(webhookRes.status).toBe(200)
+    expect(wh.status).toBe(200)
     expect(deleteFetch).toHaveBeenCalledTimes(1)
-    const userRow = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query('users')
-          .withIndex('byExternalId', (q) => q.eq('externalId', 'user_bob'))
-          .unique()
-    )
-    expect(userRow).toBeNull()
 
-    // Authenticated query with the disallowed identity throws.
     const bobIdentity = {
       subject: 'user_bob',
       issuer: 'https://clear-redbird-6.clerk.accounts.dev',
@@ -1840,289 +1985,223 @@ describe('scenario — @flatout.solutions allowlist', () => {
       email: 'bob@gmail.com',
     } as const
     await expect(t.withIdentity(bobIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
-      /EMAIL_DOMAIN_NOT_ALLOWED|flatout\.solutions/i
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
     )
 
-    // Mint with disallowed payload throws.
-    await mockVerifyTokenReturning({ sid: 'sess_bob', sub: 'user_bob', email: 'bob@gmail.com' })
-    await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'fake' })).rejects.toThrow(
-      /EMAIL_DOMAIN_NOT_ALLOWED|flatout\.solutions/i
+    await mockVerify({ sid: 'sess', sub: 'user_bob', email: 'bob@gmail.com' })
+    await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })).rejects.toThrow(
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
     )
   })
 
-  it('case-insensitive boundary: Alice@FlatOut.Solutions is allowed end-to-end', async () => {
+  it('dynamic round-trip: add acme.com → bob signs in; remove → bob blocked', async () => {
     const t = vault()
-    const event = userEvent({ type: 'user.created', userId: 'user_caps', email: 'Alice@FlatOut.Solutions' })
-    await mockValidateRequestReturning(event)
-    const fetchStub = vi.fn(() => Promise.resolve(new Response('', { status: 200 })))
-    __setClerkFetch(fetchStub as unknown as typeof fetch)
-    const webhookRes = await t.fetch('/webhooks/clerk', {
-      method: 'POST',
-      body: JSON.stringify(event),
-      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    await t.run(async (ctx) => {
+      await ctx.db.insert('users', {
+        externalId: TEST_IDENTITY.subject,
+        name: TEST_IDENTITY.name,
+        primaryEmail: TEST_IDENTITY.email,
+        otherEmails: [],
+      })
+      await ctx.db.insert('allowedEmailDomains', { domain: 'flatout.solutions', addedAtMs: 1 })
     })
-    expect(webhookRes.status).toBe(200)
-    expect(fetchStub).not.toHaveBeenCalled()
-    const userRow = await t.run(
-      async (ctx) =>
-        await ctx.db
-          .query('users')
-          .withIndex('byExternalId', (q) => q.eq('externalId', 'user_caps'))
-          .unique()
+
+    const acmeId = await t
+      .withIdentity(TEST_IDENTITY)
+      .mutation(api.allowedDomains.mutations.add, { domain: 'acme.com' })
+
+    const bobIdentity = {
+      subject: 'user_bob',
+      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_bob',
+      name: 'Bob',
+      email: 'bob@acme.com',
+    } as const
+    await t.run(async (ctx) => {
+      await ctx.db.insert('users', {
+        externalId: bobIdentity.subject,
+        name: bobIdentity.name,
+        primaryEmail: bobIdentity.email,
+        otherEmails: [],
+      })
+    })
+    const bobsubs = await t.withIdentity(bobIdentity).query(api.subscriptions.queries.listForUser, {})
+    expect(Array.isArray(bobsubs)).toBe(true)
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.allowedDomains.mutations.remove, { id: acmeId })
+
+    await expect(t.withIdentity(bobIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
     )
-    expect(userRow).not.toBeNull()
   })
 
-  it('missing-email boundary: webhook treats missing primary email as disallowed', async () => {
+  it('self-removal blocked when row matches caller domain', async () => {
     const t = vault()
-    const event = {
-      type: 'user.created',
-      data: {
-        id: 'user_nomail',
-        first_name: 'No',
-        last_name: 'Email',
-        // No primary_email_address_id, no email_addresses match.
-        primary_email_address_id: null,
-        email_addresses: [],
-        image_url: null,
-      },
-    }
-    await mockValidateRequestReturning(event)
-    const deleteFetch = vi.fn(() => Promise.resolve(new Response('', { status: 200 })))
-    __setClerkFetch(deleteFetch as unknown as typeof fetch)
-
-    const webhookRes = await t.fetch('/webhooks/clerk', {
-      method: 'POST',
-      body: JSON.stringify(event),
-      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    let flatoutId: never
+    await t.run(async (ctx) => {
+      await ctx.db.insert('users', {
+        externalId: TEST_IDENTITY.subject,
+        name: TEST_IDENTITY.name,
+        primaryEmail: TEST_IDENTITY.email,
+        otherEmails: [],
+      })
+      flatoutId = (await ctx.db.insert('allowedEmailDomains', {
+        domain: 'flatout.solutions',
+        addedAtMs: 1,
+      })) as never
     })
-    expect(webhookRes.status).toBe(200)
-    // BAPI delete should have been called — missing email is disallowed.
-    expect(deleteFetch).toHaveBeenCalledTimes(1)
+    await expect(
+      t.withIdentity(TEST_IDENTITY).mutation(api.allowedDomains.mutations.remove, { id: flatoutId! })
+    ).rejects.toThrow(/CANNOT_REMOVE_OWN_DOMAIN/i)
   })
 })
 ```
 
-- [ ] **Step 2: Run scenario test**
+- [ ] **Step 2: Run scenario**
 
 ```
 yarn test:scenario convex/__scenarios__/flatoutDomainOnly.scenario.test.ts
 ```
 
-Expected: PASS, 4/4 scenarios.
-
-If the test runner reports the file isn't picked up, check `vitest.scenario.config.ts` for the scenario glob — should be `**/*.scenario.test.ts`. Existing scenarios in `convex/__scenarios__/` match this pattern.
+Expected: PASS, 4/4.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add convex/__scenarios__/flatoutDomainOnly.scenario.test.ts
-git commit -m "test(scenario): @flatout.solutions allowlist end-to-end coverage"
+git commit -m "test(scenario): runtime allowlist end-to-end (bootstrap + dynamic + self-removal)"
 ```
 
 ---
 
-## Task 8: Manual testing docs
+## Task 11: Manual testing docs
 
 **Files:**
 
 - Modify: `docs/MANUAL_TESTING.md`
 
-- [ ] **Step 1: Add new section**
-
-Open `docs/MANUAL_TESTING.md`. Append:
+- [ ] **Step 1: Append section**
 
 ```markdown
-## Email-domain allowlist (`@flatout.solutions` only)
+## Email-domain allowlist (UI-configurable)
 
-cvault restricts account creation and access to the `@flatout.solutions` domain. Five layers enforce this; layer 1 below is manual configuration, layers 2-5 are coded.
+cvault restricts account creation and access to email domains on the runtime allowlist (Convex `allowedEmailDomains` table). Five layers enforce:
 
-### Layer 1 — Clerk dashboard (one-time, per environment)
-
-1. Sign into the Clerk dashboard for the environment (dev: `clear-redbird-6.clerk.accounts.dev`; prod: production tenant).
-2. Navigate to **User & Authentication → Email, Phone, Username → Restrictions**.
-3. Set **Allowed email domains** to `flatout.solutions`. Save.
-4. Repeat the steps above on every Clerk environment (dev, staging, prod).
-
-This blocks signup at the source. Without it, layers 2-5 still enforce, but a non-FlatOut user briefly enters Clerk before being deleted by the webhook.
+1. **Clerk dashboard** — set "Allowed email domains" to match cvault's allowlist (manual; one-time per env).
+2. **Convex webhook** — deletes wrong-domain users via Clerk BAPI.
+3. **Convex auth wrappers** — every authenticated query/mutation/action consults the runtime list.
+4. **CLI JWT mint** — refuses mint for non-allowlisted emails (HTTP 403).
+5. **Frontend `DomainGuard`** — UX layer that signs out wrong-domain users.
 
 ### JWT template requirement
 
-The Convex auth wrappers read `identity.email` from the Clerk JWT. Ensure the `convex` JWT template on Clerk includes the `email` claim — Clerk's preset includes it by default, but if the template was customized, verify under **JWT templates → convex → Claims** that `email` (or `{{user.primary_email_address}}`) is present.
+The `convex` JWT template on Clerk must include the `email` claim. Verify under **JWT templates → convex → Claims** that `email` is present (it is by default).
+
+### Bootstrap fallback
+
+When `allowedEmailDomains` is empty, the system falls back to `['flatout.solutions']`. So a fresh deployment Just Works for FlatOut accounts.
+
+### Managing the allowlist (UI)
+
+1. Sign in with an allowlisted email.
+2. Visit `/dashboard/settings/domains`.
+3. Click "Add" with a domain (e.g. `acme.com`); the form normalizes (lowercase, strip `@`).
+4. Click "Remove" on any row except your own (the row containing your domain is disabled).
+5. Confirm in the dialog.
 
 ### Verification steps
 
-1. **FlatOut Solutions email signup (allowed):**
-   - Sign up with a `@flatout.solutions` email.
-   - Dashboard renders end-to-end. Sub list, audit, machines, settings all load.
-   - CLI: `cvault login` succeeds; `cvault list` returns the (empty) sub list.
+1. **Allowed signup:** sign up with `@flatout.solutions` (or any added domain) → dashboard renders.
+2. **Wrong-domain blocked at Clerk:** if Clerk dashboard "Allowed domains" set, signup is blocked there.
+3. **Wrong-domain (Clerk allowlist disabled):** signup succeeds at Clerk; cvault webhook deletes the user; reload → signed-out CTA.
+4. **CLI:** `cvault login` with FlatOut session → success. With non-allowlisted session → "Your email domain is not allowed to use cvault." printed; exit 1.
+5. **Settings UI:** Add `acme.com`. Sign up `bob@acme.com` → dashboard works. Remove `acme.com` → bob blocked on next page load.
+6. **Self-removal block:** as alice@flatout.solutions, try to remove `flatout.solutions` from the UI when it's the only row → server rejects with `CANNOT_REMOVE_OWN_DOMAIN`.
 
-2. **Wrong-domain email signup (blocked at Clerk):**
-   - Try to sign up with `@gmail.com`.
-   - Clerk shows the "domain not allowed" error inline before user is created. ✅
+### Migration of pre-existing wrong-domain users
 
-3. **Wrong-domain email if Clerk allowlist disabled (server-side fallback):**
-   - Temporarily disable allowed-domains in Clerk.
-   - Sign up with `@gmail.com`.
-   - Clerk creates the user; webhook fires.
-   - Dashboard: page reload → user is signed out (the webhook called BAPI delete). DomainGuard never gets a chance to render because the session is gone.
-   - If you raced the webhook (loaded the dashboard before delete completed): DomainGuard shows the "cvault is restricted" page with a sign-out button.
-   - CLI: `cvault login` fails at the mint step with `Error: Only @flatout.solutions accounts may use cvault.`
-   - **Re-enable Clerk allowed-domains** before continuing.
-
-4. **Email change after signup (rare):**
-   - Sign in as `alice@flatout.solutions`. Change primary email to `alice@gmail.com` via Clerk's hosted profile UI.
-   - Webhook fires `user.updated`; the BAPI delete revokes the user. Reload → signed out.
-
-### Migration of pre-existing non-FlatOut users
-
-If any non-FlatOut users existed before the gate landed, manually delete them in the Clerk dashboard under **Users → (filter to non-flatout.solutions) → Delete**.
+If any non-allowlisted users existed before the gate landed, manually delete them in the Clerk dashboard.
 ```
 
-- [ ] **Step 2: Verify markdown lint clean**
+- [ ] **Step 2: Format**
 
 ```
 yarn format:check docs/MANUAL_TESTING.md
 ```
 
-If it reports formatting issues:
-
-```
-yarn format:fix docs/MANUAL_TESTING.md
-```
+Run `yarn format:fix docs/MANUAL_TESTING.md` if needed.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add docs/MANUAL_TESTING.md
-git commit -m "docs(manual-testing): @flatout.solutions allowlist verification steps"
+git commit -m "docs(manual-testing): UI-configurable allowlist verification steps"
 ```
 
 ---
 
-## Task 9: Final verification + lint pass
+## Task 12: Final verification
 
-- [ ] **Step 1: Full test suite**
+- [ ] **Step 1: All test suites**
 
 ```
 yarn test
-```
-
-Expected: PASS.
-
-- [ ] **Step 2: Scenario suite**
-
-```
 yarn test:scenario
-```
-
-Expected: PASS, all scenarios green.
-
-- [ ] **Step 3: Integration suite (smoke)**
-
-```
 yarn test:integration
 ```
 
-Expected: PASS.
+PASS.
 
-- [ ] **Step 4: Type check**
+- [ ] **Step 2: Type checks**
 
 ```
 yarn tsc -p tsconfig.app.json --noEmit
 cd cli && bunx tsc --noEmit && cd ..
 ```
 
-Expected: 0 errors in both.
+0 errors.
 
-- [ ] **Step 5: Lint**
+- [ ] **Step 3: Lint + format**
 
 ```
 yarn lint:check
-```
-
-If lint reports issues, run `yarn lint:fix` and verify the fixes are sane (no behavior changes).
-
-- [ ] **Step 6: Format**
-
-```
 yarn format:check
 ```
 
-If failed: `yarn format:fix`. Review any diff.
+If anything fails, run `:fix` variants and review.
 
-- [ ] **Step 7: Build**
+- [ ] **Step 4: Build**
 
 ```
 yarn build
 ```
 
-Expected: success, no warnings about missing imports.
+Succeeds.
 
-- [ ] **Step 8: Commit lint/format fixes if any**
+- [ ] **Step 5: Commit any lint/format diffs**
 
 ```bash
 git status
-# If anything changed:
-git add <files>
-git commit -m "chore: lint + format pass on @flatout.solutions allowlist"
+git add <files-if-any>
+git commit -m "chore: lint + format pass on allowlist feature"
 ```
 
 ---
 
-## Self-review (skill-required)
+## Self-review checklist
 
-After tasks 1-9 complete, walk back through:
-
-**Spec coverage:**
-
-- §3.2 single source of truth — Task 1 ✓
-- §3.3 webhook — Task 2 ✓
-- §3.4 auth wrappers — Task 3 ✓
-- §3.5 mint — Task 4 ✓
-- §3.6 frontend guard — Task 6 ✓
-- §3.7 BAPI delete helper — Task 2 (folded in) ✓
-- §5.2 modified files — Tasks 1-8 covered ✓
-- §7.1 unit tests — Tasks 1-6 covered ✓
-- §7.2 scenario — Task 7 ✓
-- §7.3 manual docs — Task 8 ✓
-- §10 risks (JWT template) — Task 8 (docs) ✓
-
-**Type consistency:**
-
-- `DOMAIN_REJECTION_ERROR_CODE` is `'EMAIL_DOMAIN_NOT_ALLOWED'` everywhere it's referenced.
-- `isAllowedEmail` accepts `string | null | undefined` everywhere.
-- `ClerkEmailDomainNotAllowedError` constructor takes a single `serverMessage: string`.
-
-**Placeholder scan:**
-
-- Task 5 step 6 includes a "fill from existing tests" comment — that's a deliberate guidance to read the existing harness, not a placeholder. Acceptable.
-- All other code blocks are complete.
-
----
-
-## PR description draft (for Task 10 = open PR)
-
-```
-fix(auth): restrict cvault to @flatout.solutions accounts
-
-cvault is internal to FlatOut Solutions. This PR enforces that at every
-authentication boundary so non-FlatOut users cannot create accounts or
-access platform data.
-
-Five layers of defense:
-- Clerk dashboard (manual, documented in MANUAL_TESTING.md)
-- Convex webhook deletes wrong-domain users via Clerk BAPI
-- Convex authenticatedQuery/Mutation/Action wrappers reject wrong-domain identities
-- CLI JWT mint route refuses wrong-domain payloads (HTTP 403)
-- Frontend DomainGuard signs out wrong-domain users with a friendly error
-
-Single source of truth in `convex/utils/domainGate.ts`.
-
-No feature flag — restriction is permanent (per user direction).
-
-Tests: unit coverage for each layer + end-to-end scenario in
-`convex/__scenarios__/flatoutDomainOnly.scenario.test.ts`.
-
-Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md
-```
+- §3.2 single source of truth — Tasks 3, 5 ✓
+- §3.2.1 schema — Task 4 ✓
+- §3.2.2 bootstrap fallback — Tasks 4, 5 ✓
+- §3.2.3 public API — Task 4 ✓
+- §3.3 webhook — Tasks 2 (already), 6 (rewire) ✓
+- §3.4 auth wrappers — Task 5 ✓
+- §3.5 mint — Task 6 ✓
+- §3.6 frontend guard — Task 8 ✓
+- §3.6.1 settings UI — Task 9 ✓
+- §3.6.2 self-removal — Tasks 4, 9 ✓
+- §3.7 BAPI delete helper — already in `a1d4af0` ✓
+- React hook fix — already in `9026054` ✓
+- §7.1 unit tests — Tasks 3, 4, 5, 6, 8, 9 ✓
+- §7.2 scenario — Task 10 ✓
+- §7.3 manual docs — Task 11 ✓
