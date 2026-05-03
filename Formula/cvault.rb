@@ -23,9 +23,12 @@
 class Cvault < Formula
   desc "Centralized Claude Code credential vault — Mac Keychain sync via Convex"
   homepage "https://github.com/flatoutsolutions/cvault"
-  url "https://github.com/flatoutsolutions/cvault/releases/download/cli-v#{version}/cvault.bundle.js.tar.gz"
+  # `version` MUST precede `url` — Homebrew interpolates `#{version}` into
+  # `url` at parse time. Declaring `url` first makes `#{version}` resolve to
+  # nil, which produces a 404 download URL (`.../cli-v/cvault.bundle.js.tar.gz`).
   # Bumped automatically by .github/workflows/release-cli.yml.
   version "0.1.0"
+  url "https://github.com/flatoutsolutions/cvault/releases/download/cli-v#{version}/cvault.bundle.js.tar.gz"
   # CI substitutes the marker on each release. DO NOT hand-edit.
   sha256 "SHA256_BUNDLE_PLACEHOLDER"
   license "MIT"
