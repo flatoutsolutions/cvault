@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
       hookTimeout: 120_000,
       env,
       include: ['**/*.scenario.test.ts'],
+      exclude: ['**/node_modules/**', '**/dist/**', '.claude/**'],
     },
     resolve: {
       alias: {
