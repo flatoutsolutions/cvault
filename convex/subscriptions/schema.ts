@@ -14,6 +14,12 @@ export const subscriptionsSchema = defineTable({
   label: v.optional(v.string()),
   ciphertext: v.bytes(),
   nonce: v.bytes(),
+  /**
+   * Identifier of the master key version used to encrypt `ciphertext`.
+   * `undefined` means "v1" (legacy rows written before key versioning).
+   * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §3.
+   */
+  keyVersion: v.optional(v.string()),
   expiresAt: v.number(),
   refreshExpiresAt: v.optional(v.number()),
   subscriptionType: v.string(),
