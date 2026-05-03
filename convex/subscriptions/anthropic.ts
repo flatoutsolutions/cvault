@@ -15,7 +15,8 @@ export const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
 export const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 export const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 export const ANTHROPIC_BETA_HEADER = 'oauth-2025-04-20'
-export const USER_AGENT = 'cvault/0.1.0 (+https://github.com/saadings/cvault)'
+// TODO: read version from cli/package.json once tsconfig allows json imports
+export const USER_AGENT = 'cvault/0.1.5 (+https://github.com/flatoutsolutions/cvault)'
 
 // ---------------------------------------------------------------------------
 // Test seams. Production code never assigns these — only `*.test.ts` files do.
