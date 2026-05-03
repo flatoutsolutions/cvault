@@ -148,8 +148,7 @@ export const loginCommand = defineCommand({
     label: {
       type: 'string',
       description:
-        'Friendly machine name for the dashboard’s "Machines" view. ' +
-        'Defaults to the OS hostname when omitted.',
+        'Friendly machine name for the dashboard’s "Machines" view. ' + 'Defaults to the OS hostname when omitted.',
       required: false,
     },
   },
