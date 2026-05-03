@@ -38,7 +38,7 @@ cli/**/__pycache__/
 cli/.coverage
 cli/htmlcov/
 
-# IMPLEMENTATION_NOTES is intentionally tracked
+# docs/IMPLEMENTATION_NOTES.md is intentionally tracked
 
 # Editor directories and files
 .vscode/*
