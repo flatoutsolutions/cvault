@@ -100,6 +100,8 @@ function createRefreshFake(initial: FakeSubscription[]): {
   query: ReturnType<typeof vi.fn>
   action: ReturnType<typeof vi.fn>
   state: Map<string, FakeSubscription>
+  // Mirrors VaultClient.withMachineLabel — refresh's command code calls it.
+  withMachineLabel: <T extends Record<string, unknown>>(args: T) => T & { machineLabel?: string }
 } {
   const state = new Map(initial.map((s) => [s._id as string, s]))
 
@@ -177,7 +179,12 @@ function createRefreshFake(initial: FakeSubscription[]): {
     }
   })
 
-  return { query, action, state }
+  function withMachineLabel<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string } {
+    // Identity passthrough — these scenarios don't assert label propagation.
+    return args
+  }
+
+  return { query, action, state, withMachineLabel }
 }
 
 describe('Scenario — cvault refresh adopts local when local is newer', () => {

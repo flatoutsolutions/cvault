@@ -16,6 +16,7 @@ import { runStatus } from '../../src/commands/status'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { getActiveAccount } from '../../src/credentials'
 import { readCredentials } from '../../src/native/credentialStore'
+import { noopWithMachineLabel } from '../scenarios/_helpers'
 
 vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
@@ -95,7 +96,7 @@ describe('runStatus', () => {
       refreshLog: [{ outcome: 'success', triggeredBy: 'cron', at: 1_900_000_000_000 - 60_000 }],
       lastMachineActivity: { action: 'switch', clerkSessionId: 'sess_1', at: 1_900_000_000_000 - 5 * 60_000 },
     })
-    vi.mocked(makeVaultClient).mockResolvedValue(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValue({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -134,7 +135,7 @@ describe('runStatus', () => {
       refreshLog: [],
       lastMachineActivity: null,
     })
-    vi.mocked(makeVaultClient).mockResolvedValue(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValue({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -168,7 +169,7 @@ describe('runStatus', () => {
       refreshLog: [{ outcome: 'reloginRequired', triggeredBy: 'cron', at: NOW - 60_000 }],
       lastMachineActivity: { action: 'add', clerkSessionId: 'sess_old', at: NOW - 24 * 60 * 60_000 },
     })
-    vi.mocked(makeVaultClient).mockResolvedValue(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValue({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -210,7 +211,7 @@ describe('runStatus', () => {
         lastMachineActivity: null,
       })
     }
-    vi.mocked(makeVaultClient).mockResolvedValue(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValue({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -245,7 +246,7 @@ describe('runStatus', () => {
       refreshLog: [],
       lastMachineActivity: null,
     })
-    vi.mocked(makeVaultClient).mockResolvedValue(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValue({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -284,7 +285,7 @@ describe('runStatus', () => {
       refreshLog: [],
       lastMachineActivity: null,
     })
-    vi.mocked(makeVaultClient).mockResolvedValue(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValue({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {

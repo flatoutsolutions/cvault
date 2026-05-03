@@ -212,11 +212,14 @@ async function refreshOneSlotUnlocked(
   client: VaultClient,
   opts: { slot: number; force?: boolean; localState: string | undefined; localHash: string | undefined }
 ): Promise<RefreshSubResult> {
-  const result = (await client.action(api.subscriptions.actions.refreshSub, {
-    slot: opts.slot,
-    ...(opts.localState !== undefined ? { localState: opts.localState } : {}),
-    ...(opts.force === true ? { force: true } : {}),
-  })) as RefreshSubResult
+  const result = (await client.action(
+    api.subscriptions.actions.refreshSub,
+    client.withMachineLabel({
+      slot: opts.slot,
+      ...(opts.localState !== undefined ? { localState: opts.localState } : {}),
+      ...(opts.force === true ? { force: true } : {}),
+    })
+  )) as RefreshSubResult
 
   // Decide whether to write the returned plaintext to the Keychain.
   // Two correct cases NOT to write:

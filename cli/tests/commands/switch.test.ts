@@ -26,6 +26,7 @@ import { runSwitch } from '../../src/commands/switch'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { importEnvelope, switchTo } from '../../src/credentials'
 import { ensureVaultDir, lastHashPath } from '../../src/paths'
+import { noopWithMachineLabel } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
   importEnvelope: vi.fn(),
@@ -71,7 +72,7 @@ function setupClientReturning(blob: string, contentHash: string): FakeClient {
       contentHash,
     }),
   }
-  vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+  vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
   return client
 }
 
@@ -147,7 +148,7 @@ describe('runSwitch — offline behavior (fail loud — M6)', () => {
     const client = {
       action: vi.fn().mockRejectedValueOnce(new Error('fetch failed: connection refused')),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await expect(runSwitch({ slotOrEmail: '2' })).rejects.toThrow(/Convex.*unreachable|cannot rotate/i)
     expect(importEnvelope).not.toHaveBeenCalled()
@@ -157,7 +158,7 @@ describe('runSwitch — offline behavior (fail loud — M6)', () => {
     const client = {
       action: vi.fn().mockRejectedValueOnce(new Error('500 InternalError: VAULT_AES_KEY missing')),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await expect(runSwitch({ slotOrEmail: '2' })).rejects.toThrow(/VAULT_AES_KEY/)
     expect(switchTo).not.toHaveBeenCalled()

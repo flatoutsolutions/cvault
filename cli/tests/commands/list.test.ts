@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { runList } from '../../src/commands/list'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { getActiveAccount } from '../../src/credentials'
+import { noopWithMachineLabel } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
   getActiveAccount: vi.fn(),
@@ -65,7 +66,7 @@ describe('runList', () => {
     const client = {
       query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'a@b.com' }), meta({ slot: 2, email: 'c@d.com' })]),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'c@d.com' })
 
     const captured: string[] = []
@@ -90,7 +91,7 @@ describe('runList', () => {
 
   it('renders empty-state when user has no subs', async () => {
     const client = { query: vi.fn().mockResolvedValueOnce([]) }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
@@ -103,7 +104,7 @@ describe('runList', () => {
     const client = {
       query: vi.fn().mockResolvedValueOnce([meta({ usage5h: undefined, usage7d: undefined })]),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'a@b.com' })
 
     const captured: string[] = []
@@ -119,7 +120,7 @@ describe('runList', () => {
     const client = {
       query: vi.fn().mockResolvedValueOnce([meta()]),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
     vi.mocked(getActiveAccount).mockImplementationOnce(() => {
       throw new Error('keychain locked')
     })
@@ -138,7 +139,7 @@ describe('runList', () => {
     const client = {
       query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'a@b.com' })]),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
 
     const captured: string[] = []
@@ -165,7 +166,7 @@ describe('runList', () => {
           meta({ slot: 2, email: 'dead@example.com', refreshExpiresAt: Date.now() - 60_000 }),
         ]),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
 
     const captured: string[] = []
@@ -185,7 +186,7 @@ describe('runList', () => {
     const client = {
       query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'healthy@example.com' })]),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
 
     const captured: string[] = []
@@ -205,7 +206,7 @@ describe('runList', () => {
     const client = {
       query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'Stefan@example.com' })]),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'stefan@example.com' })
 
     const captured: string[] = []

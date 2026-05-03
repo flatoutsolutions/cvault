@@ -24,6 +24,7 @@ import { makeVaultClient } from '../../src/convex/vaultClient'
 import { readCredentials } from '../../src/native/credentialStore'
 import { applyEnvelopeUnlocked } from '../../src/native/envelope'
 import { withFileLock } from '../../src/native/lock'
+import { noopWithMachineLabel } from '../scenarios/_helpers'
 
 vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
@@ -108,7 +109,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runRefresh({ slot: 1 })
 
@@ -129,7 +130,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runRefresh({ slot: 1 })
 
@@ -152,7 +153,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runRefresh({ slot: 1 })
 
@@ -179,7 +180,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runRefresh({ slot: 1 })
 
@@ -200,7 +201,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runRefresh({ slot: 1 })
 
@@ -221,7 +222,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runRefresh({ slot: 1 })
 
@@ -242,7 +243,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runRefresh({ slot: 1, force: true })
 
@@ -264,7 +265,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -282,7 +283,7 @@ describe('runRefresh', () => {
       query: vi.fn().mockResolvedValue([{ _id: 'sub_x', slot: 1, email: 'x@example.com' }]),
       action: vi.fn().mockRejectedValue(new Error('[Server Error] RELOGIN_REQUIRED: refresh token revoked')),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await expect(runRefresh({ slot: 1 })).rejects.toThrow(/relogin|cvault add/i)
   })
@@ -293,7 +294,7 @@ describe('runRefresh', () => {
       query: vi.fn().mockResolvedValue([{ _id: 'sub_x', slot: 1, email: 'x@example.com' }]),
       action: vi.fn().mockRejectedValue(new Error('500 boom')),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await expect(runRefresh({ slot: 1 })).rejects.toThrow(/500/)
     expect(applyEnvelopeUnlocked).not.toHaveBeenCalled()
@@ -317,7 +318,7 @@ describe('runRefresh', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await expect(runRefresh({ slot: 1 })).rejects.toThrow(/oauthAccount|cvault add/i)
     expect(applyEnvelopeUnlocked).not.toHaveBeenCalled()
@@ -373,7 +374,7 @@ describe('runRefresh --all', () => {
         })
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runRefresh({ all: true })
 
@@ -404,7 +405,7 @@ describe('runRefresh --all', () => {
         })
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -446,7 +447,7 @@ describe('runRefresh --all', () => {
         })
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const captured: string[] = []
     vi.spyOn(console, 'log').mockImplementation((s: string) => {
@@ -473,7 +474,7 @@ describe('runRefresh --all', () => {
       query: vi.fn().mockResolvedValue(subs),
       action: vi.fn().mockRejectedValue(new Error('Network unreachable')),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     process.exitCode = 0
     await runRefresh({ all: true })
@@ -496,7 +497,7 @@ describe('runRefresh --all', () => {
         lastRefreshedAt: Date.now(),
       }),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     process.exitCode = 0
     await runRefresh({ all: true })

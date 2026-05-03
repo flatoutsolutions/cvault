@@ -54,6 +54,39 @@ export class VaultClient {
     return client
   }
 
+  /**
+   * The user-visible machine label captured at `cvault login` time. Read
+   * from the persisted session. May be `undefined` for legacy sessions
+   * created before the label was tracked.
+   */
+  get machineLabel(): string | undefined {
+    return this.session.machineLabel
+  }
+
+  /**
+   * Merge the session's `machineLabel` into the supplied args object. Used
+   * by every command call site whose Convex action writes to
+   * `machineActivity`, so the dashboard's "Machines" view can render a
+   * human-readable label per Clerk session instead of the opaque
+   * `clerkSessionId`.
+   *
+   * Centralizing this keeps the spread + optional-undefined dance in one
+   * place — adding a new action call site only has to call
+   * `client.withMachineLabel({...})` rather than re-implementing the
+   * conditional spread (and risking forgetting it, which was the bug
+   * this PR fixes).
+   *
+   * The type-parameter T is unconstrained so the inferred shape includes
+   * every key the caller passed in. The return type intersects an
+   * optional `machineLabel` to keep the result structurally compatible
+   * with any Convex validator that includes
+   * `machineLabel: v.optional(v.string())`.
+   */
+  withMachineLabel<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string } {
+    if (this.session.machineLabel === undefined) return args
+    return { ...args, machineLabel: this.session.machineLabel }
+  }
+
   async query<Q extends FunctionReference<'query'>>(fn: Q, ...args: OptionalRestArgs<Q>): Promise<Q['_returnType']> {
     return this.callWithRetry(() => this.http.query(fn, ...args))
   }

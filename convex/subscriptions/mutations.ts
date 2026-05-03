@@ -40,6 +40,11 @@ type ActivityAction = 'switch' | 'add' | 'pull' | 'remove' | 'refresh' | 'rename
  * arrive over the WebSocket — and (b) staying inside the mutation lets
  * the activity-row insert participate in the same transaction as the
  * subscription mutation, so a failure post-insert atomically rolls back.
+ *
+ * `machineLabel` is the human-readable identifier the dashboard shows
+ * for each Clerk session. Mutations called from the CLI forward
+ * `session.machineLabel` here; mutations called from the dashboard pass
+ * `undefined` (browser callers don't have a hostname).
  */
 async function recordActivity(
   ctx: MutationCtx,
@@ -47,6 +52,7 @@ async function recordActivity(
     userId: Id<'users'>
     action: ActivityAction
     subscriptionId?: Id<'subscriptions'>
+    machineLabel?: string
   }
 ): Promise<void> {
   await ctx.db.insert('machineActivity', {
@@ -55,6 +61,7 @@ async function recordActivity(
     action: args.action,
     subscriptionId: args.subscriptionId,
     at: Date.now(),
+    machineLabel: args.machineLabel,
     // No ipHash here — see helper docstring.
   })
 }
@@ -258,9 +265,18 @@ export const upsertEncrypted = internalMutation({
 })
 
 export const softRemove = authenticatedMutation({
-  args: { email: v.string() },
+  args: {
+    email: v.string(),
+    /**
+     * Human-readable identifier for the originating CLI machine. The
+     * dashboard's "Machines" view renders this as the user-visible
+     * label per Clerk session. Optional — see
+     * `machineActivity/schema.ts:machineLabel` for the contract.
+     */
+    machineLabel: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { email }) => {
+  handler: async (ctx, { email, machineLabel }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
     // SECURITY+PERF: scope to (userId, email). Pre-fix used `.filter()` on
@@ -281,15 +297,25 @@ export const softRemove = authenticatedMutation({
     }
 
     await ctx.db.patch('subscriptions', sub._id, { removedAt: Date.now() })
-    await recordActivity(ctx, { userId: user._id, action: 'remove', subscriptionId: sub._id })
+    await recordActivity(ctx, {
+      userId: user._id,
+      action: 'remove',
+      subscriptionId: sub._id,
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
+    })
     return null
   },
 })
 
 export const rename = authenticatedMutation({
-  args: { email: v.string(), label: v.string() },
+  args: {
+    email: v.string(),
+    label: v.string(),
+    /** See softRemove docstring. */
+    machineLabel: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { email, label }) => {
+  handler: async (ctx, { email, label, machineLabel }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
     // Same scoping + canonicalization rule as `softRemove` above.
@@ -303,7 +329,12 @@ export const rename = authenticatedMutation({
     }
 
     await ctx.db.patch('subscriptions', sub._id, { label })
-    await recordActivity(ctx, { userId: user._id, action: 'rename', subscriptionId: sub._id })
+    await recordActivity(ctx, {
+      userId: user._id,
+      action: 'rename',
+      subscriptionId: sub._id,
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
+    })
     return null
   },
 })

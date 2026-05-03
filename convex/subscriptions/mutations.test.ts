@@ -337,6 +337,55 @@ describe('subscriptions.mutations.softRemove', () => {
     expect(removeRow).toBeDefined()
     expect(removeRow?.subscriptionId).toEqual(inserted.subId)
   })
+
+  /**
+   * Machine label propagation. The CLI's `cvault remove` forwards
+   * `session.machineLabel` so the dashboard's "Machines" view can render
+   * a human-readable identifier for the originating machine. When the
+   * caller passes the optional arg, the audit row must persist it.
+   */
+  it('persists machineLabel on the machineActivity row when supplied', async () => {
+    const t = vault()
+    await seedUser(t)
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'label-remove@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'label-remove@example.com',
+      machineLabel: 'office-laptop',
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const removeRow = rows.find((r) => r.action === 'remove')
+    expect(removeRow?.machineLabel).toBe('office-laptop')
+  })
+
+  it('omits machineLabel from the machineActivity row when not supplied (legacy compat)', async () => {
+    const t = vault()
+    await seedUser(t)
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'legacy-remove@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'legacy-remove@example.com',
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const removeRow = rows.find((r) => r.action === 'remove')
+    expect(removeRow?.machineLabel).toBeUndefined()
+  })
 })
 
 describe('subscriptions.mutations.rename', () => {
@@ -412,6 +461,29 @@ describe('subscriptions.mutations.rename', () => {
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
     expect(after?.label).toBe('Renamed')
+  })
+
+  it('persists machineLabel on the machineActivity row when supplied', async () => {
+    const t = vault()
+    await seedUser(t)
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'label-rename@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.rename, {
+      email: 'label-rename@example.com',
+      label: 'Personal Max',
+      machineLabel: 'kitchen-mac',
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const renameRow = rows.find((r) => r.action === 'rename')
+    expect(renameRow?.machineLabel).toBe('kitchen-mac')
   })
 })
 
