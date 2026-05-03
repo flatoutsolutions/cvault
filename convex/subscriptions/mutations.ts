@@ -530,7 +530,7 @@ export const adoptLocalState = internalMutation({
       ciphertext,
       nonce,
       expiresAt: localExpiresAt,
-      lastRefreshedAt: Date.now(),
+      lastRefreshedAt: now,
       // Adopting local clears any stale reloginRequired marker from a
       // prior run of this very sub on a different machine — the local
       // state being newer means the user successfully refreshed somewhere.

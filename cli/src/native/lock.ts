@@ -163,13 +163,18 @@ export async function withFileLock<T>(
   } finally {
     try {
       await release()
-    } catch {
+    } catch (err) {
       // The release path is best-effort — proper-lockfile's release
       // can throw `ECOMPROMISED` if the lockfile was reaped by another
       // contender as stale. That's fine: by this point the body has
       // already completed; the contender had no way to actually
       // interleave with our writes (the writes are themselves atomic
       // temp+rename on claude.json + atomic Keychain writes).
+      // Log at warn level so real corruption signals stay diagnosable.
+      const code = err instanceof Error && 'code' in err ? String(err.code) : 'unknown'
+      console.warn(
+        `[cvault] proper-lockfile release error (${code}): ${err instanceof Error ? err.message : String(err)}`
+      )
     }
   }
 }

@@ -399,7 +399,7 @@ export const refreshSub = authenticatedAction({
     //     value) AND lastRefreshedAt did NOT advance. Surface REFRESH_FAILED
     //     so the CLI prints a clear error rather than misleading
     //     "Already in sync".
-    if (didRefreshAnthropic && fresh.lastRefreshedAt === lastRefreshedAtBefore && fresh.expiresAt === post.expiresAt) {
+    if (didRefreshAnthropic && fresh.lastRefreshedAt === lastRefreshedAtBefore && fresh.expiresAt <= post.expiresAt) {
       throw new ConvexError({
         code: 'REFRESH_FAILED',
         message:
