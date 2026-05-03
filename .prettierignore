@@ -3,10 +3,6 @@ pnpm-lock.yaml
 yarn.lock
 routeTree.gen.ts
 
-# Convex codegen output — regenerated whenever the schema changes; not
-# meaningful to enforce a code style on it.
-convex/_generated/
-
 # CLI generated bundles + maps.
 cli/dist/
 cli/index.js.map

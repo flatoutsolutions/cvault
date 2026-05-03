@@ -15,9 +15,9 @@ dist-ssr
 # Convex config (env vars + DB settings) — contains credentials!
 convex-config.json
 
-# Convex generated artifacts are committed so CI can typecheck/build/test
-# without a Convex deploy key. Refresh with `npx convex codegen` or
-# `npx convex dev` after schema or function-signature changes.
+# Convex generated artifacts (regenerated locally + on CI via convex
+# codegen — requires CONVEX_DEPLOYMENT)
+convex/_generated/
 
 # .env files
 .env.local
