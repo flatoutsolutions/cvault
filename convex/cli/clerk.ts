@@ -249,3 +249,45 @@ export async function createSessionTokenFromTemplate(
   }
   return { ok: true, jwt: json.jwt }
 }
+
+interface DeleteUserSuccess {
+  ok: true
+}
+
+interface DeleteUserError {
+  ok: false
+  status: number
+  body: string
+}
+
+export type DeleteUserResult = DeleteUserSuccess | DeleteUserError
+
+/**
+ * Delete a Clerk user by id. Used by the Convex webhook to nuke users whose
+ * primary email is not on the allowed domain.
+ *
+ * BAPI: DELETE https://api.clerk.com/v1/users/{user_id}
+ *
+ * Treats 404 as success — the user is gone, which is the intended end state.
+ */
+export async function deleteClerkUser(userId: string): Promise<DeleteUserResult> {
+  const secret = loadSecretKey()
+  const fn = activeFetch()
+
+  const resp = await fn(`${CLERK_API_BASE}/v1/users/${userId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${secret}`,
+    },
+  })
+
+  if (resp.status === 404) {
+    // Already deleted — that's the goal.
+    return { ok: true }
+  }
+  if (!resp.ok) {
+    const body = await resp.text()
+    return { ok: false, status: resp.status, body }
+  }
+  return { ok: true }
+}
