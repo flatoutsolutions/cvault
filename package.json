@@ -16,7 +16,7 @@
     "format:fix": "prettier --write .",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:scenario": "vitest run --passWithNoTests --config vitest.scenario.config.ts",
+    "test:scenario": "bunx --bun vitest run --passWithNoTests --config vitest.scenario.config.ts",
     "test:integration": "vitest run --passWithNoTests --config vitest.integration.config.ts",
     "prepare": "husky",
     "shadcn:add": "npx shadcn@latest add",

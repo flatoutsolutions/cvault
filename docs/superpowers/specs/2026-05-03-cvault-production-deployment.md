@@ -48,14 +48,14 @@ Bun's `--compile` output is structurally invalid for codesign on macOS (Bun 1.3.
 
 Items 8–13 from the gap list:
 
-| #   | File                                                 | Fix                                                                                                                                             |
-| --- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 8   | `cli/tests/clean.test.ts`                            | Replace `require()`-style imports with ESM imports                                                                                              |
-| 9   | `frontend/src/routes/*`                              | Add lazy-loaded routes via TanStack Start `lazyRouteComponent`                                                                                  |
-| 10  | `convex/subscriptions/queries.ts` `findExpiringSubs` | Add Convex index on `expiresAt`                                                                                                                 |
-| 11  | `docs/research/perf-findings.md`                     | Refresh stale numbers, mark superseded entries                                                                                                  |
-| 12  | `cli/tests/scenarios/*`                              | NEW scenario tests for: cross-machine race during rotation; concurrent same-machine `cvault switch` lock contention; mixed-case email roundtrip |
-| 13  | `docs/architecture/observability.md` (NEW)           | Monitoring/alerting proposal — Convex logs + Cloudflare Web Analytics for v1; reserve Sentry for v2 if user signal indicates need               |
+| #   | File                                                       | Fix                                                                                                                                             |
+| --- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 8   | `cli/tests/clean.test.ts`                                  | Replace `require()`-style imports with ESM imports                                                                                              |
+| 9   | `frontend/src/routes/*`                                    | Add lazy-loaded routes via TanStack Start `lazyRouteComponent`                                                                                  |
+| 10  | `convex/subscriptions/internalReads.ts` `findExpiringSubs` | Tighten existing `byExpiry` index range (add lower bound for `recoverable lookback`); no schema migration                                       |
+| 11  | `docs/research/perf-findings.md`                           | Refresh stale numbers, mark superseded entries                                                                                                  |
+| 12  | `cli/tests/scenarios/*`                                    | NEW scenario tests for: cross-machine race during rotation; concurrent same-machine `cvault switch` lock contention; mixed-case email roundtrip |
+| 13  | `docs/architecture/observability.md` (NEW)                 | Monitoring/alerting proposal — Convex logs + Cloudflare Web Analytics for v1; reserve Sentry for v2 if user signal indicates need               |
 
 ### Track C — Production credential setup (user does)
 

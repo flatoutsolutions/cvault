@@ -59,7 +59,7 @@ manages alongside everything else.
 - End users: `brew install flatoutsolutions/cvault/cvault` (after the
   prod tap exists). The first install also pulls `bun` from Homebrew.
 - Dev loop: `cd cli && bun run build:bundle` produces `dist/cvault.bundle.js`
-  with empty `BUILD_DEFAULTS` (URLs are baked from CVAULT*\*/VITE*_/CLERK\__
+  with empty `BUILD_DEFAULTS` (URLs are baked from CVAULT*\*/VITE*\_/CLERK\_\_
   env at build time only — see `scripts/build-bundle.ts`). Use
   `bun dist/cvault.bundle.js <subcommand>` to exercise the bundle.
 - CI: `release-cli.yml` is now ~120 lines shorter — no matrix, one upload

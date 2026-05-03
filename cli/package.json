@@ -25,9 +25,6 @@
   "engines": {
     "bun": ">=1.2.0"
   },
-  "bin": {
-    "cvault": "./dist/cli.js"
-  },
   "files": [
     "dist",
     "README.md"
@@ -35,7 +32,6 @@
   "scripts": {
     "dev": "bun run src/index.ts --",
     "typecheck": "tsc --noEmit",
-    "build:bunx": "bun build ./src/index.ts --target=bun --outfile dist/cli.js --minify",
     "build:bundle": "bun run scripts/build-bundle.ts",
     "build:reset-info": "bun -e \"import('./scripts/build').then(m => m.writeBuildInfo('src/buildInfo.ts', m.EMPTY_BUILD_DEFAULTS))\"",
     "test": "bunx --bun vitest run --passWithNoTests",
