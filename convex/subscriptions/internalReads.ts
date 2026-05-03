@@ -68,9 +68,13 @@ export const getSubscriptionForActor = internalQuery({
       return sub ?? null
     }
 
+    // Email branch: lowercase the lookup key to match the storage
+    // canonicalization in `mutations.ts:upsertSub`. Without this,
+    // `cvault switch Stefan@x.com` would NOT_FOUND when the row was
+    // stored under `stefan@x.com`.
     const sub = await ctx.db
       .query('subscriptions')
-      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', slotOrEmail))
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', slotOrEmail.toLowerCase()))
       .unique()
     return sub && sub.removedAt === undefined ? sub : null
   },
@@ -94,15 +98,32 @@ export const getSubscriptionByIdForActor = internalQuery({
   },
 })
 
+/**
+ * How far back the cron looks for already-expired tokens whose refresh
+ * tokens may still be valid. Anthropic refresh tokens are valid ~30 days
+ * (per docs/research/anthropic-oauth-refresh.md); a row whose access
+ * token expired before this lookback floor is unrecoverable, and
+ * including it in the scan only burns index bandwidth.
+ *
+ * The motivating perf bug (Track B item 10): the prior implementation
+ * scanned `byExpiry` from the lowest-historical `expiresAt` up to the
+ * cutoff with NO lower bound, which dragged in long-tombstoned rows.
+ * The `removedAt === undefined` JS filter still excluded them from the
+ * result, but the read amplification was unbounded as the table grew.
+ */
+const RECOVERABLE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000
+
 /** Internal query used by the cron to find subs whose access token expires soon. */
 export const findExpiringSubs = internalQuery({
   args: { withinMs: v.number() },
   returns: v.array(v.object({ subId: v.id('subscriptions') })),
   handler: async (ctx, { withinMs }) => {
-    const cutoff = Date.now() + withinMs
+    const now = Date.now()
+    const cutoff = now + withinMs
+    const floor = now - RECOVERABLE_LOOKBACK_MS
     const rows = await ctx.db
       .query('subscriptions')
-      .withIndex('byExpiry', (q) => q.lt('expiresAt', cutoff))
+      .withIndex('byExpiry', (q) => q.gt('expiresAt', floor).lt('expiresAt', cutoff))
       .collect()
     // Filter out tombstoned subs in JS (low cardinality of soft-deletes per spec §4).
     return rows.filter((r) => r.removedAt === undefined).map((r) => ({ subId: r._id }))

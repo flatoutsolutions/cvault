@@ -9,8 +9,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// eslint-disable-next-line import/first
-import { MachinesPage } from '../../routes/dashboard/machines'
+import { MachinesPage } from '../../routes/dashboard/machines.lazy'
 
 let sessionsResult: unknown = undefined
 const revokeMock = vi.fn().mockResolvedValue({ revoked: true })
@@ -22,6 +21,7 @@ vi.mock('convex/react', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
+  createLazyFileRoute: () => () => ({}),
 }))
 
 describe('/dashboard/machines', () => {

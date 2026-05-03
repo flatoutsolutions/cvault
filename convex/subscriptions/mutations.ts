@@ -113,6 +113,24 @@ interface UpsertSubResult {
 }
 
 /**
+ * Canonicalize an email for storage and lookup. Anthropic emails are
+ * case-insensitive at SMTP and Clerk normalizes inconsistently — without
+ * this, `cvault add Stefan@x.com` followed by `cvault remove
+ * stefan@x.com` would NOT_FOUND because the `byUserAndEmail` index does
+ * an exact-string comparison.
+ *
+ * Lowercasing is applied at every WRITE (so stored emails are always
+ * canonical) and at every email-keyed LOOKUP (so old mixed-case input
+ * still matches in-flight requests). Since this branch
+ * (`feat/production-deployment`) hasn't shipped, no migration is
+ * required — but the lookup-side normalization is the safety net if
+ * any mixed-case rows snuck in via earlier dev installs.
+ */
+function canonicalEmail(email: string): string {
+  return email.toLowerCase()
+}
+
+/**
  * Shared upsert logic used by both `upsert` (caller already has ciphertext)
  * and `upsertEncrypted` (called by the `upsertFromPlaintext` action after
  * encrypting plaintext server-side).
@@ -123,12 +141,17 @@ interface UpsertSubResult {
  *  - no row -> allocate next free slot via `nextFreeSlot()` and insert
  */
 async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<UpsertSubResult> {
+  // Canonicalize the incoming email once. Stored emails are lowercase
+  // and lookup keys are lowercase so dedupe matches regardless of how
+  // Anthropic / Clerk happened to capitalize the same address.
+  const email = canonicalEmail(input.email)
+
   // Dedupe by (userId, email). The `byUserAndEmail` index makes this
   // an O(matches) read instead of an O(allSubsGlobal) scan; matches per
   // (user, email) is at most 1 by spec.
   const existing = await ctx.db
     .query('subscriptions')
-    .withIndex('byUserAndEmail', (q) => q.eq('userId', input.userId).eq('email', input.email))
+    .withIndex('byUserAndEmail', (q) => q.eq('userId', input.userId).eq('email', email))
     .unique()
 
   const now = Date.now()
@@ -175,7 +198,7 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
 
   const subId = await ctx.db.insert('subscriptions', {
     userId: input.userId,
-    email: input.email,
+    email,
     slot,
     label: input.label,
     ciphertext: input.ciphertext,
@@ -244,9 +267,13 @@ export const softRemove = authenticatedMutation({
     // a global table and would accept the first row matching the email
     // regardless of owner — would let any signed-in user soft-remove any
     // other user's sub (NOT_FOUND-by-luck, not by-policy).
+    //
+    // Email is canonicalized to lowercase to match the storage convention
+    // set in `upsertSub`. Without this, `cvault remove Stefan@x.com`
+    // when the row was stored as `stefan@x.com` would NOT_FOUND.
     const sub = await ctx.db
       .query('subscriptions')
-      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', email))
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', canonicalEmail(email)))
       .unique()
 
     if (!sub || sub.removedAt !== undefined) {
@@ -265,10 +292,10 @@ export const rename = authenticatedMutation({
   handler: async (ctx, { email, label }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
-    // Same scoping fix as `softRemove` above.
+    // Same scoping + canonicalization rule as `softRemove` above.
     const sub = await ctx.db
       .query('subscriptions')
-      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', email))
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', canonicalEmail(email)))
       .unique()
 
     if (!sub || sub.removedAt !== undefined) {

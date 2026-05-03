@@ -20,8 +20,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { getFunctionName } from 'convex/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// eslint-disable-next-line import/first
-import { SubsPage } from '../../src/routes/dashboard/index'
+import { SubsPage } from '../../src/routes/dashboard/index.lazy'
 
 const useQueryMock = vi.fn()
 const renameMock = vi.fn().mockResolvedValue(null)
@@ -54,6 +53,7 @@ vi.mock('convex/react', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
+  createLazyFileRoute: () => () => ({}),
 }))
 
 // Use Date.now() at fixture-creation time so the test is robust to small

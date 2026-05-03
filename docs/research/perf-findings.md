@@ -1,5 +1,7 @@
 # cvault — Performance Audit
 
+> **Superseded 2026-05-03:** cvault no longer wraps `claude-swap` (Python). The CLI now calls the macOS Keychain / Linux credentials file directly via `cli/src/native/*` — see `IMPLEMENTATION_NOTES.md` under the 2026-05-02 native-keychain section. Numbers and prescriptions below referencing `claude-swap` subprocess overhead, Python interpreter cold-starts, or `Bun.spawnSync` to `claude-swap` are **historical** and no longer reflect the shipped CLI. New perf measurements live alongside the native module work in `IMPLEMENTATION_NOTES.md`.
+
 **Date:** 2026-05-02
 **Scope:** Read-only audit of `cvault` (Convex backend, TanStack Start frontend, Bun-compiled CLI) at the state currently committed (no commits, working tree). A separate fix-builder is in flight modifying parts of `convex/`, `cli/`, and `frontend/`; findings below note "may auto-resolve" where appropriate.
 **Auditor:** perf-audit subagent (read-only).

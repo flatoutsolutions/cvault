@@ -13,8 +13,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// eslint-disable-next-line import/first
-import { AuditPage } from '../../routes/dashboard/audit'
+import { AuditPage } from '../../routes/dashboard/audit.lazy'
 
 /**
  * Convex function-reference identity is opaque (Proxy), so instead of
@@ -70,6 +69,7 @@ vi.mock('convex/react', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
+  createLazyFileRoute: () => () => ({}),
 }))
 
 describe('/dashboard/audit', () => {

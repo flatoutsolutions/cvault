@@ -23,7 +23,31 @@ On Linux/WSL, credentials live in `~/.claude/.credentials.json` with mode 0600 (
 
 ---
 
-## Quickstart
+## Install (end users)
+
+The CLI ships through the `flatoutsolutions/cvault` Homebrew tap:
+
+```bash
+brew install flatoutsolutions/cvault/cvault
+```
+
+On macOS this also installs `bun` as a runtime dependency. `cvault` itself is a
+tiny bash shim that `exec`s the bundled JS through bun — no per-architecture
+binaries, no codesigning surprises.
+
+After install:
+
+```bash
+cvault login    # browser-assisted Clerk sign-in
+cvault add      # capture the currently-active Claude Code login
+cvault list     # verify it landed in the vault
+```
+
+`cvault add` requires the `claude` CLI (Claude Code) on `PATH`.
+
+---
+
+## Quickstart (developing on cvault itself)
 
 ### 1. Prerequisites
 
@@ -97,13 +121,18 @@ bun run src/index.ts -- clean               # clear active credentials + last-ha
                                             # (server vault + login preserved; --yes to skip prompt)
 ```
 
-Or build a static binary:
+Or build the production bundle locally and run it through bun:
 
 ```bash
-bun build --compile --target=bun-darwin-arm64 ./src/index.ts --outfile cvault
-codesign --force --sign - ./cvault          # macOS only — required to avoid SIGKILL
-./cvault login
+cd cli
+bun run build:bundle                                   # → dist/cvault.bundle.js
+bun dist/cvault.bundle.js login
 ```
+
+This is the same artifact the Homebrew formula ships. Bun's
+`--compile` (single-binary) target is intentionally not used: its
+Mach-O output is unsignable on macOS (Bun 1.3.12), so we ship a
+portable bundle plus a shim instead.
 
 ---
 

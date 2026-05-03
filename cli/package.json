@@ -5,14 +5,14 @@
   "type": "module",
   "license": "MIT",
   "author": "Stefan Asseg <stefan@flatout.solutions>",
-  "homepage": "https://github.com/stefanasseg/cvault",
+  "homepage": "https://github.com/flatoutsolutions/cvault",
   "repository": {
     "type": "git",
-    "url": "https://github.com/stefanasseg/cvault.git",
+    "url": "https://github.com/flatoutsolutions/cvault.git",
     "directory": "cli"
   },
   "bugs": {
-    "url": "https://github.com/stefanasseg/cvault/issues"
+    "url": "https://github.com/flatoutsolutions/cvault/issues"
   },
   "keywords": [
     "claude",
@@ -25,9 +25,6 @@
   "engines": {
     "bun": ">=1.2.0"
   },
-  "bin": {
-    "cvault": "./dist/cli.js"
-  },
   "files": [
     "dist",
     "README.md"
@@ -35,12 +32,7 @@
   "scripts": {
     "dev": "bun run src/index.ts --",
     "typecheck": "tsc --noEmit",
-    "build:bunx": "bun build ./src/index.ts --target=bun --outfile dist/cli.js --minify",
-    "build:darwin-arm64": "bun run scripts/build.ts bun-darwin-arm64",
-    "build:darwin-x64": "bun run scripts/build.ts bun-darwin-x64",
-    "build:linux-x64": "bun run scripts/build.ts bun-linux-x64",
-    "build:linux-arm64": "bun run scripts/build.ts bun-linux-arm64",
-    "build:all": "bun run build:darwin-arm64 && bun run build:darwin-x64 && bun run build:linux-x64 && bun run build:linux-arm64",
+    "build:bundle": "bun run scripts/build-bundle.ts",
     "build:reset-info": "bun -e \"import('./scripts/build').then(m => m.writeBuildInfo('src/buildInfo.ts', m.EMPTY_BUILD_DEFAULTS))\"",
     "test": "bunx --bun vitest run --passWithNoTests",
     "test:watch": "bunx --bun vitest"
