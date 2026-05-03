@@ -13,7 +13,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// eslint-disable-next-line import/first
 import { AuditPage } from '../../routes/dashboard/audit'
 
 /**
