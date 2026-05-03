@@ -16,9 +16,16 @@
  * No `@clerk/backend` SDK call is needed for either op — the FAPI ticket
  * strategy is a frontend-only contract.
  */
+import pkg from '../../package.json' with { type: 'json' }
 import type { SessionState } from './session'
 
-export const CLI_VERSION = '0.1.0'
+// Single source of truth for the CLI version — read from cli/package.json so
+// every release bump (Formula + Cloudflare Pages reverse map) stays in sync
+// with the User-Agent shipped on every Clerk FAPI + Convex mint request.
+// Hardcoding the literal here was the original bug: `0.1.0` lingered after
+// the package was bumped to `0.1.5`, leaking the wrong "device" label into
+// Clerk's session-list UI.
+export const CLI_VERSION = pkg.version
 
 export class ClerkSessionExpiredError extends Error {
   override readonly name = 'ClerkSessionExpiredError'

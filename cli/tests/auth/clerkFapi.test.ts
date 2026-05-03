@@ -8,7 +8,9 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import pkg from '../../package.json' with { type: 'json' }
 import {
+  CLI_VERSION,
   ClerkSessionExpiredError,
   cliUserAgent,
   decodeJwtExp,
@@ -57,6 +59,15 @@ describe('cliUserAgent', () => {
     expect(ua).toMatch(/^cvault-cli\//)
     expect(ua).toContain(process.platform)
     expect(ua).toContain(process.arch)
+  })
+
+  // Lock CLI_VERSION + cliUserAgent() to cli/package.json so a future bump to
+  // package.json never silently drifts from the User-Agent shipped on every
+  // Clerk FAPI request. (Same defect class as the Convex-side USER_AGENT fix
+  // on PR #7 — caught CLI-side by reviewers.)
+  it('uses the version from cli/package.json verbatim', () => {
+    expect(CLI_VERSION).toBe(pkg.version)
+    expect(cliUserAgent()).toBe(`cvault-cli/${pkg.version} (${process.platform}-${process.arch})`)
   })
 })
 

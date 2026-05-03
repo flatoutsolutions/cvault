@@ -11,12 +11,18 @@
  */
 import { randomBytes as nodeRandomBytes } from 'node:crypto'
 
+import cliPkg from '../../cli/package.json' with { type: 'json' }
+
 export const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
 export const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 export const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 export const ANTHROPIC_BETA_HEADER = 'oauth-2025-04-20'
-// TODO: read version from cli/package.json once tsconfig allows json imports
-export const USER_AGENT = 'cvault/0.1.5 (+https://github.com/flatoutsolutions/cvault)'
+// Single source of truth for the cvault version — read from cli/package.json
+// so the User-Agent shipped on every Anthropic OAuth/usage call tracks each
+// release bump automatically. Hardcoding the literal here was the original
+// drift bug the PR #7 review caught (the previous fix corrected only the
+// repo URL, not the version-source-of-truth issue).
+export const USER_AGENT = `cvault/${cliPkg.version} (+https://github.com/flatoutsolutions/cvault)`
 
 // ---------------------------------------------------------------------------
 // Test seams. Production code never assigns these — only `*.test.ts` files do.
