@@ -116,6 +116,59 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
     expect(addRow?.subscriptionId).toEqual(result.subId)
   })
 
+  /**
+   * Cron spam recovery path. After Anthropic answers `invalid_grant`,
+   * `markReloginRequired` clamps `refreshExpiresAt` into the past so
+   * `findExpiringSubs` and the in-action defense both stop driving the
+   * cron loop. The user's recovery is `cvault add` — which lands here.
+   * If this path doesn't CLEAR the prior `refreshExpiresAt` clamp, the
+   * sub stays "RT-dead" forever and the cron never picks it up again
+   * even after a successful re-capture.
+   */
+  it('clears stale refreshExpiresAt when re-capturing a sub previously marked reloginRequired', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    // First add: a normal capture.
+    const first = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'recover@example.com',
+      plaintextBlob: SAMPLE_BLOB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
+    // Simulate Anthropic having returned `invalid_grant` against the prior
+    // refresh: the action would have called `markReloginRequired`, which
+    // clamps `refreshExpiresAt` into the past. Set it manually here to
+    // model that prior state without driving the full failure path.
+    const now = Date.now()
+    await t.run(async (ctx) => {
+      await ctx.db.patch('subscriptions', first.subId, { refreshExpiresAt: now - 60_000 })
+    })
+    const beforeReadd = await t.run(async (ctx) => await ctx.db.get('subscriptions', first.subId))
+    expect(beforeReadd?.refreshExpiresAt).toBeLessThan(now)
+
+    // User runs `cvault add` again with a fresh blob from the laptop they
+    // just successfully re-logged in on. The CLI does NOT pass
+    // `refreshExpiresAt` because Anthropic doesn't echo a refresh-token
+    // expiry in the OAuth response — only the AT lifetime. The recovery
+    // contract is: this re-capture MUST clear the stale clamp so the
+    // cron resumes proactive refresh on the next tick.
+    await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'recover@example.com',
+      plaintextBlob: SAMPLE_BLOB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
+    const afterReadd = await t.run(async (ctx) => await ctx.db.get('subscriptions', first.subId))
+    expect(afterReadd?.refreshExpiresAt).toBeUndefined()
+  })
+
   it('updates an existing sub in place (rotation, not duplicate)', async () => {
     const t = vault()
     await seedUser(t)

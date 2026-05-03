@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => {
       env,
       // Apply at the parent level so child projects inherit; child-level
       // exclude is also additive.
-      exclude: ['**/node_modules/**', '**/dist/**', '**/*.scenario.test.ts'],
+      exclude: ['**/node_modules/**', '**/dist/**', '**/*.scenario.test.ts', '.claude/**'],
       projects: [
         {
           // Convex tests in edge-runtime (default for convex-test).

@@ -7,7 +7,7 @@
  * The encrypted blob lives only in the DB row and inside actions that
  * decrypt it on demand. Frontend / CLI never touch it directly.
  */
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 
 import { type Doc } from '../_generated/dataModel'
 import { authenticatedQuery, getIdentity } from '../utils/auth'
@@ -109,5 +109,111 @@ export const getMetaByEmail = authenticatedQuery({
       .collect()
     const sub = subs.find((s) => s.removedAt === undefined)
     return sub ? toMeta(sub) : null
+  },
+})
+
+// ---------------------------------------------------------------------------
+// getStatus — diagnostic surface for the new `cvault status` CLI command.
+//
+// Returns the per-sub metadata + last 3 refresh log entries + the most
+// recent machineActivity row, all scoped to the caller. The CLI uses
+// this to render a human-readable comparison of local vs. vault, plus
+// an actionable hint when the row needs re-capture (refreshExpiresAt
+// clamped).
+//
+// Read-only by design: this is the surface the CLI hits before deciding
+// whether to call `refreshSub` (which mutates).
+// ---------------------------------------------------------------------------
+
+const refreshLogEntryValidator = v.object({
+  outcome: v.union(v.literal('success'), v.literal('failure'), v.literal('reloginRequired')),
+  triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
+  at: v.number(),
+  error: v.optional(v.string()),
+})
+
+const lastMachineActivityValidator = v.object({
+  action: v.union(
+    v.literal('switch'),
+    v.literal('add'),
+    v.literal('pull'),
+    v.literal('remove'),
+    v.literal('refresh'),
+    v.literal('rename'),
+    v.literal('login')
+  ),
+  clerkSessionId: v.string(),
+  at: v.number(),
+})
+
+export const getStatus = authenticatedQuery({
+  args: { slot: v.number() },
+  returns: v.object({
+    sub: subscriptionMetaValidator,
+    refreshLog: v.array(refreshLogEntryValidator),
+    lastMachineActivity: v.union(lastMachineActivityValidator, v.null()),
+  }),
+  handler: async (ctx, { slot }) => {
+    const userId = await callerUserId(ctx)
+    if (userId === null) {
+      // The Clerk webhook hasn't fired yet — treat as "no subs" by
+      // throwing the same NOT_FOUND the slot-not-owned branch throws so
+      // the CLI gets one shape to handle.
+      throw new ConvexError({ code: 'NOT_FOUND', message: `No subscription at slot ${slot.toString()}` })
+    }
+    const matches = await ctx.db
+      .query('subscriptions')
+      .withIndex('byUserAndSlot', (q) => q.eq('userId', userId).eq('slot', slot))
+      .collect()
+    const sub = matches.find((s) => s.removedAt === undefined)
+    if (!sub) {
+      throw new ConvexError({ code: 'NOT_FOUND', message: `No subscription at slot ${slot.toString()}` })
+    }
+
+    // Last 3 refresh attempts (newest first). `bySubscriptionAndAt` is
+    // the natural index for this drill-down read.
+    const recentLogs = await ctx.db
+      .query('refreshLog')
+      .withIndex('bySubscriptionAndAt', (q) => q.eq('subscriptionId', sub._id))
+      .order('desc')
+      .take(3)
+    const refreshLog = recentLogs.map((row) => {
+      const base: { outcome: typeof row.outcome; triggeredBy: typeof row.triggeredBy; at: number; error?: string } = {
+        outcome: row.outcome,
+        triggeredBy: row.triggeredBy,
+        at: row.at,
+      }
+      if (row.error !== undefined) base.error = row.error
+      return base
+    })
+
+    // Most recent machineActivity row for this sub (any session, any
+    // action). Used by the CLI to print "Last activity: switch on
+    // sess_xyz, 3h ago" alongside the relogin hint when needed.
+    //
+    // M4: use the (subscriptionId, at) composite index added to
+    // `machineActivity` schema. Previously the query took the user's
+    // 50 most-recent rows across ALL subs and filtered by subId, which
+    // silently lost a low-churn sub's activity behind a high-churn
+    // sibling. The index lookup is bounded to this sub's rows and
+    // returns the most recent one in a single read.
+    const subActivity = await ctx.db
+      .query('machineActivity')
+      .withIndex('bySubscriptionAndAt', (q) => q.eq('subscriptionId', sub._id))
+      .order('desc')
+      .first()
+    const lastMachineActivity = subActivity
+      ? {
+          action: subActivity.action,
+          clerkSessionId: subActivity.clerkSessionId,
+          at: subActivity.at,
+        }
+      : null
+
+    return {
+      sub: toMeta(sub),
+      refreshLog,
+      lastMachineActivity,
+    }
   },
 })

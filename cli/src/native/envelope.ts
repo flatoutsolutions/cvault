@@ -144,19 +144,18 @@ export function buildEnvelope(opts: BuildEnvelopeOptions): ClaudeSwapEnvelope {
 }
 
 /**
- * Write the envelope's first account into the local credentials store +
- * `~/.claude.json`. After this returns, Claude Code is signed in as that
- * account.
+ * Read-modify-write of the active credentials + `~/.claude.json` slice.
+ * MUST be called under the cvault credentials lock (`withFileLock`).
  *
- * On native there's no concept of "all accounts on the machine" because
- * the OS only stores one active account at a time. Multi-account
- * envelopes are still accepted (we just take `accounts[0]` since import
- * only ever ships single-account envelopes from cvault).
+ * Exposed as a separate function so callers that already hold the lock
+ * (e.g. `cvault refresh` which keeps the lock across read-vault-write)
+ * can invoke the inner write logic without re-entering `withFileLock`
+ * — proper-lockfile is not reentrant; double-locking from the same
+ * process would deadlock waiting for self.
  *
  * Concurrency + atomicity (R1):
- *  - The whole read-snapshot + two-write cycle is wrapped in a
- *    cross-process file lock so two `cvault` invocations cannot
- *    interleave their reads and writes.
+ *  - Caller's lock guarantees no other cvault/Claude Code process can
+ *    interleave with us.
  *  - Before the writes, we snapshot BOTH the current credentials AND
  *    the current `oauthAccount` slice.
  *  - If step 2 (claude.json) throws, the catch block rolls back BOTH
@@ -169,59 +168,76 @@ export function buildEnvelope(opts: BuildEnvelopeOptions): ClaudeSwapEnvelope {
  *    in a partially-rotated state we can't fix programmatically) and
  *    rethrow the original error so the caller sees the right cause.
  */
-export async function applyEnvelope(env: ClaudeSwapEnvelope): Promise<void> {
+export function applyEnvelopeUnlocked(env: ClaudeSwapEnvelope): void {
   const account = env.accounts[0]
   if (!account) {
     throw new Error('cannot apply envelope with no accounts')
   }
 
-  await withFileLock(() => {
-    // Snapshot current state for rollback. `null`/`undefined` are valid
-    // pre-states (no credentials yet, no oauthAccount yet); rollback
-    // paths handle them.
-    const priorCreds = readCredentials()
-    const priorCfg = readGlobalConfig()
-    const priorOauthAccount = priorCfg?.oauthAccount
+  // Snapshot current state for rollback. `null`/`undefined` are valid
+  // pre-states (no credentials yet, no oauthAccount yet); rollback
+  // paths handle them.
+  const priorCreds = readCredentials()
+  const priorCfg = readGlobalConfig()
+  const priorOauthAccount = priorCfg?.oauthAccount
 
-    const newBlob = JSON.stringify(account.credentials)
+  const newBlob = JSON.stringify(account.credentials)
 
-    // Step 1 — credentials. Stringify the `credentials` slot exactly as
-    // the Keychain blob (Claude Code reads the whole
-    // `{ claudeAiOauth: ... }`).
-    writeCredentials(newBlob)
+  // Step 1 — credentials. Stringify the `credentials` slot exactly as
+  // the Keychain blob (Claude Code reads the whole
+  // `{ claudeAiOauth: ... }`).
+  writeCredentials(newBlob)
 
-    // Step 2 — `~/.claude.json`'s `oauthAccount` slice. Use
-    // `writeOauthAccount` so sibling keys (telemetry IDs, feature
-    // flags) are preserved. If this throws, roll back step 1 AND
-    // step 2 (the latter may have partially succeeded — see docstring).
-    if (account.config?.oauthAccount !== undefined) {
+  // Step 2 — `~/.claude.json`'s `oauthAccount` slice. Use
+  // `writeOauthAccount` so sibling keys (telemetry IDs, feature
+  // flags) are preserved. If this throws, roll back step 1 AND
+  // step 2 (the latter may have partially succeeded — see docstring).
+  if (account.config?.oauthAccount !== undefined) {
+    try {
+      writeOauthAccount(account.config.oauthAccount)
+    } catch (err) {
+      // Symmetric rollback (R1).
       try {
-        writeOauthAccount(account.config.oauthAccount)
-      } catch (err) {
-        // Symmetric rollback (R1).
-        try {
-          if (priorCreds === null) {
-            deleteCredentials()
-          } else {
-            writeCredentials(priorCreds)
-          }
-        } catch {
-          console.error(
-            'error: failed to roll back credentials after claude.json write failed; local state may be inconsistent'
-          )
+        if (priorCreds === null) {
+          deleteCredentials()
+        } else {
+          writeCredentials(priorCreds)
         }
-        try {
-          if (priorOauthAccount === undefined) {
-            clearOauthAccount()
-          } else {
-            writeOauthAccount(priorOauthAccount)
-          }
-        } catch {
-          console.error('error: failed to roll back ~/.claude.json oauthAccount after the original write failed')
-        }
-        throw err
+      } catch {
+        console.error(
+          'error: failed to roll back credentials after claude.json write failed; local state may be inconsistent'
+        )
       }
+      try {
+        if (priorOauthAccount === undefined) {
+          clearOauthAccount()
+        } else {
+          writeOauthAccount(priorOauthAccount)
+        }
+      } catch {
+        console.error('error: failed to roll back ~/.claude.json oauthAccount after the original write failed')
+      }
+      throw err
     }
+  }
+}
+
+/**
+ * Write the envelope's first account into the local credentials store +
+ * `~/.claude.json`. After this returns, Claude Code is signed in as that
+ * account.
+ *
+ * On native there's no concept of "all accounts on the machine" because
+ * the OS only stores one active account at a time. Multi-account
+ * envelopes are still accepted (we just take `accounts[0]` since import
+ * only ever ships single-account envelopes from cvault).
+ *
+ * Acquires the cross-process credentials lock; callers that already
+ * hold the lock should use `applyEnvelopeUnlocked` instead.
+ */
+export async function applyEnvelope(env: ClaudeSwapEnvelope): Promise<void> {
+  await withFileLock(() => {
+    applyEnvelopeUnlocked(env)
   })
 }
 

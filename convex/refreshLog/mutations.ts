@@ -7,10 +7,24 @@
  * `subscriptions/redact.ts:redactTokens()` before passing it as `error`.
  * The schema does not enforce this — the action layer does, and tests
  * cover the redaction path.
+ *
+ * DEDUPE: `reloginRequired` rows for the same subscription are silently
+ * collapsed when the prior `reloginRequired` for that sub landed within
+ * `RELOGIN_DEDUPE_WINDOW_MS`. The motivating bug had `findExpiringSubs`
+ * keep selecting RT-dead subs, generating identical `reloginRequired`
+ * rows every cron tick. The upstream fix (exclude RT-dead subs from the
+ * scan) prevents that pattern, and the in-action short-circuit catches
+ * any caller who bypasses the cron filter; this dedupe is the last line
+ * of defense if a future caller bypasses both.
+ *
+ * `failure` and `success` rows are NEVER deduped — they are meaningful
+ * per-attempt and the dashboard's audit feed needs every one.
  */
 import { v } from 'convex/values'
 
 import { internalMutation } from '../_generated/server'
+
+const RELOGIN_DEDUPE_WINDOW_MS = 5 * 60 * 1000
 
 export const insert = internalMutation({
   args: {
@@ -21,8 +35,23 @@ export const insert = internalMutation({
     error: v.optional(v.string()),
     at: v.number(),
   },
-  returns: v.id('refreshLog'),
+  returns: v.union(v.id('refreshLog'), v.null()),
   handler: async (ctx, args) => {
+    if (args.outcome === 'reloginRequired') {
+      // Read the most recent refreshLog row for this sub via the
+      // existing `bySubscriptionAndAt` index. `desc` order + `first()`
+      // means we only fetch one row regardless of history depth.
+      const last = await ctx.db
+        .query('refreshLog')
+        .withIndex('bySubscriptionAndAt', (q) => q.eq('subscriptionId', args.subscriptionId))
+        .order('desc')
+        .first()
+      if (last !== null && last.outcome === 'reloginRequired' && args.at - last.at < RELOGIN_DEDUPE_WINDOW_MS) {
+        // Silently drop. Returning `null` lets the caller distinguish
+        // "deduped" from "inserted" if it ever needs to (none currently do).
+        return null
+      }
+    }
     return await ctx.db.insert('refreshLog', args)
   },
 })

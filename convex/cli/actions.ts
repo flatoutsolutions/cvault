@@ -47,9 +47,12 @@ export const startLink = authenticatedAction({
 })
 
 export const revokeSession = authenticatedAction({
-  args: { clerkSessionId: v.string() },
+  args: {
+    clerkSessionId: v.string(),
+    machineLabel: v.optional(v.string()),
+  },
   returns: v.object({ revoked: v.boolean() }),
-  handler: async (ctx, { clerkSessionId }): Promise<{ revoked: boolean }> => {
+  handler: async (ctx, { clerkSessionId, machineLabel }): Promise<{ revoked: boolean }> => {
     const identity = getIdentity(ctx)
 
     // SECURITY: verify the caller actually owns the target session BEFORE
@@ -98,6 +101,7 @@ export const revokeSession = authenticatedAction({
         clerkSessionId: callerSession,
         action: 'remove',
         at: Date.now(),
+        ...(machineLabel !== undefined ? { machineLabel } : {}),
       })
     }
 
@@ -112,9 +116,11 @@ export const revokeSession = authenticatedAction({
  * surfaces every CLI pairing event.
  */
 export const recordLogin = authenticatedAction({
-  args: {},
+  args: {
+    machineLabel: v.optional(v.string()),
+  },
   returns: v.object({ recorded: v.boolean() }),
-  handler: async (ctx): Promise<{ recorded: boolean }> => {
+  handler: async (ctx, { machineLabel }): Promise<{ recorded: boolean }> => {
     const identity = getIdentity(ctx)
     const sidClaim = (identity as { sid?: unknown }).sid
     const callerSession = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
@@ -133,6 +139,7 @@ export const recordLogin = authenticatedAction({
       clerkSessionId: callerSession,
       action: 'login',
       at: Date.now(),
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
     })
     return { recorded: true }
   },

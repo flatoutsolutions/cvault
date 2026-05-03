@@ -107,6 +107,41 @@ describe('SubscriptionCard', () => {
     expect(screen.getByText(/relogin required/i)).toBeTruthy()
   })
 
+  it('renders an explanatory block with the cvault add remediation when refreshExpiresAt is past', () => {
+    // The badge alone is the at-a-glance signal; the body block is
+    // the actionable hint that tells the user WHAT to do. Spec/brief
+    // wording requirement: must mention `cvault add` and explain that
+    // the token rotated externally.
+    render(
+      <SubscriptionCard
+        sub={makeSub({ refreshExpiresAt: Date.now() - 1000 })}
+        onForceRefresh={vi.fn()}
+        onRename={vi.fn()}
+        onRemove={vi.fn()}
+        forceRefreshing={false}
+        removing={false}
+      />
+    )
+    const explainer = screen.getByTestId('relogin-explainer')
+    const text = explainer.textContent
+    expect(text).toMatch(/cvault add/i)
+    expect(text.toLowerCase()).toMatch(/rotated|recapture|re-?capture/)
+  })
+
+  it('does NOT render the relogin explainer when refreshExpiresAt is unset', () => {
+    render(
+      <SubscriptionCard
+        sub={makeSub({ refreshExpiresAt: undefined })}
+        onForceRefresh={vi.fn()}
+        onRename={vi.fn()}
+        onRemove={vi.fn()}
+        forceRefreshing={false}
+        removing={false}
+      />
+    )
+    expect(screen.queryByTestId('relogin-explainer')).toBeNull()
+  })
+
   it('calls onForceRefresh with the sub email when Force Refresh is clicked', () => {
     const onForceRefresh = vi.fn()
     render(

@@ -37,11 +37,20 @@ async function sha256Hex(input: string): Promise<string> {
 }
 
 export const pullForSwitch = authenticatedAction({
-  args: { slotOrEmail: v.string() },
+  args: {
+    slotOrEmail: v.string(),
+    /**
+     * Human-readable identifier for the originating CLI machine. The
+     * dashboard's "Machines" section renders this as the user-visible
+     * label (otherwise it would only see opaque session ids). Optional —
+     * see `machineActivity/schema.ts:machineLabel` for the contract.
+     */
+    machineLabel: v.optional(v.string()),
+  },
   returns: pullResultValidator,
   handler: async (
     ctx,
-    { slotOrEmail }
+    { slotOrEmail, machineLabel }
   ): Promise<{
     email: string
     slot: number
@@ -105,6 +114,7 @@ export const pullForSwitch = authenticatedAction({
       action: 'pull',
       subscriptionId: fresh._id,
       at: Date.now(),
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
     })
 
     const plaintext = decrypt(fresh.ciphertext, fresh.nonce)
@@ -142,6 +152,7 @@ export const upsertFromPlaintext = authenticatedAction({
     subscriptionType: v.string(),
     rateLimitTier: v.string(),
     label: v.optional(v.string()),
+    machineLabel: v.optional(v.string()),
   },
   returns: upsertResultValidator,
   handler: async (
@@ -176,6 +187,7 @@ export const upsertFromPlaintext = authenticatedAction({
       action: 'add',
       subscriptionId: result.subId,
       at: Date.now(),
+      ...(args.machineLabel !== undefined ? { machineLabel: args.machineLabel } : {}),
     })
     // Kick off an immediate usage fetch so the dashboard shows
     // the 5h/7d percentages as soon as the sub appears, rather than
@@ -190,15 +202,267 @@ export const upsertFromPlaintext = authenticatedAction({
 })
 
 // ---------------------------------------------------------------------------
+// refreshSub — public action used by the new `cvault refresh` CLI command
+// for multi-laptop coordination.
+//
+// The CLI sends the slot it wants to refresh and (optionally) the current
+// local Keychain blob (`localState`). The server decides what to do:
+//
+//   1. If `localState` parses and its `claudeAiOauth.expiresAt` is strictly
+//      greater than the vault row's `expiresAt`, the local Claude Code
+//      already refreshed on this machine before cvault saw it. Adopt the
+//      local state into the vault (`adoptedLocal`).
+//   2. After (1), if the resulting row's `expiresAt < now + REFRESH_PROACTIVE_MS`
+//      OR `force` is true, hit Anthropic to rotate (`refreshedFromAnthropic`).
+//   3. Otherwise, decide between `inSync` (local matches vault) and
+//      `pulledFresh` (vault is newer than local).
+//
+// The CLI compares the returned `contentHash` against its own local hash
+// to decide whether to write back to the Keychain.
+//
+// Errors:
+//   - `NOT_FOUND` when the slot doesn't resolve to a sub the caller owns
+//   - `RELOGIN_REQUIRED` when the row's `refreshExpiresAt` is set after
+//     the action returns from a refresh attempt (Anthropic told us the
+//     refresh token is dead)
+// ---------------------------------------------------------------------------
+
+const refreshSubResultValidator = v.object({
+  email: v.string(),
+  slot: v.number(),
+  plaintextBlob: v.string(),
+  contentHash: v.string(),
+  expiresAt: v.number(),
+  lastRefreshedAt: v.number(),
+  /**
+   * What the server actually did. The CLI prints a single concise line
+   * keyed off this so users see "Pushed local to vault" vs. "Refreshed
+   * from Anthropic" vs. "Already in sync" instead of having to interpret
+   * timestamps.
+   */
+  action: v.union(
+    v.literal('inSync'),
+    v.literal('pulledFresh'),
+    v.literal('adoptedLocal'),
+    v.literal('refreshedFromAnthropic')
+  ),
+})
+
+interface OAuthBlobShape {
+  claudeAiOauth?: { expiresAt?: unknown }
+}
+
+/**
+ * Pull the local rotation timestamp out of the CLI's `localState`. Returns
+ * `undefined` when the state is not a JSON object, lacks a numeric
+ * `claudeAiOauth.expiresAt`, or otherwise can't be trusted to support a
+ * monotonic comparison. We DO NOT throw on parse failure — a malformed
+ * local state should fall back to the vault, not abort the whole call.
+ *
+ * S1: also rejects non-positive timestamps. A `0` or negative `expiresAt`
+ * is a sentinel for "uninitialized" / clock-broken state — adopting it
+ * would either no-op (vault wins by `> sub.expiresAt`) or REGRESS the
+ * row's expiresAt to a sentinel value the rest of the system can't make
+ * sense of. Treat as "no usable local timestamp" instead.
+ */
+function parseLocalExpiresAt(localState: string | undefined): number | undefined {
+  if (localState === undefined) return undefined
+  try {
+    const parsed = JSON.parse(localState) as OAuthBlobShape
+    const ts = parsed.claudeAiOauth?.expiresAt
+    return typeof ts === 'number' && Number.isFinite(ts) && ts > 0 ? ts : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export const refreshSub = authenticatedAction({
+  args: {
+    slot: v.number(),
+    /**
+     * Optional verbatim local Keychain blob (the `{ claudeAiOauth: ... }`
+     * JSON the OS stores). When supplied and its embedded `expiresAt` is
+     * strictly newer than the vault row's, the server adopts it.
+     */
+    localState: v.optional(v.string()),
+    /**
+     * Force a server-side Anthropic refresh even when the access token
+     * isn't near expiry. Used by `cvault refresh --force`.
+     */
+    force: v.optional(v.boolean()),
+    machineLabel: v.optional(v.string()),
+  },
+  returns: refreshSubResultValidator,
+  handler: async (
+    ctx,
+    { slot, localState, force, machineLabel }
+  ): Promise<{
+    email: string
+    slot: number
+    plaintextBlob: string
+    contentHash: string
+    expiresAt: number
+    lastRefreshedAt: number
+    action: 'inSync' | 'pulledFresh' | 'adoptedLocal' | 'refreshedFromAnthropic'
+  }> => {
+    const identity = getIdentity(ctx)
+    const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionForActor, {
+      externalId: identity.subject,
+      slotOrEmail: slot.toString(),
+    })
+    if (!sub) {
+      throw new ConvexError({ code: 'NOT_FOUND', message: `No subscription at slot ${slot.toString()}` })
+    }
+
+    // Step 1: optionally adopt local state if it's strictly newer than the
+    // vault row. Done first so the subsequent expiry check sees the
+    // freshest expiresAt we could possibly know about.
+    let didAdoptLocal = false
+    let didPullFresh = false
+    const localExpiresAt = parseLocalExpiresAt(localState)
+    if (localState !== undefined && localExpiresAt !== undefined && localExpiresAt > sub.expiresAt) {
+      const { ciphertext, nonce } = encrypt(localState)
+      const adopt = await ctx.runMutation(internal.subscriptions.mutations.adoptLocalState, {
+        subId: sub._id,
+        ciphertext,
+        nonce,
+        localExpiresAt,
+      })
+      didAdoptLocal = adopt.adopted
+    } else if (localState !== undefined && localExpiresAt !== undefined && localExpiresAt < sub.expiresAt) {
+      // Local is older — vault has the newer rotation. The CLI will write
+      // the returned plaintext to its Keychain.
+      didPullFresh = true
+    }
+
+    // Step 2: refresh against Anthropic when required.
+    const now = Date.now()
+    const post = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, {
+      externalId: identity.subject,
+      subId: sub._id,
+    })
+    if (!post) {
+      throw new ConvexError({ code: 'GONE', message: 'Subscription disappeared mid-refresh' })
+    }
+
+    const needsRefresh = force === true || post.expiresAt < now + REFRESH_PROACTIVE_MS
+    let didRefreshAnthropic = false
+    // Snapshot `lastRefreshedAt` BEFORE the inner refresh so we can detect
+    // whether the inner action advanced it (success) or silently bailed
+    // (decrypt failure, missing refreshToken, network error not surfaced
+    // as ConvexError, etc.). The CLI needs us to surface a clear
+    // REFRESH_FAILED label rather than falsely report "Already in sync".
+    const lastRefreshedAtBefore = post.lastRefreshedAt
+    if (needsRefresh) {
+      await ctx.runAction(internal.subscriptions.actions.refreshOAuthToken, {
+        subId: sub._id,
+        triggeredBy: 'manual',
+        // Pass force through so the inner action's M1 re-check honors
+        // the user's explicit request to rotate. Without this, two
+        // concurrent `--force` callers would have the second one
+        // short-circuit incorrectly.
+        ...(force === true ? { force: true } : {}),
+      })
+      didRefreshAnthropic = true
+    }
+
+    // Step 3: re-read after any mutations, then decide what to return.
+    const fresh = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, {
+      externalId: identity.subject,
+      subId: sub._id,
+    })
+    if (!fresh) {
+      throw new ConvexError({ code: 'GONE', message: 'Subscription disappeared mid-refresh' })
+    }
+
+    // Surface RELOGIN_REQUIRED to the CLI when the refresh path detected
+    // an `invalid_grant`. We use a ConvexError with `code` so the CLI can
+    // pattern-match without parsing prose.
+    if (fresh.refreshExpiresAt !== undefined && fresh.refreshExpiresAt <= Date.now()) {
+      throw new ConvexError({
+        code: 'RELOGIN_REQUIRED',
+        message:
+          `The refresh token for slot ${slot.toString()} is dead. ` +
+          `Run \`cvault add\` on the machine where you most recently used claude to recapture this subscription.`,
+      })
+    }
+
+    // S5 / M5: if we drove a refresh but `lastRefreshedAt` did not advance,
+    // the inner action bailed silently — decrypt threw, no refreshToken
+    // in blob, transient 5xx, or the M1 lease-winner re-check decided
+    // another caller already refreshed. Distinguish:
+    //   - Another caller refreshed: expiresAt advanced past the prior
+    //     value AND past the proactive window. Treat as success (no-op
+    //     for our caller — the row IS now fresh). This preserves M1's
+    //     "no spurious failure on race" semantics.
+    //   - True failure: expiresAt did NOT advance (still the same stale
+    //     value) AND lastRefreshedAt did NOT advance. Surface REFRESH_FAILED
+    //     so the CLI prints a clear error rather than misleading
+    //     "Already in sync".
+    if (didRefreshAnthropic && fresh.lastRefreshedAt === lastRefreshedAtBefore && fresh.expiresAt <= post.expiresAt) {
+      throw new ConvexError({
+        code: 'REFRESH_FAILED',
+        message:
+          `Refresh of slot ${slot.toString()} did not complete. ` +
+          `Check /dashboard/audit for details, or try again in a moment.`,
+      })
+    }
+
+    // Audit: every successful refreshSub leaves a machineActivity row,
+    // matching `requestRefresh` and `pullForSwitch` behavior.
+    const sidClaim = (identity as { sid?: unknown }).sid
+    const clerkSessionId = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
+    await ctx.runMutation(internal.machineActivity.mutations.record, {
+      userId: fresh.userId,
+      clerkSessionId,
+      action: 'refresh',
+      subscriptionId: fresh._id,
+      at: Date.now(),
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
+    })
+
+    const plaintext = decrypt(fresh.ciphertext, fresh.nonce)
+    const contentHash = await sha256Hex(plaintext)
+
+    // Precedence: a real Anthropic refresh wins over local-adoption /
+    // pull-fresh because it changed the token material everyone now
+    // observes. Otherwise: adoptedLocal > pulledFresh > inSync.
+    let action: 'inSync' | 'pulledFresh' | 'adoptedLocal' | 'refreshedFromAnthropic'
+    if (didRefreshAnthropic) {
+      action = 'refreshedFromAnthropic'
+    } else if (didAdoptLocal) {
+      action = 'adoptedLocal'
+    } else if (didPullFresh) {
+      action = 'pulledFresh'
+    } else {
+      action = 'inSync'
+    }
+
+    return {
+      email: fresh.email,
+      slot: fresh.slot,
+      plaintextBlob: plaintext,
+      contentHash,
+      expiresAt: fresh.expiresAt,
+      lastRefreshedAt: fresh.lastRefreshedAt,
+      action,
+    }
+  },
+})
+
+// ---------------------------------------------------------------------------
 // requestRefresh — public wrapper for the dashboard "Force Refresh" button
 // and `cvault refresh` CLI command. Verifies the caller owns the sub
 // before delegating to the internal `refreshOAuthToken` action.
 // ---------------------------------------------------------------------------
 
 export const requestRefresh = authenticatedAction({
-  args: { subId: v.id('subscriptions') },
+  args: {
+    subId: v.id('subscriptions'),
+    machineLabel: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { subId }): Promise<null> => {
+  handler: async (ctx, { subId, machineLabel }): Promise<null> => {
     const identity = getIdentity(ctx)
     // Confirm the sub belongs to the caller.
     const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, {
@@ -226,6 +490,7 @@ export const requestRefresh = authenticatedAction({
       action: 'refresh',
       subscriptionId: subId,
       at: Date.now(),
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
     })
     return null
   },
@@ -239,9 +504,28 @@ export const refreshOAuthToken = internalAction({
   args: {
     subId: v.id('subscriptions'),
     triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
+    /**
+     * When `true`, skip the M1 lease-winner re-check — the user
+     * explicitly asked for a rotation regardless of whether the row
+     * already looks fresh. Default `false`.
+     *
+     * The `--force` flag on `cvault refresh` and the dashboard "Force
+     * Refresh" button set this; cron / proactive-onUse paths leave it
+     * unset so the M1 race protection avoids burning Anthropic calls
+     * (and triggering RT rotations on other laptops) when another
+     * caller already refreshed concurrently.
+     */
+    force: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { subId, triggeredBy }): Promise<null> => {
+  handler: async (ctx, { subId, triggeredBy, force }): Promise<null> => {
+    // N4: capture nowMs once at the start so all downstream comparisons
+    // (lease re-check, refreshLog `at`, machineActivity `at`) share the
+    // same reference moment. Mixed `Date.now()` calls within one action
+    // can drift by tens of ms across awaits — small but observable in
+    // races between the proactive-refresh window check and the audit
+    // row's at-timestamp.
+    const nowMs = Date.now()
     const holderToken = generateHolderToken()
 
     // Step 1: try to acquire the lease.
@@ -259,6 +543,44 @@ export const refreshOAuthToken = internalAction({
       }
       // Still expired and lease still busy — bail out without logging
       // (we don't own this attempt).
+      return null
+    }
+
+    // Two post-lease re-checks share one read. Both decisions need the
+    // freshest row; doing them in one query halves the read.
+    //
+    // 1. Cron spam guard (defense-in-depth): the cron's `findExpiringSubs`
+    //    already excludes RT-dead subs from the scan, but a manual
+    //    `cvault refresh` or any future caller could still arrive here
+    //    with a sub whose `refreshExpiresAt <= now` (Anthropic already
+    //    told us the RT is dead via a prior `invalid_grant`). Re-driving
+    //    Anthropic in that state would just earn another `invalid_grant`
+    //    and a duplicate `reloginRequired` log row. Drop the lease and
+    //    exit silently — the original `reloginRequired` row from the
+    //    refresh that first marked this sub dead is enough; further rows
+    //    are noise. This check runs regardless of `force` because no
+    //    value of `--force` makes Anthropic accept a dead RT; the only
+    //    recovery is `cvault add` to re-capture a fresh blob.
+    //
+    // 2. M1 (race protection): two callers can each independently decide
+    //    "needs refresh" against stale reads; the loser then acquires the
+    //    lease AFTER the winner already committed a new (rotated) RT.
+    //    Without this re-check, the loser would burn an Anthropic call
+    //    (and trigger another RT rotation, invalidating any other laptop
+    //    holding the prior RT). `force === true` (user-initiated
+    //    `cvault refresh --force`) bypasses ONLY this M1 short-circuit
+    //    because the user explicitly asked us to rotate against
+    //    Anthropic — the relogin guard above always fires.
+    const freshPostLease = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionRaw, { subId })
+    if (freshPostLease && freshPostLease.refreshExpiresAt !== undefined && freshPostLease.refreshExpiresAt <= nowMs) {
+      await ctx.runMutation(internal.subscriptions.mutations.releaseRefreshLease, { subId, holderToken })
+      return null
+    }
+    if (force !== true && freshPostLease && freshPostLease.expiresAt > nowMs + REFRESH_PROACTIVE_MS) {
+      // Another caller already refreshed; the row is fresh now. Drop
+      // the lease and exit silently — we don't own this attempt's
+      // outcome.
+      await ctx.runMutation(internal.subscriptions.mutations.releaseRefreshLease, { subId, holderToken })
       return null
     }
 
@@ -290,7 +612,7 @@ export const refreshOAuthToken = internalAction({
         triggeredBy,
         outcome: 'failure',
         error: redactTokens(`decrypt failed (creds corrupt — re-add account): ${errMsg}`),
-        at: Date.now(),
+        at: nowMs,
       })
       return null
     }
@@ -313,7 +635,7 @@ export const refreshOAuthToken = internalAction({
         triggeredBy,
         outcome: 'failure',
         error: 'no refreshToken in stored blob; re-add account required',
-        at: Date.now(),
+        at: nowMs,
       })
       return null
     }
@@ -368,13 +690,14 @@ export const refreshOAuthToken = internalAction({
         triggeredBy,
         outcome,
         error: safeError,
-        at: Date.now(),
+        at: nowMs,
       })
       return null
     }
 
-    // Step 4: build the new plaintext and re-encrypt.
-    const nowMs = Date.now()
+    // Step 4: build the new plaintext and re-encrypt. Use the same nowMs
+    // captured at the start of the action so audit rows + token expiry
+    // share one reference moment.
     const newOauth = {
       ...(blob.claudeAiOauth ?? {}),
       accessToken: result.accessToken,
@@ -400,7 +723,7 @@ export const refreshOAuthToken = internalAction({
       subscriptionId: subId,
       triggeredBy,
       outcome: 'success',
-      at: Date.now(),
+      at: nowMs,
     })
     return null
   },

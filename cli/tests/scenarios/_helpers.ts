@@ -84,6 +84,12 @@ export interface FakeMachineActivity {
   action: 'switch' | 'add' | 'pull' | 'remove' | 'refresh'
   subscriptionId?: Id<'subscriptions'>
   at: number
+  /**
+   * Forwarded from the calling action when the CLI passed a label. The
+   * real Convex backend stores this on every row; the fake mirrors that
+   * so scenario tests can assert end-to-end label propagation.
+   */
+  machineLabel?: string
 }
 
 export interface FakeRefreshLogEntry {
@@ -107,9 +113,21 @@ export interface FakeBackendState {
 }
 
 /**
+ * Identity passthrough for `VaultClient.withMachineLabel` in unit-test
+ * fakes that don't care about label propagation. Spread into any inline
+ * client literal so the command's `client.withMachineLabel({...})` call
+ * doesn't blow up at runtime. Tests covering label propagation should
+ * use `createFakeVaultClient({ machineLabel: '...' })` instead.
+ */
+export function noopWithMachineLabel<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string } {
+  return args
+}
+
+/**
  * Fake VaultClient — implements the same dispatch surface
- * (`query`/`mutation`/`action`) as the real `VaultClient`, but routes to
- * in-memory handlers keyed by Convex function name.
+ * (`query`/`mutation`/`action` + `withMachineLabel`) as the real
+ * `VaultClient`, but routes to in-memory handlers keyed by Convex
+ * function name.
  *
  * Tests never construct this directly — they use `installFakeBackend()`
  * which wires it via `vi.mocked(makeVaultClient)`.
@@ -118,6 +136,16 @@ export interface FakeVaultClient {
   query: Mock
   mutation: Mock
   action: Mock
+  /**
+   * Mirrors the real `VaultClient.withMachineLabel` helper. Used by every
+   * command call site that writes to `machineActivity` so the dashboard's
+   * "Machines" view can render a human-readable label per Clerk session.
+   * In the fake, returns the args unchanged unless the test injected a
+   * label via `InstallBackendOptions.machineLabel`.
+   */
+  withMachineLabel: <T extends Record<string, unknown>>(args: T) => T & { machineLabel?: string }
+  /** The label this fake client returns from `withMachineLabel`. Read-only. */
+  readonly machineLabel: string | undefined
   /** Underlying state — tests can mutate to simulate cron-driven changes. */
   state: FakeBackendState
 }
@@ -127,6 +155,12 @@ export interface InstallBackendOptions {
   subscriptions?: FakeSubscription[]
   /** Clerk session id to stamp on machineActivity rows. */
   clerkSessionId?: string
+  /**
+   * Machine label the fake `withMachineLabel` injects. Defaults to
+   * `undefined` (i.e. legacy session, args pass through unchanged).
+   * Tests covering label propagation set this explicitly.
+   */
+  machineLabel?: string
   /**
    * One-shot override: when set, `query` / `action` / `mutation` first try
    * this map keyed by full function name (e.g. `subscriptions/actions:pullForSwitch`).
@@ -296,16 +330,27 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
       // a case-divergent remove still finds the right row.
       const requested = (args ?? {}).email
       const requestedEmail = typeof requested === 'string' ? requested.toLowerCase() : ''
-      let touched = false
+      const callerLabel = (args ?? {}).machineLabel
+      let touched: FakeSubscription | undefined
       for (const sub of state.subscriptions.values()) {
         if (sub.email === requestedEmail && sub.removedAt === undefined) {
           sub.removedAt = Date.now()
-          touched = true
+          touched = sub
         }
       }
       if (!touched) {
         throw new Error(`Fake VaultClient: softRemove found no row for email=${String(requested)}`)
       }
+      // Mirror real impl: insert a 'remove' machineActivity row, with
+      // the optional machineLabel forwarded by the CLI.
+      state.machineActivity.push({
+        userId: touched.userId,
+        clerkSessionId: state.clerkSessionId,
+        action: 'remove',
+        subscriptionId: touched._id,
+        at: Date.now(),
+        ...(typeof callerLabel === 'string' ? { machineLabel: callerLabel } : {}),
+      })
       return null
     }
     throw new Error(`Fake VaultClient: unhandled mutation "${name}"`)
@@ -330,13 +375,16 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
       if (!match) {
         throw new Error(`Fake VaultClient: no subscription matching ${target}`)
       }
-      // Mirror real impl: insert a 'pull' machineActivity row.
+      // Mirror real impl: insert a 'pull' machineActivity row, including
+      // the optional machineLabel forwarded by the CLI.
+      const callerLabel = (args ?? {}).machineLabel
       state.machineActivity.push({
         userId: match.userId,
         clerkSessionId: state.clerkSessionId,
         action: 'pull',
         subscriptionId: match._id,
         at: Date.now(),
+        ...(typeof callerLabel === 'string' ? { machineLabel: callerLabel } : {}),
       })
       return {
         email: match.email,
@@ -352,6 +400,7 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
       const email = (a.email as string).toLowerCase()
       const plaintextBlob = a.plaintextBlob as string
       const contentHash = await sha256Hex(plaintextBlob)
+      const callerLabel = a.machineLabel
       // Find existing slot for this email under same user, else assign next.
       let existing: FakeSubscription | undefined
       let maxSlot = 0
@@ -367,6 +416,15 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
         existing.rateLimitTier = a.rateLimitTier as string
         existing.label = a.label as string | undefined
         existing.removedAt = undefined
+        // Mirror real impl: insert an 'add' machineActivity row.
+        state.machineActivity.push({
+          userId: existing.userId,
+          clerkSessionId: state.clerkSessionId,
+          action: 'add',
+          subscriptionId: existing._id,
+          at: Date.now(),
+          ...(typeof callerLabel === 'string' ? { machineLabel: callerLabel } : {}),
+        })
         return {
           subId: existing._id,
           userId: existing.userId,
@@ -394,6 +452,15 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
         contentHash,
       }
       state.subscriptions.set(id as string, row)
+      // Mirror real impl: insert an 'add' machineActivity row.
+      state.machineActivity.push({
+        userId,
+        clerkSessionId: state.clerkSessionId,
+        action: 'add',
+        subscriptionId: id,
+        at: Date.now(),
+        ...(typeof callerLabel === 'string' ? { machineLabel: callerLabel } : {}),
+      })
       return { subId: id, userId, slot, created: true }
     }
     if (name === getFunctionName(api.subscriptions.actions.requestRefresh)) {
@@ -403,5 +470,11 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
     throw new Error(`Fake VaultClient: unhandled action "${name}"`)
   })
 
-  return { query, mutation, action, state }
+  const machineLabel = opts.machineLabel
+  function withMachineLabel<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string } {
+    if (machineLabel === undefined) return args
+    return { ...args, machineLabel }
+  }
+
+  return { query, mutation, action, state, withMachineLabel, machineLabel }
 }

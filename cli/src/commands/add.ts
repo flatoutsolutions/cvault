@@ -72,14 +72,17 @@ export async function runAdd(opts: RunAddOptions): Promise<void> {
   // VAULT_AES_KEY; the CLI never holds the master key.
   const client = await makeVaultClient()
 
-  await client.action(api.subscriptions.actions.upsertFromPlaintext, {
-    email: account.email,
-    plaintextBlob,
-    expiresAt: oauth.expiresAt,
-    subscriptionType: oauth.subscriptionType,
-    rateLimitTier: 'tier1', // PENDING: Anthropic /api/oauth/usage exposes this
-    ...(opts.label !== undefined ? { label: opts.label } : {}),
-  })
+  await client.action(
+    api.subscriptions.actions.upsertFromPlaintext,
+    client.withMachineLabel({
+      email: account.email,
+      plaintextBlob,
+      expiresAt: oauth.expiresAt,
+      subscriptionType: oauth.subscriptionType,
+      rateLimitTier: 'tier1', // PENDING: Anthropic /api/oauth/usage exposes this
+      ...(opts.label !== undefined ? { label: opts.label } : {}),
+    })
+  )
 
   console.log(`\nAdded ${account.email} to the vault.`)
 }

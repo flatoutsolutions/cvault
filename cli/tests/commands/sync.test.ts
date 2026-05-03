@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runSync } from '../../src/commands/sync'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { importEnvelope } from '../../src/credentials'
+import { noopWithMachineLabel } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
   importEnvelope: vi.fn(),
@@ -72,7 +73,7 @@ describe('runSync', () => {
         plaintextBlob: SAMPLE_BLOB,
         contentHash: 'h2',
       })
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runSync()
 
@@ -97,7 +98,7 @@ describe('runSync', () => {
         contentHash: 'h1',
       })
       .mockRejectedValueOnce(new Error('refresh token expired'))
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await runSync()
@@ -112,7 +113,7 @@ describe('runSync', () => {
       query: vi.fn().mockResolvedValueOnce([]),
       action: vi.fn(),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     await runSync()

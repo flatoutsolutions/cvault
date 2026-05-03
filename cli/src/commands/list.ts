@@ -58,6 +58,18 @@ export async function runList(): Promise<void> {
   }))
 
   console.log(renderSubsTable(rows))
+
+  // Footer: explain the `⚠ relogin` STATUS marker so users have an
+  // immediate next-step when a row is flagged. Only print when at
+  // least one row needs re-capture — otherwise the footer is noise.
+  const now = Date.now()
+  const reloginCount = rows.filter((r) => r.refreshExpiresAt !== undefined && r.refreshExpiresAt <= now).length
+  if (reloginCount > 0) {
+    console.log('')
+    console.log(
+      `Subs marked ⚠ need re-capture. Run \`cvault add\` on the machine where you most recently used \`claude\` to recapture them.`
+    )
+  }
 }
 
 export const listCommand = defineCommand({

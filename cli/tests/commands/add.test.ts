@@ -12,6 +12,7 @@ import { runAdd } from '../../src/commands/add'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { exportAccount, getActiveAccount } from '../../src/credentials'
 import { singleAccountEnvelope } from '../fixtures/envelopes/singleAccount'
+import { noopWithMachineLabel } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
   exportAccount: vi.fn(),
@@ -45,7 +46,7 @@ describe('runAdd', () => {
     const env = singleAccountEnvelope({ number: 1, email: 'new@example.com' })
     vi.mocked(exportAccount).mockReturnValueOnce(env)
     const client = fakeVaultClient()
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runAdd({ label: 'work-mac' })
 
@@ -66,7 +67,7 @@ describe('runAdd', () => {
     vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'a@b.com' })
     vi.mocked(exportAccount).mockReturnValueOnce(singleAccountEnvelope({ number: 1, email: 'a@b.com' }))
     const client = fakeVaultClient()
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runAdd({})
 
@@ -80,7 +81,7 @@ describe('runAdd', () => {
     env.accounts[0]!.credentials.claudeAiOauth.expiresAt = 1_900_000_000_000
     vi.mocked(exportAccount).mockReturnValueOnce(env)
     const client = fakeVaultClient()
-    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
 
     await runAdd({})
 

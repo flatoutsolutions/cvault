@@ -112,9 +112,9 @@ describe('exportAll (shim)', () => {
 })
 
 describe('importEnvelope (shim)', () => {
-  it('writes both the keychain blob and the oauthAccount slice', () => {
+  it('writes both the keychain blob and the oauthAccount slice', async () => {
     const env = singleAccountEnvelope()
-    importEnvelope(env)
+    await importEnvelope(env)
     expect(writeActiveCredentials).toHaveBeenCalledOnce()
     const blobArg = vi.mocked(writeActiveCredentials).mock.calls[0]?.[0] ?? ''
     const parsed = JSON.parse(blobArg) as { claudeAiOauth: { accessToken: string } }
@@ -123,8 +123,8 @@ describe('importEnvelope (shim)', () => {
     expect(onDisk.oauthAccount).toEqual(env.accounts[0]!.config?.oauthAccount)
   })
 
-  it('ignores the `force` flag (always overwrites)', () => {
-    importEnvelope(singleAccountEnvelope(), true)
+  it('ignores the `force` flag (always overwrites)', async () => {
+    await importEnvelope(singleAccountEnvelope(), true)
     expect(writeActiveCredentials).toHaveBeenCalledOnce()
   })
 })
@@ -140,9 +140,9 @@ describe('switchTo (shim)', () => {
 })
 
 describe('removeAccount (shim)', () => {
-  it('clears the active credentials AND the oauthAccount slice', () => {
+  it('clears the active credentials AND the oauthAccount slice', async () => {
     writeFileSync(configPath, JSON.stringify({ oauthAccount: CLAUDE_OAUTH, somethingElse: 'keep' }), { mode: 0o600 })
-    removeAccount('a@b.com')
+    await removeAccount('a@b.com')
     expect(deleteActiveCredentials).toHaveBeenCalledOnce()
     const onDisk = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
     expect(onDisk.oauthAccount).toBeUndefined()
@@ -152,9 +152,9 @@ describe('removeAccount (shim)', () => {
 })
 
 describe('purge (shim)', () => {
-  it('behaves identically to removeAccount on native', () => {
+  it('behaves identically to removeAccount on native', async () => {
     writeFileSync(configPath, JSON.stringify({ oauthAccount: CLAUDE_OAUTH }), { mode: 0o600 })
-    purge()
+    await purge()
     expect(deleteActiveCredentials).toHaveBeenCalledOnce()
     const onDisk = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
     expect(onDisk.oauthAccount).toBeUndefined()

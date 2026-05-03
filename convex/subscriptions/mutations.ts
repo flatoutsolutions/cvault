@@ -40,6 +40,11 @@ type ActivityAction = 'switch' | 'add' | 'pull' | 'remove' | 'refresh' | 'rename
  * arrive over the WebSocket — and (b) staying inside the mutation lets
  * the activity-row insert participate in the same transaction as the
  * subscription mutation, so a failure post-insert atomically rolls back.
+ *
+ * `machineLabel` is the human-readable identifier the dashboard shows
+ * for each Clerk session. Mutations called from the CLI forward
+ * `session.machineLabel` here; mutations called from the dashboard pass
+ * `undefined` (browser callers don't have a hostname).
  */
 async function recordActivity(
   ctx: MutationCtx,
@@ -47,6 +52,7 @@ async function recordActivity(
     userId: Id<'users'>
     action: ActivityAction
     subscriptionId?: Id<'subscriptions'>
+    machineLabel?: string
   }
 ): Promise<void> {
   await ctx.db.insert('machineActivity', {
@@ -55,6 +61,7 @@ async function recordActivity(
     action: args.action,
     subscriptionId: args.subscriptionId,
     at: Date.now(),
+    machineLabel: args.machineLabel,
     // No ipHash here — see helper docstring.
   })
 }
@@ -258,9 +265,18 @@ export const upsertEncrypted = internalMutation({
 })
 
 export const softRemove = authenticatedMutation({
-  args: { email: v.string() },
+  args: {
+    email: v.string(),
+    /**
+     * Human-readable identifier for the originating CLI machine. The
+     * dashboard's "Machines" view renders this as the user-visible
+     * label per Clerk session. Optional — see
+     * `machineActivity/schema.ts:machineLabel` for the contract.
+     */
+    machineLabel: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { email }) => {
+  handler: async (ctx, { email, machineLabel }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
     // SECURITY+PERF: scope to (userId, email). Pre-fix used `.filter()` on
@@ -281,15 +297,25 @@ export const softRemove = authenticatedMutation({
     }
 
     await ctx.db.patch('subscriptions', sub._id, { removedAt: Date.now() })
-    await recordActivity(ctx, { userId: user._id, action: 'remove', subscriptionId: sub._id })
+    await recordActivity(ctx, {
+      userId: user._id,
+      action: 'remove',
+      subscriptionId: sub._id,
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
+    })
     return null
   },
 })
 
 export const rename = authenticatedMutation({
-  args: { email: v.string(), label: v.string() },
+  args: {
+    email: v.string(),
+    label: v.string(),
+    /** See softRemove docstring. */
+    machineLabel: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { email, label }) => {
+  handler: async (ctx, { email, label, machineLabel }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
     // Same scoping + canonicalization rule as `softRemove` above.
@@ -303,7 +329,12 @@ export const rename = authenticatedMutation({
     }
 
     await ctx.db.patch('subscriptions', sub._id, { label })
-    await recordActivity(ctx, { userId: user._id, action: 'rename', subscriptionId: sub._id })
+    await recordActivity(ctx, {
+      userId: user._id,
+      action: 'rename',
+      subscriptionId: sub._id,
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
+    })
     return null
   },
 })
@@ -384,6 +415,20 @@ export const commitRefreshedTokens = internalMutation({
       })
     }
 
+    // CAS on `expiresAt`: if a parallel adoptLocalState / adopt-from-Anthropic
+    // already pushed the row to a NEWER expiresAt, this commit's token
+    // material is older — refusing to patch keeps the freshest token
+    // material live. We still drop the lease (the lease holder did
+    // legitimately complete its work; not releasing would force a 30s
+    // TTL wait for the next attempt). Mirrors `adoptLocalState`'s CAS.
+    if (args.expiresAt < sub.expiresAt) {
+      await ctx.db.patch('subscriptions', args.subId, {
+        refreshLeaseHolder: undefined,
+        refreshLeaseUntil: undefined,
+      })
+      return null
+    }
+
     await ctx.db.patch('subscriptions', args.subId, {
       ciphertext: args.ciphertext,
       nonce: args.nonce,
@@ -419,6 +464,79 @@ export const patchUsage = internalMutation({
 
     await ctx.db.patch('subscriptions', args.subId, patch)
     return null
+  },
+})
+
+/**
+ * Internal mutation used by `refreshSub` to adopt a CLI-supplied local
+ * state when its embedded `claudeAiOauth.expiresAt` is strictly newer than
+ * the row's. Encryption is done by the calling action (we accept ciphertext
+ * + nonce here; mutations can't use `node:crypto`).
+ *
+ * CAS check: re-reads the row inside the transaction and only patches if
+ * the row's `expiresAt` is still strictly less than the supplied
+ * `localExpiresAt`. This guards against the race where two CLIs from two
+ * machines both call `refreshSub` with their respective local states; the
+ * second to land will see the first's adoption already applied and no-op.
+ *
+ * Upper-bound cap: a skewed laptop clock or a manipulated Keychain blob
+ * can ship `expiresAt = Date.now() + 100 years`. If we adopted that, the
+ * cron's `findExpiringSubs` window would never catch it (the `byExpiry`
+ * index range query would always miss the future date) and the row would
+ * be poisoned indefinitely. Anthropic's access-token lifetime is 8h; 24h
+ * is a generous bound for clock skew. Any incoming `localExpiresAt` past
+ * `Date.now() + 24h` is rejected (return `adopted: false`, log a warning
+ * with redacted state).
+ *
+ * Returns whether the row was actually patched so the caller can decide
+ * which `action` label to surface in its return payload.
+ */
+const ADOPT_MAX_FUTURE_MS = 24 * 60 * 60 * 1000
+
+export const adoptLocalState = internalMutation({
+  args: {
+    subId: v.id('subscriptions'),
+    ciphertext: v.bytes(),
+    nonce: v.bytes(),
+    localExpiresAt: v.number(),
+  },
+  returns: v.object({ adopted: v.boolean() }),
+  handler: async (ctx, { subId, ciphertext, nonce, localExpiresAt }) => {
+    const sub = await ctx.db.get('subscriptions', subId)
+    if (!sub) {
+      throw new ConvexError({ code: 'NOT_FOUND', message: 'Subscription does not exist' })
+    }
+    if (sub.removedAt !== undefined) {
+      // Don't resurrect a tombstoned sub via local adoption.
+      throw new ConvexError({ code: 'NOT_FOUND', message: 'Subscription has been removed' })
+    }
+    const now = Date.now()
+    if (localExpiresAt > now + ADOPT_MAX_FUTURE_MS) {
+      // Skewed clock or tampered blob — refuse to adopt and log a
+      // warning. Logging redacts subId-only context (no token material is
+      // present in this scope) so the operator can grep `[cvault]` to
+      // see vault-poisoning attempts in Convex logs.
+      console.warn(
+        `[cvault] adoptLocalState: refusing to adopt out-of-bound expiresAt for ` +
+          `subId=${String(subId)} (localExpiresAt=${String(localExpiresAt)}, ceiling=${String(now + ADOPT_MAX_FUTURE_MS)})`
+      )
+      return { adopted: false }
+    }
+    if (localExpiresAt <= sub.expiresAt) {
+      // Race lost — another caller already adopted a state >= ours.
+      return { adopted: false }
+    }
+    await ctx.db.patch('subscriptions', subId, {
+      ciphertext,
+      nonce,
+      expiresAt: localExpiresAt,
+      lastRefreshedAt: now,
+      // Adopting local clears any stale reloginRequired marker from a
+      // prior run of this very sub on a different machine — the local
+      // state being newer means the user successfully refreshed somewhere.
+      refreshExpiresAt: undefined,
+    })
+    return { adopted: true }
   },
 })
 

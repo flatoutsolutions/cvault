@@ -13,9 +13,12 @@
  *      mints a Clerk sign-in token via the Convex `cli.startLink` action,
  *      then POSTs it to our callback
  *   4. We exchange the ticket for a long-lived Clerk session via FAPI
- *   5. Persist `~/.vault/session.json`
+ *   5. Capture the machine label (`--label` override or `os.hostname()`)
+ *      and persist `~/.vault/session.json`
+ *   6. Best-effort `cli.recordLogin` audit row tagged with the machine label
  */
 import { randomUUID } from 'node:crypto'
+import { hostname } from 'node:os'
 
 import { defineCommand } from 'citty'
 
@@ -38,6 +41,31 @@ export interface RunLoginOptions {
   dashboardOrigin?: string
   /** Total time before the localhost listener gives up (ms). */
   timeoutMs?: number
+  /**
+   * Friendly identifier for this machine (used by the dashboard's
+   * "Machines" view + every audit row). Defaults to `os.hostname()`
+   * when omitted; users can override with `--label`.
+   */
+  machineLabel?: string
+}
+
+/**
+ * Resolve the label that goes on the session + every machineActivity
+ * row. The CLI flag wins when supplied; otherwise we fall back to the
+ * OS hostname so dashboards never display a session as "(no label)".
+ *
+ * Trim + collapse whitespace so a stray space in the flag doesn't make
+ * the dashboard show "  air-13  " indented funny. Empty / whitespace-only
+ * input falls through to `os.hostname()` rather than persisting an
+ * empty string (which would be indistinguishable from "no label" in
+ * the optional-string Convex validator).
+ */
+function resolveMachineLabel(override?: string): string {
+  if (override !== undefined) {
+    const trimmed = override.trim()
+    if (trimmed.length > 0) return trimmed
+  }
+  return hostname()
 }
 
 export async function runLogin(opts: RunLoginOptions): Promise<void> {
@@ -83,15 +111,21 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
     throw err
   }
 
-  await writeSession(session)
+  // Capture the machine label NOW (post-exchange, pre-write) so it lands
+  // on the persisted session and on the recordLogin audit row in one
+  // shot. Subsequent commands read `session.machineLabel` and forward it
+  // to every action that writes machineActivity.
+  const machineLabel = resolveMachineLabel(opts.machineLabel)
+  const sessionWithLabel = { ...session, machineLabel }
+  await writeSession(sessionWithLabel)
 
   // Audit: record this CLI machine in machineActivity. Best-effort — login
   // already succeeded, so we don't fail the command if the audit row can't
   // be written (e.g. user's Clerk webhook hasn't fired yet to create the
   // users row).
   try {
-    const client = new VaultClient(session)
-    await client.action(api.cli.actions.recordLogin, {})
+    const client = new VaultClient(sessionWithLabel)
+    await client.action(api.cli.actions.recordLogin, client.withMachineLabel({}))
   } catch (err) {
     console.warn('Login succeeded but machine-activity audit row failed:', err instanceof Error ? err.message : err)
   }
@@ -111,6 +145,12 @@ export const loginCommand = defineCommand({
       description: 'Override dashboard URL (defaults to bundled value).',
       required: false,
     },
+    label: {
+      type: 'string',
+      description:
+        'Friendly machine name for the dashboard’s "Machines" view. ' + 'Defaults to the OS hostname when omitted.',
+      required: false,
+    },
   },
   async run({ args }) {
     const config = resolveConfig()
@@ -118,6 +158,7 @@ export const loginCommand = defineCommand({
       dashboardUrl: args.dashboardUrl ?? config.dashboardUrl,
       convexUrl: config.convexUrl,
       frontendApiUrl: config.frontendApiUrl,
+      ...(args.label !== undefined ? { machineLabel: args.label } : {}),
     })
   },
 })

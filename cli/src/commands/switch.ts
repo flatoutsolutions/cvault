@@ -74,9 +74,10 @@ export async function runSwitch(opts: RunSwitchOptions): Promise<void> {
   let pull: PullResult
   try {
     const client = await makeVaultClient()
-    pull = await client.action(api.subscriptions.actions.pullForSwitch, {
-      slotOrEmail: opts.slotOrEmail,
-    })
+    pull = await client.action(
+      api.subscriptions.actions.pullForSwitch,
+      client.withMachineLabel({ slotOrEmail: opts.slotOrEmail })
+    )
   } catch (err) {
     if (isNetworkError(err)) {
       throw new OfflineError()

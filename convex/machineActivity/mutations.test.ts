@@ -65,6 +65,44 @@ describe('machineActivity.mutations.record', () => {
     const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     expect(rows[0]?.ipHash).toBeUndefined()
   })
+
+  /**
+   * `machineLabel` is the user-visible identifier for a machine in the
+   * dashboard's "Machines" section. The CLI defaults it to `os.hostname()`
+   * at session creation; the user can override via `cvault login --label`.
+   * Stored on every machineActivity row so the dashboard's most-recent
+   * lookup picks it up without a join.
+   */
+  it('stores machineLabel when provided', async () => {
+    const t = vault()
+    const userId = await seedUser(t)
+
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId,
+      clerkSessionId: 'sess_label',
+      action: 'add',
+      at: Date.now(),
+      machineLabel: 'office-laptop',
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    expect(rows[0]?.machineLabel).toBe('office-laptop')
+  })
+
+  it('omits machineLabel when not provided (backward compat with legacy callers)', async () => {
+    const t = vault()
+    const userId = await seedUser(t)
+
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId,
+      clerkSessionId: 'sess_no_label',
+      action: 'add',
+      at: Date.now(),
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    expect(rows[0]?.machineLabel).toBeUndefined()
+  })
 })
 
 describe('machineActivity.queries.recentForUser', () => {
@@ -89,5 +127,66 @@ describe('machineActivity.queries.recentForUser', () => {
       paginationOpts: { numItems: 10, cursor: null },
     })
     expect(result.page.map((r: { action: string }) => r.action)).toEqual(['switch', 'add']) // newest first
+  })
+})
+
+describe('machineActivity.queries.distinctSessionsForUser', () => {
+  /**
+   * The dashboard's "Machines" section reads from this query. Each row
+   * is one Clerk session; the user-visible identifier is `machineLabel`.
+   * The mapping from sessionId → label is captured on every audit row,
+   * and we surface the most-recent label per session — so renaming a
+   * machine via `cvault login --label` is reflected on the next refresh.
+   */
+  it('returns the most-recent machineLabel per session', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    // Session A: two rows, the most-recent one carries a renamed label.
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_a',
+      action: 'add',
+      at: 1000,
+      machineLabel: 'old-name',
+    })
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_a',
+      action: 'refresh',
+      at: 2000,
+      machineLabel: 'new-name',
+    })
+
+    // Session B: only one row, with a label.
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_b',
+      action: 'add',
+      at: 1500,
+      machineLabel: 'sole-row',
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
+    const bySession = new Map(result.map((r) => [r.clerkSessionId, r]))
+    expect(bySession.get('sess_a')?.machineLabel).toBe('new-name')
+    expect(bySession.get('sess_b')?.machineLabel).toBe('sole-row')
+  })
+
+  it('returns machineLabel undefined when the session has no labeled rows', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_legacy',
+      action: 'add',
+      at: 1000,
+      // no machineLabel — legacy / pre-feature row
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
+    expect(result).toHaveLength(1)
+    expect(result[0]?.machineLabel).toBeUndefined()
   })
 })

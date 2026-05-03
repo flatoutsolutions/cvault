@@ -29,7 +29,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runSwitch } from '../../src/commands/switch'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { importEnvelope, switchTo } from '../../src/credentials'
-import { cleanupTempHome, setupTempHome } from './_helpers'
+import { cleanupTempHome, noopWithMachineLabel, setupTempHome } from './_helpers'
 
 vi.mock('../../src/credentials', () => ({
   importEnvelope: vi.fn(),
@@ -69,6 +69,7 @@ describe('Scenario #12 — Offline (fail loud)', () => {
       query: vi.fn(),
       action: vi.fn().mockRejectedValueOnce(new Error('fetch failed: ECONNREFUSED 127.0.0.1:443')),
       mutation: vi.fn(),
+      withMachineLabel: noopWithMachineLabel,
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fakeClient as never)
 
@@ -84,6 +85,7 @@ describe('Scenario #12 — Offline (fail loud)', () => {
       query: vi.fn(),
       action: vi.fn().mockRejectedValueOnce(new Error('500 InternalError: VAULT_AES_KEY missing')),
       mutation: vi.fn(),
+      withMachineLabel: noopWithMachineLabel,
     }
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fakeClient as never)
 

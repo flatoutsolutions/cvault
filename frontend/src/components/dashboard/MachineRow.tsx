@@ -3,8 +3,19 @@
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §8.
  *
- * The Revoke button is wired by the parent page; this component is
- * presentational + stateless.
+ * Visual hierarchy (after the machineLabel rollout):
+ *   ┌─────────────────────────────────────────┬──────────┐
+ *   │ <machineLabel>                          │ [Revoke] │
+ *   │ Last seen 23m ago · IP: a1b2c3d4        │          │
+ *   └─────────────────────────────────────────┴──────────┘
+ *
+ * The opaque `clerkSessionId` is no longer visible — it's exposed via the
+ * row's native `title` attribute so a maintainer can hover for debugging
+ * without cluttering the user-facing UI. Revoke is still keyed by
+ * `clerkSessionId` because the backend's Clerk Backend API call needs it.
+ *
+ * The component is presentational + stateless; the parent page wires
+ * `onRevoke` to `api.cli.actions.revokeSession`.
  */
 import { Button } from '@/components/ui/button'
 
@@ -12,6 +23,14 @@ export type MachineRowProps = {
   clerkSessionId: string
   lastIpHash: string | undefined
   lastSeenAt: number
+  /**
+   * Human-readable identifier for the machine (defaults to hostname,
+   * overridable via `cvault login --label`). Optional because legacy
+   * pre-feature rows don't carry one — the row falls back to a
+   * "(no label)" placeholder rather than exposing the opaque sessionId
+   * to the end user.
+   */
+  machineLabel: string | undefined
   onRevoke: (args: { sessionId: string }) => void
   pending: boolean
 }
@@ -28,18 +47,39 @@ function relativeTime(at: number, now: number = Date.now()): string {
   return `${days.toString()}d ago`
 }
 
-export function MachineRow({ clerkSessionId, lastIpHash, lastSeenAt, onRevoke, pending }: MachineRowProps) {
+export function MachineRow({
+  clerkSessionId,
+  lastIpHash,
+  lastSeenAt,
+  machineLabel,
+  onRevoke,
+  pending,
+}: MachineRowProps) {
+  const lastSeenText = `Last seen ${relativeTime(lastSeenAt)}`
+  const ipText = lastIpHash !== undefined ? `IP: ${lastIpHash}` : undefined
+
   return (
     <div
       data-slot="machine-row"
-      className="border-border grid grid-cols-[1fr_140px_120px_120px] items-center gap-3 border-b px-4 py-3 text-sm"
+      className="border-border grid grid-cols-[1fr_auto] items-center gap-3 border-b px-4 py-3 text-sm"
+      title={clerkSessionId}
     >
-      <div className="font-mono text-xs">
-        {clerkSessionId.slice(0, 14)}
-        <span className="text-muted-foreground">…</span>
+      <div className="flex min-w-0 flex-col">
+        {machineLabel !== undefined ? (
+          <span className="text-foreground truncate font-medium">{machineLabel}</span>
+        ) : (
+          <span className="text-muted-foreground italic">(no label)</span>
+        )}
+        <span className="text-muted-foreground text-xs tabular-nums">
+          {lastSeenText}
+          {ipText !== undefined ? (
+            <>
+              {' · '}
+              <span className="font-mono">{ipText}</span>
+            </>
+          ) : null}
+        </span>
       </div>
-      <div className="text-muted-foreground font-mono text-xs">{lastIpHash ?? '—'}</div>
-      <div className="text-muted-foreground text-xs tabular-nums">{relativeTime(lastSeenAt)}</div>
       <div className="flex justify-end">
         <Button
           type="button"

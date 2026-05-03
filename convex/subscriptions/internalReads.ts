@@ -113,6 +113,23 @@ export const getSubscriptionByIdForActor = internalQuery({
  */
 const RECOVERABLE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000
 
+/**
+ * A sub is "RT dead" once `markReloginRequired` clamps `refreshExpiresAt`
+ * to `Date.now()` after Anthropic answered `invalid_grant`. Dead subs MUST
+ * be excluded from cron scans — otherwise every tick re-drives Anthropic
+ * (burns an API call), logs a fresh `reloginRequired` row (spam), and
+ * gives the user nothing they didn't already know. Recovery requires the
+ * user to `cvault add` again on a machine that holds a fresh blob; until
+ * that happens, the cron has no productive work to do.
+ *
+ * `refreshExpiresAt === undefined` is treated as "alive" because legacy /
+ * never-refreshed rows lack the field — excluding them would silently
+ * drop every sub created before RT-tracking landed.
+ */
+function isReloginRequired(row: { refreshExpiresAt?: number }, now: number): boolean {
+  return row.refreshExpiresAt !== undefined && row.refreshExpiresAt <= now
+}
+
 /** Internal query used by the cron to find subs whose access token expires soon. */
 export const findExpiringSubs = internalQuery({
   args: { withinMs: v.number() },
@@ -126,7 +143,8 @@ export const findExpiringSubs = internalQuery({
       .withIndex('byExpiry', (q) => q.gt('expiresAt', floor).lt('expiresAt', cutoff))
       .collect()
     // Filter out tombstoned subs in JS (low cardinality of soft-deletes per spec §4).
-    return rows.filter((r) => r.removedAt === undefined).map((r) => ({ subId: r._id }))
+    // Also exclude RT-dead subs — see `isReloginRequired` above.
+    return rows.filter((r) => r.removedAt === undefined && !isReloginRequired(r, now)).map((r) => ({ subId: r._id }))
   },
 })
 
@@ -135,7 +153,10 @@ export const listAllActiveSubIds = internalQuery({
   args: {},
   returns: v.array(v.object({ subId: v.id('subscriptions') })),
   handler: async (ctx) => {
+    const now = Date.now()
     const rows = await ctx.db.query('subscriptions').collect()
-    return rows.filter((r) => r.removedAt === undefined).map((r) => ({ subId: r._id }))
+    // Polling usage with a dead access token is wasted work — the next
+    // refresh cycle won't be able to recover it without user re-capture.
+    return rows.filter((r) => r.removedAt === undefined && !isReloginRequired(r, now)).map((r) => ({ subId: r._id }))
   },
 })

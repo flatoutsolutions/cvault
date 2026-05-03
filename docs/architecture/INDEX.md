@@ -1,0 +1,8 @@
+# Architecture diagrams
+
+Each row points at a file under `docs/architecture/`. The **Covers** column lists the source paths the diagram describes — when you change one of those files, update the diagram in the same PR.
+
+| Diagram                                                | Format       | Covers                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [cvault-system.excalidraw](./cvault-system.excalidraw) | Excalidraw   | `cli/src/**` (whole CLI), `cli/src/native/**` (Keychain/claude.json read-write), `cli/src/auth/clerkFapi.ts` (login flow), `convex/cli/**` (mint + sync routes), `convex/http.ts`, `convex/subscriptions/**`, `convex/refreshLog/**`, `convex/machineActivity/**`, `convex/webhooks/**`, `frontend/src/routes/**` |
+| [observability.md](./observability.md)                 | prose / spec | `convex/utils/redact.ts`, `convex/refreshLog/**`, `convex/machineActivity/**`, `convex/crons.ts`, dashboard `/dashboard/audit`                                                                                                                                                                                    |

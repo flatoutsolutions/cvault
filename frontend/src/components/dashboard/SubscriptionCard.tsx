@@ -68,6 +68,15 @@ export function SubscriptionCard({
     setRenameOpen(false)
   }
 
+  // Mirror ReloginBadge's heuristic: the badge fires exactly when
+  // `refreshExpiresAt <= now`. We re-derive here so the same boolean
+  // gates both the at-a-glance badge in the header AND the actionable
+  // explainer in the body. We don't pull the heuristic out into a
+  // shared hook because the comparison is one line and a hook would
+  // be more ceremony than it's worth — keeping it inline also makes
+  // the test contract obvious.
+  const reloginRequired = sub.refreshExpiresAt !== undefined && sub.refreshExpiresAt <= Date.now()
+
   return (
     <Card data-slot="subscription-card" className="flex flex-col">
       <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
@@ -137,6 +146,21 @@ export function SubscriptionCard({
           <p data-slot="force-refresh-error" className="text-destructive text-xs" role="alert">
             {forceRefreshError}
           </p>
+        )}
+        {reloginRequired && (
+          <div
+            data-testid="relogin-explainer"
+            role="alert"
+            className="border-destructive/50 bg-destructive/10 text-destructive rounded-md border p-3 text-xs"
+          >
+            <p className="font-medium">Token rotated externally.</p>
+            <p className="mt-1 leading-relaxed">
+              Run <code className="bg-muted text-foreground rounded px-1 py-0.5 font-mono">cvault add</code> on the
+              machine where you most recently used{' '}
+              <code className="bg-muted text-foreground rounded px-1 py-0.5 font-mono">claude</code> to recapture this
+              subscription.
+            </p>
+          </div>
         )}
       </CardContent>
 

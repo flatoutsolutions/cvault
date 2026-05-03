@@ -401,6 +401,97 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     expect(acq.acquired).toBe(true)
   })
 
+  /**
+   * Cron spam guard: a sub whose `refreshExpiresAt <= now` was already
+   * marked dead (a prior refresh got `invalid_grant` from Anthropic).
+   * The action MUST NOT re-drive Anthropic in that state — every cron
+   * tick would otherwise burn an API call and log a fresh
+   * `reloginRequired` row. The cron-side `findExpiringSubs` filter is
+   * the primary defense; this is the defense-in-depth re-check inside
+   * the action so manual `cvault refresh` calls and any future caller
+   * also short-circuit cleanly.
+   */
+  it('short-circuits when refreshExpiresAt <= now (no Anthropic call, no spurious log)', async () => {
+    const t = vault()
+    const inserted = await seedSubscription(t)
+
+    // Mark the sub as RT-dead by clamping refreshExpiresAt into the past.
+    // Mirrors what `markReloginRequired` does after a real `invalid_grant`.
+    await t.run(async (ctx) => {
+      await ctx.db.patch('subscriptions', inserted.subId, {
+        refreshExpiresAt: Date.now() - 60_000,
+      })
+    })
+
+    // If the action reaches Anthropic, this is a bug — the test would
+    // observe a fetchStub call, which we explicitly assert does NOT
+    // happen.
+    const fetchStub = makeFetchStub({ status: 200, body: { access_token: 'X' } })
+    __setAnthropicFetch(fetchStub)
+
+    await t.action(internal.subscriptions.actions.refreshOAuthToken, {
+      subId: inserted.subId,
+      triggeredBy: 'cron',
+    })
+
+    expect(fetchStub).not.toHaveBeenCalled()
+
+    // The lease MUST be released so a later user-driven `cvault add`
+    // (which writes through `upsertEncrypted`, not the lease path)
+    // doesn't have to wait 30 seconds.
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.refreshLeaseHolder).toBeUndefined()
+    expect(after?.refreshLeaseUntil).toBeUndefined()
+
+    // No log row inserted — the original `reloginRequired` row from the
+    // refresh that first marked the sub dead is enough; further rows
+    // are noise.
+    const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
+    expect(logs).toHaveLength(0)
+  })
+
+  /**
+   * Machine label propagation: every public action that records to
+   * machineActivity accepts an optional `machineLabel` and forwards it
+   * to the audit row. The dashboard's "Machines" section reads the
+   * most-recent label per Clerk session as the user-visible identifier.
+   * Without this pass-through, the dashboard would only ever show
+   * `(no label)` even though the CLI knows the hostname.
+   */
+  it('pullForSwitch forwards machineLabel to the machineActivity row', async () => {
+    const t = vault()
+    await seedUser(t)
+    const { encrypt } = await import('./crypto')
+    // Fresh token so the proactive refresh inside pullForSwitch is a no-op.
+    const futureExpiry = Date.now() + 60 * 60 * 1000
+    const plaintext = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-FRESH-AAAAAAAAAAAAAAAAAAAA',
+        refreshToken: 'sk-ant-ort01-FRESH-BBBBBBBBBBBBBBBBBBBB',
+        expiresAt: futureExpiry,
+        scopes: ['user:inference'],
+      },
+    })
+    const { ciphertext, nonce } = encrypt(plaintext)
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'label-pull@example.com',
+      ciphertext,
+      nonce,
+      expiresAt: futureExpiry,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.pullForSwitch, {
+      slotOrEmail: 'label-pull@example.com',
+      machineLabel: 'air-13-stefan',
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const pullRow = rows.find((r) => r.action === 'pull')
+    expect(pullRow?.machineLabel).toBe('air-13-stefan')
+  })
+
   it('redacts OAuth-token-shaped substrings from the error log', async () => {
     const t = vault()
     const inserted = await seedSubscription(t)
