@@ -132,17 +132,20 @@ describe('machineActivity.queries.recentForUser', () => {
 
 describe('machineActivity.queries.distinctSessionsForUser', () => {
   /**
-   * The dashboard's "Machines" section reads from this query. Each row
-   * is one Clerk session; the user-visible identifier is `machineLabel`.
-   * The mapping from sessionId → label is captured on every audit row,
-   * and we surface the most-recent label per session — so renaming a
-   * machine via `cvault login --label` is reflected on the next refresh.
+   * The dashboard's "Machines" section reads from this query. Rows are
+   * grouped by `(clerkSessionId, machineLabel)` so the `unknown-session`
+   * sentinel — written by cron, server-context, and pre-fix CLI — does
+   * not collapse every machine into one row. Within a single sid, an
+   * in-place rename via `cvault login --label` produces a row per
+   * label; in practice each `cvault login` mints a fresh Clerk session
+   * so distinct labels usually correspond to distinct sids anyway.
    */
-  it('returns the most-recent machineLabel per session', async () => {
+  it('returns one row per (sessionId, machineLabel) pair', async () => {
     const t = vault()
     const aliceId = await seedUser(t)
 
-    // Session A: two rows, the most-recent one carries a renamed label.
+    // Session A: two rows under the same sid with different labels —
+    // composite key surfaces them as separate rows.
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
       clerkSessionId: 'sess_a',
@@ -168,9 +171,13 @@ describe('machineActivity.queries.distinctSessionsForUser', () => {
     })
 
     const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
-    const bySession = new Map(result.map((r) => [r.clerkSessionId, r]))
-    expect(bySession.get('sess_a')?.machineLabel).toBe('new-name')
-    expect(bySession.get('sess_b')?.machineLabel).toBe('sole-row')
+    const labels = result.map((r) => r.machineLabel).sort()
+    expect(labels).toEqual(['new-name', 'old-name', 'sole-row'])
+    // sess_a appears twice (once per label); sess_b once.
+    expect(result.filter((r) => r.clerkSessionId === 'sess_a')).toHaveLength(2)
+    expect(result.filter((r) => r.clerkSessionId === 'sess_b')).toHaveLength(1)
+    // Real sids are revocable; sentinel is not (none here).
+    expect(result.every((r) => r.revocable)).toBe(true)
   })
 
   it('returns machineLabel undefined when the session has no labeled rows', async () => {

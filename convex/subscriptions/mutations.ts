@@ -15,21 +15,8 @@ import { ConvexError, v } from 'convex/values'
 import { type Doc, type Id } from '../_generated/dataModel'
 import { type MutationCtx, internalMutation } from '../_generated/server'
 import { authenticatedMutation, getIdentity } from '../utils/auth'
+import { resolveCallerSession } from '../utils/identity'
 import { getCurrentUserOrThrowFromIdentity } from '../utils/users'
-
-/**
- * Read the Clerk session id from the JWT identity, returning a sentinel
- * when the `sid` claim is missing. The audit-row insert requires a
- * non-empty string so we keep the row writable even on identities
- * without sid (e.g. internal callers that hand-built an identity for
- * tests). Spec §4 + §12 want every authenticated state-changing
- * operation to leave a `machineActivity` row.
- */
-function clerkSessionFromIdentity(ctx: MutationCtx): string {
-  const identity = getIdentity(ctx)
-  const sid = (identity as { sid?: unknown }).sid
-  return typeof sid === 'string' && sid.length > 0 ? sid : 'unknown-session'
-}
 
 type ActivityAction = 'switch' | 'add' | 'pull' | 'remove' | 'refresh' | 'rename'
 
@@ -53,11 +40,18 @@ async function recordActivity(
     action: ActivityAction
     subscriptionId?: Id<'subscriptions'>
     machineLabel?: string
+    /**
+     * Caller's Clerk session id, supplied by the CLI as an action arg
+     * (BAPI-minted JWTs lack the `sid` claim — see `utils/identity.ts`).
+     * Optional; falls back to `identity.sid` (FAPI/dashboard origin)
+     * then to the `unknown-session` sentinel.
+     */
+    clerkSessionId?: string
   }
 ): Promise<void> {
   await ctx.db.insert('machineActivity', {
     userId: args.userId,
-    clerkSessionId: clerkSessionFromIdentity(ctx),
+    clerkSessionId: resolveCallerSession(getIdentity(ctx), args.clerkSessionId),
     action: args.action,
     subscriptionId: args.subscriptionId,
     at: Date.now(),
@@ -274,9 +268,14 @@ export const softRemove = authenticatedMutation({
      * `machineActivity/schema.ts:machineLabel` for the contract.
      */
     machineLabel: v.optional(v.string()),
+    /**
+     * Caller's Clerk session id. Required for BAPI-minted CLI JWTs that
+     * lack a `sid` claim. See `utils/identity.ts`.
+     */
+    clerkSessionId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { email, machineLabel }) => {
+  handler: async (ctx, { email, machineLabel, clerkSessionId }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
     // SECURITY+PERF: scope to (userId, email). Pre-fix used `.filter()` on
@@ -302,6 +301,7 @@ export const softRemove = authenticatedMutation({
       action: 'remove',
       subscriptionId: sub._id,
       ...(machineLabel !== undefined ? { machineLabel } : {}),
+      ...(clerkSessionId !== undefined ? { clerkSessionId } : {}),
     })
     return null
   },
@@ -313,9 +313,11 @@ export const rename = authenticatedMutation({
     label: v.string(),
     /** See softRemove docstring. */
     machineLabel: v.optional(v.string()),
+    /** See softRemove docstring. */
+    clerkSessionId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { email, label, machineLabel }) => {
+  handler: async (ctx, { email, label, machineLabel, clerkSessionId }) => {
     const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
 
     // Same scoping + canonicalization rule as `softRemove` above.
@@ -334,6 +336,7 @@ export const rename = authenticatedMutation({
       action: 'rename',
       subscriptionId: sub._id,
       ...(machineLabel !== undefined ? { machineLabel } : {}),
+      ...(clerkSessionId !== undefined ? { clerkSessionId } : {}),
     })
     return null
   },

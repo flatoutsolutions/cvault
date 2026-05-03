@@ -31,6 +31,7 @@ describe('MachineRow', () => {
     lastIpHash: 'a1b2c3d4',
     lastSeenAt: Date.now() - 5 * 60_000,
     machineLabel: 'saads-macbook-pro',
+    revocable: true,
     onRevoke: vi.fn(),
     pending: false,
   }
@@ -86,5 +87,12 @@ describe('MachineRow', () => {
     render(<MachineRow {...baseProps} pending={true} />)
     const button = screen.getByRole('button', { name: /revok/i })
     expect((button as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('disables the revoke button when revocable is false and shows server-side hint', () => {
+    render(<MachineRow {...baseProps} revocable={false} />)
+    const button = screen.getByRole('button', { name: /revok/i })
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(/server-side/)).toBeTruthy()
   })
 })

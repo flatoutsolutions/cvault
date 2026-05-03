@@ -53,12 +53,14 @@ describe('/dashboard/machines', () => {
         lastSeenAt: now - 60_000,
         lastIpHash: '1234abcd',
         machineLabel: 'macbook-air',
+        revocable: true,
       },
       {
         clerkSessionId: 'sess_999zzz888yyy',
         lastSeenAt: now - 5 * 60_000,
         lastIpHash: undefined,
         machineLabel: undefined,
+        revocable: true,
       },
     ]
     const { container } = render(<MachinesPage />)
@@ -73,18 +75,21 @@ describe('/dashboard/machines', () => {
         lastSeenAt: now - 60_000,
         lastIpHash: '1234abcd',
         machineLabel: 'macbook-air',
+        revocable: true,
       },
       {
         clerkSessionId: 'sess_222bbb333ccc',
         lastSeenAt: now - 5 * 60_000,
         lastIpHash: '5678efgh',
         machineLabel: 'desktop-linux',
+        revocable: true,
       },
       {
         clerkSessionId: 'sess_999zzz888yyy',
         lastSeenAt: now - 10 * 60_000,
         lastIpHash: undefined,
         machineLabel: undefined,
+        revocable: true,
       },
     ]
     render(<MachinesPage />)
@@ -96,7 +101,13 @@ describe('/dashboard/machines', () => {
   it('calls the revoke action with the clicked session id', async () => {
     const now = Date.now()
     sessionsResult = [
-      { clerkSessionId: 'sess_111aaa222bbb', lastSeenAt: now, lastIpHash: 'abcd', machineLabel: 'work-laptop' },
+      {
+        clerkSessionId: 'sess_111aaa222bbb',
+        lastSeenAt: now,
+        lastIpHash: 'abcd',
+        machineLabel: 'work-laptop',
+        revocable: true,
+      },
     ]
     render(<MachinesPage />)
 
@@ -109,7 +120,13 @@ describe('/dashboard/machines', () => {
   it('renders an inline error block when the revoke action throws', async () => {
     const now = Date.now()
     sessionsResult = [
-      { clerkSessionId: 'sess_111aaa222bbb', lastSeenAt: now, lastIpHash: 'abcd', machineLabel: 'work-laptop' },
+      {
+        clerkSessionId: 'sess_111aaa222bbb',
+        lastSeenAt: now,
+        lastIpHash: 'abcd',
+        machineLabel: 'work-laptop',
+        revocable: true,
+      },
     ]
     revokeMock.mockRejectedValueOnce(new Error('CLERK_BACKEND_ERROR: 429'))
     render(<MachinesPage />)

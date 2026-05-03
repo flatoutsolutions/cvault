@@ -72,8 +72,19 @@ export const cliSyncHandler = httpAction(async (ctx, request) => {
   // Audit row. We have a real `Request` here so we can pass `rawIp` for
   // hashing — the only public surface that does (the WebSocket-driven
   // mutations don't have access to the underlying TCP peer).
+  //
+  // CLI BAPI-minted JWTs do not carry a `sid` claim (Clerk reservation;
+  // see `utils/identity.ts`). The CLI sends its session id in the
+  // `X-Cvault-Session-Id` header so we can attribute the pull row to
+  // the correct machine on the dashboard.
+  const headerSid = request.headers.get('x-cvault-session-id') ?? undefined
   const sidClaim = (identity as { sid?: unknown }).sid
-  const clerkSessionId = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
+  const clerkSessionId =
+    typeof sidClaim === 'string' && sidClaim.length > 0
+      ? sidClaim
+      : headerSid !== null && headerSid !== undefined && headerSid.length > 0
+        ? headerSid
+        : 'unknown-session'
   // Standard reverse-proxy header for the originating client IP. We
   // take only the first hop (the rest are intermediaries we don't trust).
   const xff = request.headers.get('x-forwarded-for')

@@ -63,7 +63,7 @@ export async function runRemove(opts: RunRemoveOptions): Promise<void> {
 
   // Step 1 — server-side soft remove. If this throws, the local
   // credentials are untouched.
-  await client.mutation(api.subscriptions.mutations.softRemove, client.withMachineLabel({ email }))
+  await client.mutation(api.subscriptions.mutations.softRemove, client.withMeta({ email }))
 
   // Step 2 — local clear, but ONLY when the removed sub matches the
   // currently-active local account. Removing a non-active sub must not

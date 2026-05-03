@@ -125,7 +125,7 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
   // users row).
   try {
     const client = new VaultClient(sessionWithLabel)
-    await client.action(api.cli.actions.recordLogin, client.withMachineLabel({}))
+    await client.action(api.cli.actions.recordLogin, client.withMeta({}))
   } catch (err) {
     console.warn('Login succeeded but machine-activity audit row failed:', err instanceof Error ? err.message : err)
   }

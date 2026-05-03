@@ -31,6 +31,13 @@ export type MachineRowProps = {
    * to the end user.
    */
   machineLabel: string | undefined
+  /**
+   * Whether the row maps to a real Clerk session. False for the
+   * `unknown-session` sentinel — Revoke is disabled because there's no
+   * BAPI-revocable session, but the row still renders so the user
+   * sees the activity (cron, server-context writes, pre-fix CLI).
+   */
+  revocable: boolean
   onRevoke: (args: { sessionId: string }) => void
   pending: boolean
 }
@@ -52,11 +59,15 @@ export function MachineRow({
   lastIpHash,
   lastSeenAt,
   machineLabel,
+  revocable,
   onRevoke,
   pending,
 }: MachineRowProps) {
   const lastSeenText = `Last seen ${relativeTime(lastSeenAt)}`
   const ipText = lastIpHash !== undefined ? `IP: ${lastIpHash}` : undefined
+  const revokeDisabledTitle = revocable
+    ? undefined
+    : 'No live Clerk session — this row was written by a cron job or a CLI version that pre-dates the explicit session-id arg. Re-login from the affected machine to register a revocable session.'
 
   return (
     <div
@@ -78,6 +89,12 @@ export function MachineRow({
               <span className="font-mono">{ipText}</span>
             </>
           ) : null}
+          {!revocable ? (
+            <>
+              {' · '}
+              <span className="italic">server-side</span>
+            </>
+          ) : null}
         </span>
       </div>
       <div className="flex justify-end">
@@ -85,7 +102,8 @@ export function MachineRow({
           type="button"
           variant="destructive"
           size="sm"
-          disabled={pending}
+          disabled={pending || !revocable}
+          title={revokeDisabledTitle}
           onClick={() => {
             onRevoke({ sessionId: clerkSessionId })
           }}

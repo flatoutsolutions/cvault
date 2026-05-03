@@ -21,6 +21,7 @@ import { ConvexError, v } from 'convex/values'
 
 import { internal } from '../_generated/api'
 import { authenticatedAction, getIdentity } from '../utils/auth'
+import { resolveCallerSession } from '../utils/identity'
 import { getClerkSession, mintSignInToken, revokeClerkSession } from './clerk'
 
 export const startLink = authenticatedAction({
@@ -98,8 +99,7 @@ export const revokeSession = authenticatedAction({
 
     // Audit: record the revoke in machineActivity. Per spec §4 + §12 every
     // authenticated state-changing action should leave an audit row.
-    const sidClaim = (identity as { sid?: unknown }).sid
-    const callerSession = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
+    const callerSession = resolveCallerSession(identity)
     // Resolve the user row so we can scope the activity correctly. If the
     // user row is missing (extremely rare; would mean the Clerk webhook
     // didn't fire) we still return success — the revoke already landed.
@@ -129,12 +129,18 @@ export const revokeSession = authenticatedAction({
 export const recordLogin = authenticatedAction({
   args: {
     machineLabel: v.optional(v.string()),
+    /**
+     * Clerk session id of the calling CLI. Required because BAPI-minted
+     * JWTs do not carry a `sid` claim (Clerk reservation; see
+     * `utils/identity.ts`). Optional in the schema for backward
+     * compatibility with older CLIs, but new CLIs always pass it.
+     */
+    clerkSessionId: v.optional(v.string()),
   },
   returns: v.object({ recorded: v.boolean() }),
-  handler: async (ctx, { machineLabel }): Promise<{ recorded: boolean }> => {
+  handler: async (ctx, { machineLabel, clerkSessionId }): Promise<{ recorded: boolean }> => {
     const identity = getIdentity(ctx)
-    const sidClaim = (identity as { sid?: unknown }).sid
-    const callerSession = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
+    const callerSession = resolveCallerSession(identity, clerkSessionId)
 
     const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
       externalId: identity.subject,

@@ -88,25 +88,29 @@ export function MachinesPage() {
             <div>machine</div>
             <div className="text-right">action</div>
           </div>
-          {sessions.map((s) => (
-            <div key={s.clerkSessionId} className="flex flex-col">
-              <MachineRow
-                clerkSessionId={s.clerkSessionId}
-                lastIpHash={s.lastIpHash}
-                lastSeenAt={s.lastSeenAt}
-                machineLabel={s.machineLabel}
-                onRevoke={(args) => {
-                  void handleRevoke(args)
-                }}
-                pending={pendingByEmail[s.clerkSessionId] === true}
-              />
-              {errorByEmail[s.clerkSessionId] !== undefined ? (
-                <div className="bg-destructive/10 text-destructive border-border border-b px-4 py-2 text-xs">
-                  {errorByEmail[s.clerkSessionId]}
-                </div>
-              ) : null}
-            </div>
-          ))}
+          {sessions.map((s) => {
+            const rowKey = `${s.clerkSessionId}|${s.machineLabel ?? ''}`
+            return (
+              <div key={rowKey} className="flex flex-col">
+                <MachineRow
+                  clerkSessionId={s.clerkSessionId}
+                  lastIpHash={s.lastIpHash}
+                  lastSeenAt={s.lastSeenAt}
+                  machineLabel={s.machineLabel}
+                  revocable={s.revocable}
+                  onRevoke={(args) => {
+                    void handleRevoke(args)
+                  }}
+                  pending={pendingByEmail[s.clerkSessionId] === true}
+                />
+                {errorByEmail[s.clerkSessionId] !== undefined ? (
+                  <div className="bg-destructive/10 text-destructive border-border border-b px-4 py-2 text-xs">
+                    {errorByEmail[s.clerkSessionId]}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

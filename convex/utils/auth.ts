@@ -33,10 +33,24 @@ import {
   type QueryBuilder,
   type UserIdentity,
 } from 'convex/server'
-import type { PropertyValidators } from 'convex/values'
+import { ConvexError, type PropertyValidators } from 'convex/values'
 
 import type { DataModel } from '../_generated/dataModel'
 import { action, mutation, query } from '../_generated/server'
+
+/**
+ * Throwing a plain `Error` from a public function surfaces on the client
+ * as the generic masked string `"Server Error"` (Convex strips the message
+ * to avoid leaking internals from prod). For "Not authenticated" we'd
+ * rather the dashboard see a real, structured code so it can render an
+ * actionable message instead of a baffling "Server Error" toast.
+ */
+function notAuthenticatedError(): ConvexError<{ code: string; message: string }> {
+  return new ConvexError({
+    code: 'NOT_AUTHENTICATED',
+    message: 'Not authenticated. Sign in again before retrying.',
+  })
+}
 
 /**
  * Read the verified Clerk identity from a ctx that has been augmented by
@@ -83,7 +97,7 @@ export const authenticatedQuery = (<Args extends DefaultFunctionArgs>(fn: {
     handler: async (ctx, args) => {
       const identity = await ctx.auth.getUserIdentity()
       if (!identity) {
-        throw new Error('Not authenticated')
+        throw notAuthenticatedError()
       }
       return await fn.handler(Object.assign(ctx, { identity }), args as Args)
     },
@@ -104,7 +118,7 @@ export const authenticatedMutation = (<Args extends DefaultFunctionArgs>(fn: {
     handler: async (ctx, args) => {
       const identity = await ctx.auth.getUserIdentity()
       if (!identity) {
-        throw new Error('Not authenticated')
+        throw notAuthenticatedError()
       }
       return await fn.handler(Object.assign(ctx, { identity }), args as Args)
     },
@@ -125,7 +139,7 @@ export const authenticatedAction = (<Args extends DefaultFunctionArgs>(fn: {
     handler: async (ctx, args) => {
       const identity = await ctx.auth.getUserIdentity()
       if (!identity) {
-        throw new Error('Not authenticated')
+        throw notAuthenticatedError()
       }
       return await fn.handler(Object.assign(ctx, { identity }), args as Args)
     },

@@ -14,6 +14,7 @@ import { ConvexError, v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { internalAction } from '../_generated/server'
 import { authenticatedAction, getIdentity } from '../utils/auth'
+import { resolveCallerSession } from '../utils/identity'
 import { fetchUsage, generateHolderToken, refreshAccessToken } from './anthropic'
 import { decrypt, encrypt } from './crypto'
 import { redactTokens } from './redact'
@@ -46,11 +47,18 @@ export const pullForSwitch = authenticatedAction({
      * see `machineActivity/schema.ts:machineLabel` for the contract.
      */
     machineLabel: v.optional(v.string()),
+    /**
+     * Clerk session id of the caller. CLI clients pass this from the
+     * persisted `session.clerkSessionId` because BAPI-minted JWTs lack
+     * the `sid` claim. See `utils/identity.ts`. Optional in the schema
+     * for backward-compat with older CLIs.
+     */
+    clerkSessionId: v.optional(v.string()),
   },
   returns: pullResultValidator,
   handler: async (
     ctx,
-    { slotOrEmail, machineLabel }
+    { slotOrEmail, machineLabel, clerkSessionId: callerArgSid }
   ): Promise<{
     email: string
     slot: number
@@ -104,13 +112,12 @@ export const pullForSwitch = authenticatedAction({
       })
     }
 
-    // Audit: record this pull. Clerk JWT 'sid' claim is the session id; if
-    // it's somehow missing we fall back to a marker so the row still inserts.
-    const sidClaim = (identity as { sid?: unknown }).sid
-    const clerkSessionId = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
+    // Audit: record this pull. CLI BAPI-minted JWTs do not carry a `sid`
+    // claim so we accept it as an explicit arg, preferring the verified
+    // identity claim when present (FAPI/dashboard origin).
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId: fresh.userId,
-      clerkSessionId,
+      clerkSessionId: resolveCallerSession(identity, callerArgSid),
       action: 'pull',
       subscriptionId: fresh._id,
       at: Date.now(),
@@ -153,6 +160,8 @@ export const upsertFromPlaintext = authenticatedAction({
     rateLimitTier: v.string(),
     label: v.optional(v.string()),
     machineLabel: v.optional(v.string()),
+    /** See `pullForSwitch.clerkSessionId`. */
+    clerkSessionId: v.optional(v.string()),
   },
   returns: upsertResultValidator,
   handler: async (
@@ -179,11 +188,9 @@ export const upsertFromPlaintext = authenticatedAction({
     })
     // Audit: record the add. Per spec §4 + §12 every authenticated
     // state-changing action emits a `machineActivity` row.
-    const sidClaim = (identity as { sid?: unknown }).sid
-    const clerkSessionId = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId: result.userId,
-      clerkSessionId,
+      clerkSessionId: resolveCallerSession(identity, args.clerkSessionId),
       action: 'add',
       subscriptionId: result.subId,
       at: Date.now(),
@@ -291,11 +298,13 @@ export const refreshSub = authenticatedAction({
      */
     force: v.optional(v.boolean()),
     machineLabel: v.optional(v.string()),
+    /** See `pullForSwitch.clerkSessionId`. */
+    clerkSessionId: v.optional(v.string()),
   },
   returns: refreshSubResultValidator,
   handler: async (
     ctx,
-    { slot, localState, force, machineLabel }
+    { slot, localState, force, machineLabel, clerkSessionId: callerArgSid }
   ): Promise<{
     email: string
     slot: number
@@ -410,11 +419,9 @@ export const refreshSub = authenticatedAction({
 
     // Audit: every successful refreshSub leaves a machineActivity row,
     // matching `requestRefresh` and `pullForSwitch` behavior.
-    const sidClaim = (identity as { sid?: unknown }).sid
-    const clerkSessionId = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId: fresh.userId,
-      clerkSessionId,
+      clerkSessionId: resolveCallerSession(identity, callerArgSid),
       action: 'refresh',
       subscriptionId: fresh._id,
       at: Date.now(),
@@ -460,9 +467,11 @@ export const requestRefresh = authenticatedAction({
   args: {
     subId: v.id('subscriptions'),
     machineLabel: v.optional(v.string()),
+    /** See `pullForSwitch.clerkSessionId`. */
+    clerkSessionId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { subId, machineLabel }): Promise<null> => {
+  handler: async (ctx, { subId, machineLabel, clerkSessionId: callerArgSid }): Promise<null> => {
     const identity = getIdentity(ctx)
     // Confirm the sub belongs to the caller.
     const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, {
@@ -482,11 +491,9 @@ export const requestRefresh = authenticatedAction({
     })
 
     // Audit: record the user-initiated refresh. Per spec §4 + §12.
-    const sidClaim = (identity as { sid?: unknown }).sid
-    const clerkSessionId = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId: sub.userId,
-      clerkSessionId,
+      clerkSessionId: resolveCallerSession(identity, callerArgSid),
       action: 'refresh',
       subscriptionId: subId,
       at: Date.now(),

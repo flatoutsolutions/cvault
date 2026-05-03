@@ -87,6 +87,32 @@ export class VaultClient {
     return { ...args, machineLabel: this.session.machineLabel }
   }
 
+  /**
+   * Inject `clerkSessionId` from the persisted session into args.
+   *
+   * Why: Convex's BAPI-minted JWTs (the path the CLI uses) do not carry
+   * a `sid` claim — Clerk reserves the claim and only auto-injects it
+   * for FAPI-minted tokens. Without an explicit arg, every CLI-origin
+   * audit row would write the `unknown-session` sentinel and the
+   * dashboard's "Machines" view would filter it out, hiding all CLI
+   * activity. See `convex/utils/identity.ts` for the server-side
+   * resolution rule.
+   *
+   * Combine with `withMachineLabel` for any action that writes a
+   * `machineActivity` row.
+   */
+  withSessionId<T extends Record<string, unknown>>(args: T): T & { clerkSessionId: string } {
+    return { ...args, clerkSessionId: this.session.clerkSessionId }
+  }
+
+  /**
+   * Convenience: inject both `machineLabel` (when set) and
+   * `clerkSessionId`. Most CLI call sites want both.
+   */
+  withMeta<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string; clerkSessionId: string } {
+    return this.withSessionId(this.withMachineLabel(args))
+  }
+
   async query<Q extends FunctionReference<'query'>>(fn: Q, ...args: OptionalRestArgs<Q>): Promise<Q['_returnType']> {
     return this.callWithRetry(() => this.http.query(fn, ...args))
   }

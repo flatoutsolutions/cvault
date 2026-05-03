@@ -74,7 +74,7 @@ export async function runAdd(opts: RunAddOptions): Promise<void> {
 
   await client.action(
     api.subscriptions.actions.upsertFromPlaintext,
-    client.withMachineLabel({
+    client.withMeta({
       email: account.email,
       plaintextBlob,
       expiresAt: oauth.expiresAt,

@@ -12,6 +12,7 @@
  *
  * Reference: docs/research/clerk-convex-tanstack-integration.md §4.
  */
+import { ConvexError } from 'convex/values'
 
 const CLERK_API_BASE = 'https://api.clerk.com'
 
@@ -28,7 +29,14 @@ function activeFetch(): typeof fetch {
 function loadSecretKey(): string {
   const key = process.env.CLERK_SECRET_KEY
   if (!key) {
-    throw new Error('CLERK_SECRET_KEY env var is not set on the Convex deployment')
+    // Throw ConvexError so callers see the real reason in dashboard toasts;
+    // a plain `Error` here surfaces on the client as the generic masked
+    // "Server Error" string and silently rules out the most common deploy
+    // misconfiguration when users debug.
+    throw new ConvexError({
+      code: 'CLERK_SECRET_KEY_MISSING',
+      message: 'CLERK_SECRET_KEY env var is not set on the Convex deployment',
+    })
   }
   return key
 }
