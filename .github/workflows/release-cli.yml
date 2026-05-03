@@ -74,6 +74,16 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Root deps + cached node_modules + convex codegen in one shot.
+      # Same setup action as .github/workflows/deploy.yml — handles Node 22,
+      # corepack, yarn install with cache, and `npx convex codegen` so that
+      # `convex/_generated/*` exists before tsc / vitest run.
+      - uses: flatoutsolutions/github-actions/setup@v1
+        with:
+          node-version: '22.21.1'
+          convex-codegen: 'true'
+          convex-deploy-key: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
       - name: Install Bun ${{ env.BUN_VERSION }}
         # oven-sh/setup-bun v2.2.0
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -84,35 +94,12 @@ jobs:
         working-directory: ${{ env.CLI_DIR }}
         run: bun install --frozen-lockfile
 
-      # CLI imports `@cvault/convex/api` (path alias to `convex/_generated/`).
-      # That directory is gitignored — regenerate from `convex/schema.ts`
-      # before typecheck. Codegen needs root deps (convex package) plus the
-      # CONVEX_DEPLOY_KEY secret.
-      - name: Install root dependencies (for convex codegen)
-        run: |
-          corepack enable
-          yarn install --immutable
-
-      - name: Generate Convex types
-        env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: npx convex codegen
-
       - name: Typecheck (tsc --noEmit)
         working-directory: ${{ env.CLI_DIR }}
         run: bunx tsc --noEmit
 
-      # Lint: per ts-bun-cli-tooling brief §9, the CLI inherits the
-      # repo-root ESLint flat config (eslint.config.ts).
-      # `npx eslint` runs against the root config without needing yarn install
-      # because ESLint resolves plugins via node_modules in the repo root.
       - name: Lint (ESLint flat config — root-scoped)
-        run: |
-          if [ -f package.json ]; then
-            corepack enable
-            yarn install --immutable || yarn install
-          fi
-          yarn lint:check || npx --yes eslint cli/src cli/tests
+        run: yarn lint:check
 
       # bunx --bun forces Vitest to run inside the embedded Bun runtime so
       # `Bun.spawn`/`Bun.serve` globals are available to test code.
@@ -137,6 +124,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Same shared setup as the test job: Node + yarn (cached) + convex
+      # codegen so the bundler can resolve `@cvault/convex/api`.
+      - uses: flatoutsolutions/github-actions/setup@v1
+        with:
+          node-version: '22.21.1'
+          convex-codegen: 'true'
+          convex-deploy-key: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
       - name: Install Bun ${{ env.BUN_VERSION }}
         # oven-sh/setup-bun v2.2.0
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -149,15 +144,25 @@ jobs:
 
       # The orchestrator reads CVAULT_*_URL env vars (with VITE/CLERK
       # fallbacks), bakes them into src/buildInfo.ts, runs `bun build`,
-      # then resets src/buildInfo.ts on exit. Production secrets are
-      # injected here only — never committed to the repo.
+      # then resets src/buildInfo.ts on exit. URLs derived from
+      # CONVEX_DEPLOY_KEY + CLERK_PUBLISHABLE_KEY mirror deploy.yml's
+      # build-step pattern (no separate VITE/CVAULT URL secrets needed).
       - name: Build portable JS bundle (URLs baked from prod secrets)
         working-directory: ${{ env.CLI_DIR }}
         env:
-          CVAULT_CONVEX_URL: ${{ secrets.CVAULT_CONVEX_URL }}
-          CVAULT_FRONTEND_API_URL: ${{ secrets.CVAULT_FRONTEND_API_URL }}
-          CVAULT_DASHBOARD_URL: ${{ secrets.CVAULT_DASHBOARD_URL }}
-        run: bun run scripts/build-bundle.ts
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          DASHBOARD_URL: https://cvault.pages.dev
+        run: |
+          DEPLOY_NAME=$(echo "$CONVEX_DEPLOY_KEY" | sed 's/.*:\(.*\)|.*/\1/')
+          export VITE_CONVEX_URL="https://${DEPLOY_NAME}.convex.cloud"
+          # Derive the Clerk Frontend API URL from the publishable key
+          # (everything between `pk_live_` / `pk_test_` and the trailing `$`
+          # is base64-encoded `<host>$`).
+          export CLERK_FRONTEND_API_URL="https://$(echo "$CLERK_PUBLISHABLE_KEY" | sed 's/pk_[a-z]*_//' | base64 -d | tr -d '$')"
+          export CVAULT_DASHBOARD_URL="$DASHBOARD_URL"
+          echo "Bundling with VITE_CONVEX_URL=$VITE_CONVEX_URL CLERK_FRONTEND_API_URL=$CLERK_FRONTEND_API_URL CVAULT_DASHBOARD_URL=$CVAULT_DASHBOARD_URL"
+          bun run scripts/build-bundle.ts
 
       - name: Smoke-check bundle (size + JS-ness)
         working-directory: ${{ env.CLI_DIR }}
