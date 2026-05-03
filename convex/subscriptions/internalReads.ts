@@ -68,9 +68,13 @@ export const getSubscriptionForActor = internalQuery({
       return sub ?? null
     }
 
+    // Email branch: lowercase the lookup key to match the storage
+    // canonicalization in `mutations.ts:upsertSub`. Without this,
+    // `cvault switch Stefan@x.com` would NOT_FOUND when the row was
+    // stored under `stefan@x.com`.
     const sub = await ctx.db
       .query('subscriptions')
-      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', slotOrEmail))
+      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', slotOrEmail.toLowerCase()))
       .unique()
     return sub && sub.removedAt === undefined ? sub : null
   },

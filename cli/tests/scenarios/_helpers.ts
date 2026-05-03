@@ -291,16 +291,20 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
     if (oneshot !== undefined) return await Promise.resolve(oneshot)
 
     if (name === getFunctionName(api.subscriptions.mutations.softRemove)) {
-      const email = (args ?? {}).email
+      // Mirror production: lowercase the lookup key. The FAKE's stored
+      // emails are also canonicalized in `upsertFromPlaintext` below, so
+      // a case-divergent remove still finds the right row.
+      const requested = (args ?? {}).email
+      const requestedEmail = typeof requested === 'string' ? requested.toLowerCase() : ''
       let touched = false
       for (const sub of state.subscriptions.values()) {
-        if (sub.email === email && sub.removedAt === undefined) {
+        if (sub.email === requestedEmail && sub.removedAt === undefined) {
           sub.removedAt = Date.now()
           touched = true
         }
       }
       if (!touched) {
-        throw new Error(`Fake VaultClient: softRemove found no row for email=${String(email)}`)
+        throw new Error(`Fake VaultClient: softRemove found no row for email=${String(requested)}`)
       }
       return null
     }
@@ -343,7 +347,9 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
     }
     if (name === getFunctionName(api.subscriptions.actions.upsertFromPlaintext)) {
       const a = args ?? {}
-      const email = a.email as string
+      // Mirror production: canonicalize the email to lowercase before
+      // dedupe + storage. See convex/subscriptions/mutations.ts:upsertSub.
+      const email = (a.email as string).toLowerCase()
       const plaintextBlob = a.plaintextBlob as string
       const contentHash = await sha256Hex(plaintextBlob)
       // Find existing slot for this email under same user, else assign next.
