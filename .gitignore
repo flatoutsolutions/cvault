@@ -1,0 +1,103 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Convex config (env vars + DB settings) — contains credentials!
+convex-config.json
+
+# Convex generated artifacts (regenerated locally + on CI via convex
+# codegen — requires CONVEX_DEPLOYMENT)
+convex/_generated/
+
+# .env files
+.env.local
+.env
+*.env
+*.env.bak
+.env.local.*.bak
+
+# Python CLI build artifacts
+cli/dist/
+cli/build/
+cli/*.egg-info/
+cli/.venv/
+cli/.pytest_cache/
+cli/.ruff_cache/
+cli/__pycache__/
+cli/**/__pycache__/
+cli/.coverage
+cli/htmlcov/
+
+# docs/IMPLEMENTATION_NOTES.md is intentionally tracked
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Yarn — managed via corepack
+.yarn/
+
+# TanStack Start
+.tanstack
+.vinxi
+.output
+.nitro
+.wrangler
+todos.json
+__unconfig*
+
+# Shared AI skill symlinks (created by ai_instructions install script)
+.agents/skills/avoid-feature-creep
+.agents/skills/conventional-commit
+.agents/skills/inter-agent-comms
+.agents/skills/shadcn
+.agents/skills/toggle-convex-prod-access
+.agents/skills/vercel-react-best-practices
+.agents/skills/clerk
+.agents/skills/clerk-backend-api
+.agents/skills/clerk-custom-ui
+.agents/skills/clerk-nextjs-patterns
+.agents/skills/clerk-orgs
+.agents/skills/clerk-setup
+.agents/skills/clerk-testing
+.agents/skills/clerk-webhooks
+.agents/skills/convex
+.agents/skills/convex-agents
+.agents/skills/convex-best-practices
+.agents/skills/convex-component-authoring
+.agents/skills/convex-cron-jobs
+.agents/skills/convex-file-storage
+.agents/skills/convex-functions
+.agents/skills/convex-http-actions
+.agents/skills/convex-migrations
+.agents/skills/convex-realtime
+.agents/skills/convex-schema-validator
+.agents/skills/convex-security-audit
+.agents/skills/convex-security-check
+.agents/skills/tanstack-start-best-practices
+.agents/skills/vite
+.agents/skills/vitest
+
+
+# CLI build artifacts
+cli/cvault
+cli/cvault-*
+cli/dist/
+cli/.*.bun-build

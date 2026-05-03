@@ -1,0 +1,178 @@
+/**
+ * Spec: §7 — `cvault list`.
+ *
+ * Calls `api.subscriptions.queries.listForUser`, then
+ * `getActiveAccount()` to learn which sub is currently active locally,
+ * then renders a table. The active marker is keyed off EMAIL not slot
+ * (slot numbers are owned by Convex; emails are stable across machines
+ * and renumbers).
+ */
+import { describe, expect, it, vi } from 'vitest'
+
+import { runList } from '../../src/commands/list'
+import { makeVaultClient } from '../../src/convex/vaultClient'
+import { getActiveAccount } from '../../src/credentials'
+
+vi.mock('../../src/credentials', () => ({
+  getActiveAccount: vi.fn(),
+}))
+
+vi.mock('../../src/convex/vaultClient', () => ({
+  makeVaultClient: vi.fn(),
+  VaultClient: class {},
+}))
+
+interface ConvexMeta {
+  _id: string
+  _creationTime: number
+  userId: string
+  email: string
+  slot: number
+  label?: string | undefined
+  expiresAt: number
+  refreshExpiresAt?: number | undefined
+  subscriptionType: string
+  rateLimitTier: string
+  lastRefreshedAt: number
+  usage5h?: { pct: number; resetsAt: number; fetchedAt: number } | undefined
+  usage7d?: { pct: number; resetsAt: number; fetchedAt: number } | undefined
+  removedAt?: number | undefined
+}
+
+function meta(overrides: Partial<ConvexMeta> = {}): ConvexMeta {
+  return {
+    _id: 'sub_abc' as const,
+    _creationTime: 1_700_000_000_000,
+    userId: 'u1',
+    email: 'a@b.com',
+    slot: 1,
+    expiresAt: 1_700_000_000_000 + 60_000,
+    subscriptionType: 'max',
+    rateLimitTier: 'tier1',
+    lastRefreshedAt: 1_700_000_000_000,
+    usage5h: { pct: 12, resetsAt: 0, fetchedAt: 0 },
+    usage7d: { pct: 34, resetsAt: 0, fetchedAt: 0 },
+    ...overrides,
+  }
+}
+
+describe('runList', () => {
+  it('renders all subs from Convex with the locally-active one marked (matched by email, NOT slot)', async () => {
+    // The user's local credentials match c@d.com — which lives at vault slot 2.
+    // The active marker must follow the email; the legacy slot-based logic
+    // would mark slot 1 as active because `status()` always synthesizes
+    // "Account-1". H1 fix: match by email.
+    const client = {
+      query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'a@b.com' }), meta({ slot: 2, email: 'c@d.com' })]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'c@d.com' })
+
+    const captured: string[] = []
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+
+    const out = captured.join('\n')
+    expect(out).toContain('a@b.com')
+    expect(out).toContain('c@d.com')
+    // Active line for c@d.com (vault slot 2) should have the asterisk marker
+    const lines = out.split('\n')
+    const cLine = lines.find((l) => l.includes('c@d.com'))
+    expect(cLine).toMatch(/\*/)
+    // a@b.com (vault slot 1) must NOT be marked active
+    const aLine = lines.find((l) => l.includes('a@b.com'))
+    expect(aLine).not.toMatch(/^\*/)
+    logSpy.mockRestore()
+  })
+
+  it('renders empty-state when user has no subs', async () => {
+    const client = { query: vi.fn().mockResolvedValueOnce([]) }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runList()
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/no subscriptions/i))
+    logSpy.mockRestore()
+  })
+
+  it('handles missing usage data gracefully', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValueOnce([meta({ usage5h: undefined, usage7d: undefined })]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'a@b.com' })
+
+    const captured: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+    expect(captured.join('\n')).toMatch(/\s-\s/)
+  })
+
+  it('does not crash if reading the local active account fails', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValueOnce([meta()]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(getActiveAccount).mockImplementationOnce(() => {
+      throw new Error('keychain locked')
+    })
+
+    const captured: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+    // Output should still render — just without an active marker.
+    expect(captured.join('\n')).toContain('a@b.com')
+  })
+
+  it('marks no row active when there is no active local account', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'a@b.com' })]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
+
+    const captured: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+    const lines = captured.join('\n').split('\n')
+    const aLine = lines.find((l) => l.includes('a@b.com'))
+    expect(aLine).toBeDefined()
+    expect(aLine).not.toMatch(/^\*/)
+  })
+
+  it('R2: matches active marker case-insensitively (vault has Stefan@x.com, oauthAccount has stefan@x.com)', async () => {
+    // Anthropic SMTP is case-insensitive; Clerk normalizes inconsistently.
+    // The active marker must follow case-insensitive equality so the user
+    // doesn't see "no active" for a sub they're actively using.
+    const client = {
+      query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'Stefan@example.com' })]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'stefan@example.com' })
+
+    const captured: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+    const lines = captured.join('\n').split('\n')
+    const sLine = lines.find((l) => l.includes('Stefan@example.com'))
+    expect(sLine).toBeDefined()
+    // Active marker present.
+    expect(sLine).toMatch(/\*/)
+  })
+})

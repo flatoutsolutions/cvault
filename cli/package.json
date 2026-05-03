@@ -1,0 +1,50 @@
+{
+  "name": "cvault",
+  "version": "0.1.5",
+  "description": "Centralized Claude Code credential vault — native macOS Keychain integration with Convex sync.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Stefan Asseg <stefan@flatout.solutions>",
+  "homepage": "https://github.com/flatoutsolutions/cvault",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/flatoutsolutions/cvault.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/flatoutsolutions/cvault/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "credentials",
+    "convex",
+    "oauth",
+    "cli"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "bun run src/index.ts --",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "bun run scripts/build-bundle.ts",
+    "build:reset-info": "bun -e \"import('./scripts/build').then(m => m.writeBuildInfo('src/buildInfo.ts', m.EMPTY_BUILD_DEFAULTS))\"",
+    "test": "bunx --bun vitest run --passWithNoTests",
+    "test:watch": "bunx --bun vitest"
+  },
+  "dependencies": {
+    "citty": "^0.1.6",
+    "convex": "^1.32.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/node": "^25.3.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

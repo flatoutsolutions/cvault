@@ -1,0 +1,202 @@
+name: CI & Deploy
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # ============================================
+  # Phase I — CI Checks (always run, in parallel)
+  # ============================================
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: flatoutsolutions/github-actions/setup@v1
+        with:
+          node-version: '22.21.1'
+      - name: Format check
+        run: yarn format:check
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: flatoutsolutions/github-actions/setup@v1
+        with:
+          node-version: '22.21.1'
+          convex-codegen: 'true'
+          convex-deploy-key: ${{ secrets.CONVEX_DEPLOY_KEY }}
+      - name: Lint
+        run: yarn lint:check
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: flatoutsolutions/github-actions/setup@v1
+        with:
+          node-version: '22.21.1'
+          convex-codegen: 'true'
+          convex-deploy-key: ${{ secrets.CONVEX_DEPLOY_KEY }}
+      - name: Build
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          NODE_ENV: ${{ vars.ENVIRONMENT }}
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          VITE_APP_TITLE: ${{ vars.VITE_APP_TITLE }}
+        run: |
+          DEPLOY_NAME=$(echo "$CONVEX_DEPLOY_KEY" | sed 's/.*:\(.*\)|.*/\1/')
+          export VITE_CONVEX_URL="https://${DEPLOY_NAME}.convex.cloud"
+          echo "Building with VITE_CONVEX_URL: $VITE_CONVEX_URL (NODE_ENV=$NODE_ENV)"
+          yarn build
+      - name: Upload build artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/dist/client
+          retention-days: 1
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: flatoutsolutions/github-actions/setup@v1
+        with:
+          node-version: '22.21.1'
+          convex-codegen: 'true'
+          convex-deploy-key: ${{ secrets.CONVEX_DEPLOY_KEY }}
+      - name: Run tests
+        run: yarn test
+      - name: Run integration tests
+        run: yarn test:integration
+
+  # ── Sync secrets to Convex (parallel with CI checks) ──
+  # Runs alongside lint/build/test so it adds zero wall-clock time.
+  # Must complete before deploy-backend to avoid the Convex
+  # "Environment variables have changed during push" race condition.
+  sync-secrets:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - uses: flatoutsolutions/github-actions/setup@v1
+        with:
+          node-version: '22.21.1'
+
+      - name: Sync Secrets to Convex
+        id: sync-convex
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          CLERK_WEBHOOK_SECRET: ${{ secrets.CLERK_WEBHOOK_SECRET }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+        run: |
+          set_convex_env() {
+            local key=$1
+            local value=$2
+            if [ -n "$value" ]; then
+              local max_attempts=3
+              local attempt=1
+              while [ $attempt -le $max_attempts ]; do
+                if echo "$value" | npx convex env set "$key"; then
+                  echo "✓ $key"
+                  return 0
+                fi
+                if [ $attempt -lt $max_attempts ]; then
+                  sleep $((2 ** attempt))
+                fi
+                attempt=$((attempt + 1))
+              done
+              echo "✗ Failed to set $key"
+              return 1
+            fi
+          }
+
+          CLERK_FAPI=$(echo "$CLERK_PUBLISHABLE_KEY" | sed 's/pk_[a-z]*_//' | base64 -d | tr -d '$')
+
+          set_convex_env "ENVIRONMENT" "${{ vars.ENVIRONMENT }}"
+          set_convex_env "CLERK_FRONTEND_API_URL" "https://$CLERK_FAPI"
+          set_convex_env "CLERK_WEBHOOK_SECRET" "$CLERK_WEBHOOK_SECRET"
+          set_convex_env "CLERK_SECRET_KEY" "$CLERK_SECRET_KEY"
+          set_convex_env "CLERK_PUBLISHABLE_KEY" "$CLERK_PUBLISHABLE_KEY"
+
+  # ============================================
+  # Phase II — Detect which components have changes
+  #            (only after all CI checks pass)
+  # ============================================
+  detect-changes:
+    needs: [format, lint, build, test]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'convex/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig.json'
+              - 'tsconfig.node.json'
+            frontend:
+              - 'frontend/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig.json'
+              - 'tsconfig.app.json'
+              - 'tsconfig.node.json'
+              - 'components.json'
+
+  # ============================================
+  # Phase III — Deploy Backend to Convex
+  # ============================================
+  deploy-backend:
+    needs: [detect-changes, sync-secrets]
+    if: github.event_name == 'push' && needs.detect-changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - uses: flatoutsolutions/github-actions/setup@v1
+        with:
+          node-version: '22.21.1'
+
+      - name: Deploy Backend to Convex
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex deploy --yes
+
+  # ============================================
+  # Phase III — Deploy Frontend to Cloudflare Pages
+  # ============================================
+  deploy-frontend:
+    needs: [detect-changes, build]
+    if: github.event_name == 'push' && needs.detect-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: dist
+
+      - name: Deploy Frontend to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME }}

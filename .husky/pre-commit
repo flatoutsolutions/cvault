@@ -1,0 +1,9 @@
+yarn lint:fix
+yarn format:fix
+
+git add -u
+npx convex codegen --typecheck disable
+
+yarn build
+yarn test
+yarn test:integration

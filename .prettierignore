@@ -1,0 +1,8 @@
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+routeTree.gen.ts
+
+# CLI generated bundles + maps.
+cli/dist/
+cli/index.js.map
