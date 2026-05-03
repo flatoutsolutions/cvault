@@ -10,6 +10,7 @@
  */
 import { defineCommand, runMain } from 'citty'
 
+import pkg from '../package.json' with { type: 'json' }
 import { addCommand } from './commands/add'
 import { cleanCommand } from './commands/clean'
 import { listCommand } from './commands/list'
@@ -23,7 +24,7 @@ import { syncCommand } from './commands/sync'
 const main = defineCommand({
   meta: {
     name: 'cvault',
-    version: '0.1.0',
+    version: pkg.version,
     description: 'Centralized Claude Code credential vault.',
   },
   subCommands: {
