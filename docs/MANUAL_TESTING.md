@@ -5,7 +5,7 @@
 **Source documents:**
 
 - Spec — [`docs/superpowers/specs/2026-05-02-cvault-design.md`](superpowers/specs/2026-05-02-cvault-design.md)
-- Builder log — [`IMPLEMENTATION_NOTES.md`](../IMPLEMENTATION_NOTES.md)
+- Builder log — [`IMPLEMENTATION_NOTES.md`](IMPLEMENTATION_NOTES.md)
 - Scenario test plan — [`docs/research/scenario-tests-plan.md`](research/scenario-tests-plan.md)
 - Security findings — [`docs/research/security-findings.md`](research/security-findings.md)
 - Project overview — [`README.md`](../README.md)

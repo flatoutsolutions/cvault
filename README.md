@@ -149,7 +149,7 @@ Formula/     Homebrew tap formula
 - **Manual testing**: [`docs/MANUAL_TESTING.md`](docs/MANUAL_TESTING.md)
 - **Design spec**: [`docs/superpowers/specs/2026-05-02-cvault-design.md`](docs/superpowers/specs/2026-05-02-cvault-design.md)
 - **Research briefs**: [`docs/research/`](docs/research/)
-- **Implementation notes / handoffs**: [`IMPLEMENTATION_NOTES.md`](IMPLEMENTATION_NOTES.md)
+- **Implementation notes / handoffs**: [`docs/IMPLEMENTATION_NOTES.md`](docs/IMPLEMENTATION_NOTES.md)
 - **Reviews**: [`docs/reviews/`](docs/reviews/)
 
 ---
