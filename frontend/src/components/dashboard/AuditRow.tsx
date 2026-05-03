@@ -36,7 +36,7 @@ export type AuditActivityRow = {
 
 export type AuditRowData = AuditRefreshRow | AuditActivityRow
 
-function relativeTime(at: number, now: number = Date.now()): string {
+export function relativeTime(at: number, now: number = Date.now()): string {
   const ms = now - at
   if (ms < 0) return 'just now'
   const minutes = Math.floor(ms / 60_000)
