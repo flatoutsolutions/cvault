@@ -153,6 +153,51 @@ describe('runList', () => {
     expect(aLine).not.toMatch(/^\*/)
   })
 
+  it('appends a footer explaining the ⚠ marker when at least one sub needs re-capture', async () => {
+    // Seed two subs: one healthy, one with refreshExpiresAt clamped
+    // to the past (the markReloginRequired internal mutation does
+    // exactly this when Anthropic returns invalid_grant).
+    const client = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce([
+          meta({ slot: 1, email: 'ok@example.com' }),
+          meta({ slot: 2, email: 'dead@example.com', refreshExpiresAt: Date.now() - 60_000 }),
+        ]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
+
+    const captured: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+
+    const out = captured.join('\n')
+    expect(out).toContain('⚠')
+    expect(out).toMatch(/cvault add/)
+    expect(out.toLowerCase()).toMatch(/re-?capture|recapture/)
+  })
+
+  it('does NOT print the footer when no sub needs re-capture', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValueOnce([meta({ slot: 1, email: 'healthy@example.com' })]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce(client as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
+
+    const captured: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+
+    expect(captured.join('\n')).not.toMatch(/recapture|re-capture/i)
+  })
+
   it('R2: matches active marker case-insensitively (vault has Stefan@x.com, oauthAccount has stefan@x.com)', async () => {
     // Anthropic SMTP is case-insensitive; Clerk normalizes inconsistently.
     // The active marker must follow case-insensitive equality so the user

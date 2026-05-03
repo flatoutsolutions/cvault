@@ -591,4 +591,177 @@ describe('subscriptions.mutations.commitRefreshedTokens', () => {
       })
     ).rejects.toThrow(/lease/i)
   })
+
+  // M2 regression: when a late-arriving commit would REGRESS expiresAt,
+  // the mutation must skip the patch. Without this CAS, two refresh paths
+  // racing leave the LATER-completing-lower-expiry the winner — even
+  // though it has older token material.
+  it('M2: skips patch when commit expiresAt would regress the row (CAS on expiresAt)', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'rotate@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // First lease + commit lands a fresh token with a far-out expiry.
+    await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'first',
+    })
+    const farFuture = Date.now() + 8 * 60 * 60 * 1000
+    const fresh1 = new ArrayBuffer(48)
+    await t.mutation(internal.subscriptions.mutations.commitRefreshedTokens, {
+      subId: inserted.subId,
+      holderToken: 'first',
+      ciphertext: fresh1,
+      nonce: new ArrayBuffer(12),
+      expiresAt: farFuture,
+      lastRefreshedAt: Date.now(),
+    })
+
+    // Second pass: a late-arriving lease holder tries to commit with an
+    // OLDER expiresAt (e.g. Anthropic returned a token with shorter
+    // expires_in this time, or the laptop clock skewed back). The CAS
+    // must SKIP the patch — but it must NOT throw, because the lease
+    // holder did legitimately complete its work; the right behavior is
+    // to just leave the row as-is.
+    await t.mutation(internal.subscriptions.mutations.tryAcquireRefreshLease, {
+      subId: inserted.subId,
+      holderToken: 'second',
+    })
+    const olderExpiry = farFuture - 60 * 60 * 1000
+    const fresh2 = new ArrayBuffer(64)
+    await t.mutation(internal.subscriptions.mutations.commitRefreshedTokens, {
+      subId: inserted.subId,
+      holderToken: 'second',
+      ciphertext: fresh2,
+      nonce: new ArrayBuffer(12),
+      expiresAt: olderExpiry,
+      lastRefreshedAt: Date.now(),
+    })
+
+    // Row's expiresAt must remain at the FAR future — the regression was rejected.
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.expiresAt).toBe(farFuture)
+    // Ciphertext must remain the WINNER's (48 bytes), not the regressor's (64 bytes).
+    expect(after?.ciphertext.byteLength).toBe(48)
+    // Lease must still be cleared either way (the second caller's lease).
+    expect(after?.refreshLeaseHolder).toBeUndefined()
+    expect(after?.refreshLeaseUntil).toBeUndefined()
+  })
+})
+
+describe('subscriptions.mutations.adoptLocalState', () => {
+  it('adopts when localExpiresAt is strictly newer than the row', async () => {
+    const t = vault()
+    await seedUser(t)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'adopt@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: Date.now() + 30 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    const newExpiresAt = Date.now() + 4 * 60 * 60 * 1000
+    const result = await t.mutation(internal.subscriptions.mutations.adoptLocalState, {
+      subId: inserted.subId,
+      ciphertext: new ArrayBuffer(64),
+      nonce: new ArrayBuffer(12),
+      localExpiresAt: newExpiresAt,
+    })
+    expect(result.adopted).toBe(true)
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.expiresAt).toBe(newExpiresAt)
+  })
+
+  it('skips adoption when localExpiresAt is older than or equal to the row', async () => {
+    const t = vault()
+    await seedUser(t)
+    const rowExpires = Date.now() + 4 * 60 * 60 * 1000
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'adopt@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: rowExpires,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    const result = await t.mutation(internal.subscriptions.mutations.adoptLocalState, {
+      subId: inserted.subId,
+      ciphertext: new ArrayBuffer(64),
+      nonce: new ArrayBuffer(12),
+      localExpiresAt: rowExpires - 1,
+    })
+    expect(result.adopted).toBe(false)
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    // expiresAt must NOT regress.
+    expect(after?.expiresAt).toBe(rowExpires)
+  })
+
+  // M3 regression: cap the upper bound on localExpiresAt at 24h beyond now.
+  // A skewed laptop clock or a manipulated Keychain blob with
+  // `expiresAt = Date.now() + 100 years` would otherwise poison the vault
+  // for a century — `findExpiringSubs` would never schedule it because its
+  // window check `q.lt('expiresAt', cutoff)` would never match.
+  it('M3: rejects adoption when localExpiresAt exceeds the 24h ceiling', async () => {
+    const t = vault()
+    await seedUser(t)
+    const rowExpires = Date.now() + 30 * 60 * 1000
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'skewed@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: rowExpires,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // Try to adopt a wildly-out-of-bound expiresAt (10 years out).
+    const insane = Date.now() + 10 * 365 * 24 * 60 * 60 * 1000
+    const result = await t.mutation(internal.subscriptions.mutations.adoptLocalState, {
+      subId: inserted.subId,
+      ciphertext: new ArrayBuffer(64),
+      nonce: new ArrayBuffer(12),
+      localExpiresAt: insane,
+    })
+    // Adoption must be rejected — the vault is NOT poisoned.
+    expect(result.adopted).toBe(false)
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.expiresAt).toBe(rowExpires)
+    // ciphertext must NOT have been touched.
+    expect(after?.ciphertext.byteLength).toBe(FAKE_CIPHERTEXT.byteLength)
+  })
+
+  it('M3: accepts adoption at exactly the 24h ceiling boundary', async () => {
+    const t = vault()
+    await seedUser(t)
+    const rowExpires = Date.now() + 30 * 60 * 1000
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'boundary@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      expiresAt: rowExpires,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    // 23h59m out — comfortably inside the 24h cap.
+    const justInside = Date.now() + 23 * 60 * 60 * 1000 + 59 * 60 * 1000
+    const result = await t.mutation(internal.subscriptions.mutations.adoptLocalState, {
+      subId: inserted.subId,
+      ciphertext: new ArrayBuffer(64),
+      nonce: new ArrayBuffer(12),
+      localExpiresAt: justInside,
+    })
+    expect(result.adopted).toBe(true)
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.expiresAt).toBe(justInside)
+  })
 })

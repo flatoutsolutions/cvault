@@ -24,6 +24,24 @@ export const machineActivitySchema = defineTable({
   subscriptionId: v.optional(v.id('subscriptions')),
   at: v.number(),
   ipHash: v.optional(v.string()),
+  /**
+   * Human-readable identifier for the originating machine. The CLI
+   * defaults this to `os.hostname()` at session creation; the user
+   * can override via `cvault login --label`. Stored on every row so the
+   * dashboard's per-session aggregation picks up the most-recent label
+   * for each clerkSessionId without a separate join. Optional because:
+   *  (a) legacy rows pre-feature don't have it, and
+   *  (b) browser callers (dashboard "Force Refresh") don't have a
+   *      hostname — they pass `undefined`.
+   */
+  machineLabel: v.optional(v.string()),
 })
   .index('byUserAndAt', ['userId', 'at'])
   .index('byUserAndSessionAndAt', ['userId', 'clerkSessionId', 'at'])
+  // M4: composite (subscriptionId, at) index for the per-sub
+  // most-recent-activity lookup in `subscriptions.queries.getStatus`.
+  // Without this, the query had to take the user's 50 most-recent rows
+  // across ALL subs and then filter — which silently lost sub B's
+  // activity when sub A was high-churn. Mirrors `refreshLog`'s
+  // `bySubscriptionAndAt` pattern.
+  .index('bySubscriptionAndAt', ['subscriptionId', 'at'])

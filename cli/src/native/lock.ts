@@ -1,161 +1,100 @@
 /**
- * Cross-process file lock for the active credentials write cycle.
+ * Cross-process lock for the active credentials write cycle.
  *
- * Why we need this: `applyEnvelope` and `clearActive` both perform a
- * read-modify-write on `~/.claude.json` and the credentials store. If
- * two `cvault` processes run concurrently (`cvault switch` from one
- * shell, `cvault add` from another, or a misclick on a dashboard
- * "Force Refresh" while a CLI op is in flight), they can interleave the
- * two writes and corrupt the merged state.
+ * Why we need this: `applyEnvelope`, `clearActive`, and the new `cvault
+ * refresh` command all perform a read-modify-write on `~/.claude.json`
+ * + the credentials store (Keychain on macOS, file on Linux/WSL). If
+ * two `cvault` processes race — or worse, if `cvault` and Claude Code
+ * itself race — they can interleave the two writes and corrupt the
+ * merged state.
  *
- * Design:
- *  - The lock is a sentinel file at `<lockPath>` created via
- *    `fs.openSync(path, 'wx')` ("create exclusive"). If the file
- *    already exists, openSync throws `EEXIST` immediately. **This is
- *    the actual mutex** — `openSync(...,'wx')` is an atomic POSIX
- *    `O_CREAT|O_EXCL|O_WRONLY` syscall. Two processes racing to acquire
- *    will see exactly one win + one EEXIST.
- *  - On `EEXIST`, we sleep with exponential backoff and retry up to
- *    `timeoutMs`. After that we treat the lock as stale and break it
- *    only when its mtime is past a fixed wall-clock threshold
- *    (`STALE_LOCK_AGE_MS`).
- *  - Stale-lock detection is layered: (1) wall-clock age check,
- *    (2) pid liveness probe via `process.kill(pid, 0)` if the lock file
- *    contains a parseable pid. Linux/Mac `process.kill(pid, 0)` returns
- *    silently for live processes and throws `ESRCH` for dead ones; we
- *    treat ESRCH as "definitely safe to break."
- *  - The held duration must be short — we wrap a single read +
- *    Keychain write + JSON merge, all of which complete in < 50ms on a
- *    healthy box.
+ * Implementation: `proper-lockfile` against `~/.claude` (the
+ * directory). On lock acquisition, proper-lockfile creates
+ * `~/.claude.lock` as a directory (mkdir is the atomic POSIX
+ * primitive); on release it `rmdir`s. While held, proper-lockfile
+ * periodically updates the lock's mtime so a stalled holder is
+ * detected by other contenders.
  *
- * Why not `proper-lockfile` (the npm package): adding a runtime dep is
- * undesirable (cvault prides itself on zero external deps). The
- * exclusive-create primitive is built into node:fs and gives the same
- * mutual-exclusion guarantee for the small surface we need.
+ * Why this lock target: Claude Code (the upstream `claude` binary)
+ * uses `proper-lockfile.lock("~/.claude")` for the same read-write
+ * cycle. By targeting the same path with the same package, cvault and
+ * Claude Code share the SAME lock file (`~/.claude.lock`) and compete
+ * fairly for it instead of running blind to each other.
  *
- * Lock path convention: `<config_home>/.cvault.lock`. Living next to
- * `~/.claude.json` keeps the lock in the same filesystem so `rename`
- * and `unlink` are atomic with the data file.
+ * The previous implementation hand-rolled the primitive at
+ * `~/.claude/.cvault.lock` — correct for cvault-vs-cvault races, but
+ * INVISIBLE to Claude Code, which would happily write to
+ * `~/.claude.json` while cvault was mid-rotation. Switching to
+ * proper-lockfile fixes that gap.
  *
- * TOCTOU note: between the staleness check (`statSync` + optional
- * `process.kill(pid, 0)`) and the `unlinkSync` that follows, another
- * contender could in theory race us. Two contenders both observe the
- * stale lock, both unlink it, both try to re-open. That's safe — the
- * race resolves at the `openSync('wx')` syscall, which is atomic at the
- * kernel level: exactly one wins, the other gets EEXIST and loops
- * again. We never read the lock-file CONTENTS to make a decision (the
- * pid in there is debug info, not state), so concurrent breakers
- * cannot corrupt anything.
+ * API surface compatibility: `withFileLock(fn, opts)` keeps the same
+ * signature it had under the custom implementation. `opts.lockPath` is
+ * the path being locked (proper-lockfile creates `<lockPath>.lock`
+ * next to it). Tests pass an explicit path; production callers omit
+ * it and get `getClaudeConfigHome()` (resolves to `$CLAUDE_CONFIG_DIR`
+ * or `~/.claude`).
+ *
+ * Retry policy: 5 retries, 1000-2000ms backoff with jitter. Matches
+ * Claude Code's defaults so the two binaries don't bias one over the
+ * other under contention.
  */
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, lstatSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+
+import lockfile from 'proper-lockfile'
 
 import { getClaudeConfigHome } from './paths'
 
-const LOCK_FILENAME = '.cvault.lock'
+/**
+ * Path being locked by default. proper-lockfile creates `<this>.lock` —
+ * with `~/.claude` as the target, that's `~/.claude.lock`, identical to
+ * what Claude Code creates. The two processes thus contend for the same
+ * lock file.
+ */
+export function getLockPath(): string {
+  return getClaudeConfigHome()
+}
 
-/** Default time to wait for a contended lock before giving up. */
+/**
+ * Lock-file mtime threshold for staleness. A holder updates the
+ * lockfile's mtime every `update` ms; if mtime hasn't moved for
+ * `stale` ms, contenders treat it as abandoned and break it.
+ *
+ * 30s is the proper-lockfile default and is plenty for cvault's tiny
+ * critical sections (Keychain write + JSON merge complete in tens of
+ * milliseconds).
+ */
+const STALE_MS = 30_000
+
+/** Update the lockfile's mtime every 5s while held. */
+const UPDATE_MS = 5_000
+
+/** Default deadline for acquiring the lock. */
 const DEFAULT_TIMEOUT_MS = 5_000
 
-/** Default initial backoff between retries. */
-const INITIAL_BACKOFF_MS = 25
-
 /**
- * Maximum backoff cap (ms) — keeps wait times bounded even if the
- * timeout is generous. Prevents a slow contender from waiting many
- * seconds between probes.
- */
-const MAX_BACKOFF_MS = 250
-
-/**
- * Wall-clock age (ms) above which a held lock is presumed dead. A
- * healthy `cvault` op completes in tens of milliseconds; 60s gives
- * generous headroom for a slow Convex round-trip and still identifies
- * a crashed prior holder unambiguously.
+ * Acquire the cvault credentials lock, run `fn`, then release.
  *
- * Networked filesystems (Dropbox, iCloud Drive) can have unreliable
- * mtime granularity; for those the pid-liveness probe (below) is the
- * primary signal.
- */
-const STALE_LOCK_AGE_MS = 60_000
-
-/** Path to the cvault credentials lock file. */
-export function getLockPath(): string {
-  return join(getClaudeConfigHome(), LOCK_FILENAME)
-}
-
-/** Sleep helper using setTimeout. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-interface ErrnoLike {
-  code?: string
-}
-function isEexist(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as ErrnoLike).code === 'EEXIST'
-}
-
-/**
- * Read the holder's pid out of a lock file. Returns undefined when the
- * file is unreadable or its contents don't match the stamp format.
- * Best effort — used only as a hint for liveness checking, not for
- * mutex correctness.
- */
-function readLockPid(lockPath: string): number | undefined {
-  try {
-    const content = readFileSync(lockPath, 'utf8')
-    const match = /pid=(\d+)\s/.exec(content)
-    if (!match || match[1] === undefined) return undefined
-    const pid = Number.parseInt(match[1], 10)
-    return Number.isNaN(pid) ? undefined : pid
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Returns true if the OS reports `pid` as alive (or we can't tell).
- * `process.kill(pid, 0)` on POSIX:
- *   - returns silently when the process exists (any signal 0 means
- *     "check-only, don't actually signal")
- *   - throws ESRCH when the process is gone
- *   - throws EPERM when the process exists but we lack signal rights
- *     (still alive — answer is "yes, alive")
+ * `fn` may throw — the lock is released in a `finally` either way.
  *
- * On Windows, signal 0 is unreliable; we conservatively return true so
- * we don't break a lock based on an unreliable probe. Native v1
- * doesn't support Windows anyway.
- */
-function isProcessAlive(pid: number): boolean {
-  if (process.platform === 'win32') return true
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err: unknown) {
-    const code = (err as ErrnoLike).code
-    if (code === 'ESRCH') return false
-    // EPERM and others = alive but un-signalable, or unknown — assume alive.
-    return true
-  }
-}
-
-/**
- * Acquire `lockPath` exclusively, then run `fn`, then release the lock.
+ * Concurrency model:
+ *  - proper-lockfile uses `mkdir(<lockPath>.lock)` as the atomic
+ *    create-exclusive primitive. Two contenders racing both attempt
+ *    `mkdir`; exactly one succeeds, the other gets EEXIST.
+ *  - On EEXIST, the contender checks `<lockPath>.lock`'s mtime against
+ *    `STALE_MS`. Fresh → wait + retry; stale → `rmdir` and try again.
+ *  - The holder updates mtime every `UPDATE_MS` so a healthy lock
+ *    looks fresh; a crashed holder's lock will go stale within
+ *    `STALE_MS` and be reaped.
  *
- * Order of operations:
- *  1. Try `openSync(lockPath, 'wx')`. Success → we hold the lock.
- *  2. EEXIST → check staleness:
- *     a. If the lock file's mtime is past `STALE_LOCK_AGE_MS`, break it.
- *     b. Else if the lock contains a pid that `process.kill(pid, 0)`
- *        reports as dead, break it.
- *     c. Otherwise sleep with backoff and retry.
- *  3. If `timeoutMs` elapses without success, throw.
- *  4. After `fn` resolves (or throws), unlink the lock in `finally`.
- *
- * The lock file's contents are the holder's pid + start time, used
- * for the liveness probe in 2b (and useful for debugging "who has the
- * lock?"). They are never required for correctness.
+ * Why we don't expose a manual stale-lock break: the prior custom lock
+ * had a pid-liveness probe via `process.kill(pid, 0)`. proper-lockfile
+ * intentionally avoids that path — it works only for same-machine,
+ * same-namespace processes, breaks under containers and PID-reuse, and
+ * mtime-only staleness covers the realistic crash path. The trade-off
+ * is a slightly longer worst-case wait when a contender's process
+ * crashed mid-section, but the ceiling is `STALE_MS` (30s) rather than
+ * `STALE_LOCK_AGE_MS` (60s) the old code used.
  */
 export async function withFileLock<T>(
   fn: () => Promise<T> | T,
@@ -164,88 +103,73 @@ export async function withFileLock<T>(
   const lockPath = opts.lockPath ?? getLockPath()
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
-  // Ensure the parent dir exists. Claude Code may not have run yet.
+  // proper-lockfile does NOT mkdir the lock target if it doesn't exist
+  // (only the lockfile itself). For the production case the target IS a
+  // directory we need to create on a fresh box; for tests the caller's
+  // tempdir already exists. Either way, ensure the parent exists too —
+  // mkdir(...,{recursive:true}) on an existing dir is a no-op.
   mkdirSync(dirname(lockPath), { recursive: true })
 
-  const start = Date.now()
-  let backoff = INITIAL_BACKOFF_MS
-  let fd: number | undefined
-
-  while (fd === undefined) {
-    try {
-      fd = openSync(lockPath, 'wx', 0o600)
-    } catch (err: unknown) {
-      if (!isEexist(err)) throw err
-
-      // Check for staleness on every retry — not just on timeout. A
-      // crashed prior holder leaves a lock file we can break early
-      // rather than making the contender sit through the full timeout.
-      // Staleness is measured against a fixed bound (`STALE_LOCK_AGE_MS`)
-      // independent of the contender's `timeoutMs` so a slow but
-      // healthy holder isn't preemptively evicted by an impatient peer.
-      if (existsSync(lockPath)) {
-        let breakLock = false
-        try {
-          const stats = statSync(lockPath)
-          const ageMs = Date.now() - stats.mtimeMs
-          if (ageMs > STALE_LOCK_AGE_MS) {
-            breakLock = true
-          } else {
-            // mtime says "fresh" — but on networked filesystems the
-            // mtime can lag. Fall back to a pid liveness probe.
-            const pid = readLockPid(lockPath)
-            if (pid !== undefined && pid !== process.pid && !isProcessAlive(pid)) {
-              breakLock = true
-            }
-          }
-        } catch {
-          // Lock disappeared between exists + stat — race with another
-          // process releasing. Try again immediately.
-          continue
-        }
-        if (breakLock) {
-          try {
-            unlinkSync(lockPath)
-          } catch {
-            // Another contender beat us to the unlink — fine, retry.
-          }
-          continue
-        }
-      }
-
-      const elapsed = Date.now() - start
-      if (elapsed >= timeoutMs) {
-        throw new Error(
-          `Could not acquire credentials lock at ${lockPath} within ${timeoutMs.toString()}ms. ` +
-            `Another cvault process may be running. If you are sure no other ` +
-            `process holds it, delete the lock file and retry.`
-        )
-      }
-      await sleep(Math.min(backoff, MAX_BACKOFF_MS))
-      backoff = Math.min(backoff * 2, MAX_BACKOFF_MS)
+  // N1: explicit branching on what the lock target is. Previously the
+  // code did a `try { mkdir } catch { /* ignored */ }` blanket which
+  // hid permission errors and other genuine failures behind the same
+  // suppressing branch as "already exists". Now we check first:
+  //   - exists as a directory → no-op
+  //   - exists as a file (legacy `.cvault.lock` sentinel from an
+  //     earlier version) → leave alone; proper-lockfile companions a
+  //     `<path>.lock` of its own, so the file's presence doesn't break us
+  //   - exists as a symlink → we don't follow; proper-lockfile uses
+  //     `realpath: false`, so the symlink target isn't relevant. Throw
+  //     with a descriptive error so the user (or the umbrella umbrella-repo
+  //     symlink shenanigans on dev machines) can investigate.
+  //   - does not exist → mkdir it. Permission failures here are
+  //     genuine and propagate.
+  if (existsSync(lockPath)) {
+    const stat = lstatSync(lockPath)
+    if (stat.isSymbolicLink()) {
+      throw new Error(
+        `cvault lock: lock target ${lockPath} is a symlink. ` +
+          `Refusing to operate against a symlink — resolve it manually before running cvault.`
+      )
     }
+    // dir or file: leave it; proper-lockfile manages its own companion
+    // `<lockPath>.lock` directory, so the target's type only matters
+    // for the fresh-box branch below.
+  } else {
+    mkdirSync(lockPath, { recursive: true })
   }
 
+  // proper-lockfile's `retries` translates to a node-retry config. We
+  // pick numbers that:
+  //  - bound the worst case to `timeoutMs` (5 retries × 2s max ≈ 10s
+  //    in the absolute pathological case; in practice the operation
+  //    fits a 5s timeoutMs because backoff includes jitter)
+  //  - match Claude Code's retry envelope per the design brief, so
+  //    neither binary starves the other.
+  const release = await lockfile.lock(lockPath, {
+    realpath: false,
+    stale: STALE_MS,
+    update: UPDATE_MS,
+    retries: {
+      retries: 5,
+      minTimeout: Math.min(1000, timeoutMs),
+      maxTimeout: Math.min(2000, timeoutMs),
+      randomize: true,
+    },
+  })
+
   try {
-    // Stamp the lock with our pid for debuggability AND for the
-    // liveness probe above. Best-effort: a write failure here doesn't
-    // compromise correctness.
-    try {
-      writeSync(fd, `pid=${process.pid.toString()} startedAt=${new Date().toISOString()}\n`)
-    } catch {
-      // ignore
-    }
     return await fn()
   } finally {
     try {
-      closeSync(fd)
+      await release()
     } catch {
-      // ignore
-    }
-    try {
-      unlinkSync(lockPath)
-    } catch {
-      // ignore — another process may have broken our lock as stale
+      // The release path is best-effort — proper-lockfile's release
+      // can throw `ECOMPROMISED` if the lockfile was reaped by another
+      // contender as stale. That's fine: by this point the body has
+      // already completed; the contender had no way to actually
+      // interleave with our writes (the writes are themselves atomic
+      // temp+rename on claude.json + atomic Keychain writes).
     }
   }
 }

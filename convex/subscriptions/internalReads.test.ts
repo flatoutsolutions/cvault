@@ -27,7 +27,10 @@ import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { internal } from '../_generated/api'
 import { findExpiringSubs } from './internalReads'
 
-async function seedSub(t: ReturnType<typeof vault>, opts: { email: string; expiresAt: number; removedAt?: number }) {
+async function seedSub(
+  t: ReturnType<typeof vault>,
+  opts: { email: string; expiresAt: number; removedAt?: number; refreshExpiresAt?: number }
+) {
   const userId = await seedUser(t, {
     subject: TEST_IDENTITY.subject,
     name: TEST_IDENTITY.name,
@@ -57,6 +60,7 @@ async function seedSub(t: ReturnType<typeof vault>, opts: { email: string; expir
       rateLimitTier: 'tier1',
       lastRefreshedAt: Date.now(),
       ...(opts.removedAt !== undefined ? { removedAt: opts.removedAt } : {}),
+      ...(opts.refreshExpiresAt !== undefined ? { refreshExpiresAt: opts.refreshExpiresAt } : {}),
     })
   })
 }
@@ -164,5 +168,79 @@ describe('subscriptions.internalReads.findExpiringSubs', () => {
     expect(lowerBound?.field).toBe('expiresAt')
     expect(upperBound).toBeDefined()
     expect(upperBound?.field).toBe('expiresAt')
+  })
+
+  /**
+   * Cron spam guard: a sub with `refreshExpiresAt <= now` is "RT dead"
+   * (set by `markReloginRequired` after Anthropic answered `invalid_grant`).
+   * The cron must NOT keep re-driving Anthropic for those — every tick
+   * burns an API call, logs a `reloginRequired` row, and gives the user
+   * nothing they didn't already know.
+   */
+  it('excludes subs with refreshExpiresAt <= now (RT dead — reloginRequired)', async () => {
+    const t = vault()
+    const now = Date.now()
+
+    // In window AND RT alive — should be returned.
+    const aliveInWindow = await seedSub(t, {
+      email: 'alive@example.com',
+      expiresAt: now + 5 * 60 * 1000,
+      refreshExpiresAt: now + 7 * 24 * 60 * 60 * 1000,
+    })
+    // In window but RT dead — must NOT be returned.
+    await seedSub(t, {
+      email: 'dead@example.com',
+      expiresAt: now + 5 * 60 * 1000,
+      refreshExpiresAt: now - 60 * 1000,
+    })
+    // In window with refreshExpiresAt undefined (legacy / never-refreshed
+    // row) — must STILL be returned. Excluding here would silently drop
+    // every sub created before the RT-tracking field landed.
+    const noRefreshExp = await seedSub(t, {
+      email: 'no-rt-field@example.com',
+      expiresAt: now + 5 * 60 * 1000,
+    })
+
+    const result = await t.query(internal.subscriptions.internalReads.findExpiringSubs, {
+      withinMs: 15 * 60 * 1000,
+    })
+
+    const ids = result.map((r) => r.subId).sort()
+    expect(ids).toEqual([aliveInWindow, noRefreshExp].sort())
+  })
+})
+
+describe('subscriptions.internalReads.listAllActiveSubIds', () => {
+  it('excludes tombstoned and RT-dead subs', async () => {
+    const t = vault()
+    const now = Date.now()
+
+    const alive = await seedSub(t, {
+      email: 'alive@example.com',
+      expiresAt: now + 60 * 60 * 1000,
+      refreshExpiresAt: now + 30 * 24 * 60 * 60 * 1000,
+    })
+    const noRefreshExp = await seedSub(t, {
+      email: 'legacy@example.com',
+      expiresAt: now + 60 * 60 * 1000,
+    })
+    // Soft-removed — already excluded pre-fix.
+    await seedSub(t, {
+      email: 'gone@example.com',
+      expiresAt: now + 60 * 60 * 1000,
+      removedAt: now - 1000,
+    })
+    // RT dead — the new exclusion. Polling usage with a dead access
+    // token is wasted work; the next refresh cycle won't be able to
+    // recover it without user re-capture either.
+    await seedSub(t, {
+      email: 'dead@example.com',
+      expiresAt: now + 60 * 60 * 1000,
+      refreshExpiresAt: now - 60 * 1000,
+    })
+
+    const result = await t.query(internal.subscriptions.internalReads.listAllActiveSubIds, {})
+    const ids = result.map((r) => r.subId).sort()
+    expect(ids).toEqual([alive, noRefreshExp].sort())
   })
 })

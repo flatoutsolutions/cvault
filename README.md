@@ -108,18 +108,28 @@ yarn dev                    # Vite frontend + Convex dev watcher
 ```bash
 cd cli
 bun install
-bun run src/index.ts -- login              # browser → Clerk → ~/.vault/session.json
-bun run src/index.ts -- list                # empty
-bun run src/index.ts -- add                 # captures active Claude Code login
-bun run src/index.ts -- list                # 1 sub
-bun run src/index.ts -- switch <slot|email>
-bun run src/index.ts -- status
-bun run src/index.ts -- refresh <slot|email>
+bun run src/index.ts -- login                   # browser → Clerk → ~/.vault/session.json
+bun run src/index.ts -- list                    # empty
+bun run src/index.ts -- add                     # captures active Claude Code login
+bun run src/index.ts -- list                    # 1 sub
+bun run src/index.ts -- switch <slot|email>     # activate a specific sub locally
+bun run src/index.ts -- status [--slot N] [--all] [--json]
+                                                # compare local Keychain vs vault, show drift
+bun run src/index.ts -- refresh --slot N [--force]
+                                                # multi-laptop refresh coordinator (see below)
 bun run src/index.ts -- remove <slot|email>
-bun run src/index.ts -- sync --all          # bootstrap on a new machine
-bun run src/index.ts -- clean               # clear active credentials + last-hash cache
-                                            # (server vault + login preserved; --yes to skip prompt)
+bun run src/index.ts -- sync --all              # bootstrap on a new machine
+bun run src/index.ts -- clean                   # clear active credentials + last-hash cache
+                                                # (server vault + login preserved; --yes to skip prompt)
 ```
+
+### Multi-laptop refresh
+
+Anthropic rotates the OAuth `refresh_token` on every refresh call (verified empirically — see `scripts/probe-oauth-refresh.ts`). Whichever laptop runs Claude Code last invalidates every other laptop's stored token. To keep multiple machines in sync:
+
+- `cvault refresh --slot N` reads the local Keychain, ships the local state to the server, and lets the server pick whichever side has the freshest tokens (using the embedded `expiresAt` as a logical clock). If Anthropic refresh is needed, the server drives it; either way, the local Keychain is updated to match the vault before the command exits. Pass `--force` to drive an Anthropic refresh even when not near expiry.
+- `cvault status [--slot N] [--all] [--json]` prints a read-only comparison of local Keychain vs vault state, including drift label, last refresh attempt, and a `cvault add` remediation hint when the vault row has been marked re-login-required.
+- All Keychain writes (across `add`, `switch`, `sync`, `refresh`) acquire the same cross-process lock that Claude Code itself uses (`~/.claude.lock` via `proper-lockfile`), so cvault and Claude Code don't step on each other.
 
 Or build the production bundle locally and run it through bun:
 

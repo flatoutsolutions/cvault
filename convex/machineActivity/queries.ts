@@ -28,6 +28,7 @@ const machineActivityRowValidator = v.object({
   subscriptionId: v.optional(v.id('subscriptions')),
   at: v.number(),
   ipHash: v.optional(v.string()),
+  machineLabel: v.optional(v.string()),
 })
 
 /**
@@ -129,6 +130,14 @@ export const distinctSessionsForUser = authenticatedQuery({
       clerkSessionId: v.string(),
       lastSeenAt: v.number(),
       lastIpHash: v.optional(v.string()),
+      /**
+       * Most-recent `machineLabel` for this session. The dashboard's
+       * "Machines" section renders this as the primary identifier;
+       * `clerkSessionId` is kept internal for the revoke flow. Optional
+       * because legacy rows pre-feature don't carry one — the UI shows
+       * "(no label)" when this is undefined.
+       */
+      machineLabel: v.optional(v.string()),
     })
   ),
   handler: async (ctx) => {
@@ -140,14 +149,23 @@ export const distinctSessionsForUser = authenticatedQuery({
       .order('desc')
       .take(1000)
 
-    const map = new Map<string, { clerkSessionId: string; lastSeenAt: number; lastIpHash?: string }>()
+    const map = new Map<
+      string,
+      { clerkSessionId: string; lastSeenAt: number; lastIpHash?: string; machineLabel?: string }
+    >()
     for (const r of rows) {
       if (map.has(r.clerkSessionId)) continue
-      map.set(r.clerkSessionId, {
+      // Rows are .order('desc'), so the FIRST row we see for each
+      // sessionId is its most-recent — that's where the freshest label
+      // lives. Renames via `cvault login --label` flow through here on
+      // the next refresh because the new login row outranks the old.
+      const entry: { clerkSessionId: string; lastSeenAt: number; lastIpHash?: string; machineLabel?: string } = {
         clerkSessionId: r.clerkSessionId,
         lastSeenAt: r.at,
-        lastIpHash: r.ipHash,
-      })
+      }
+      if (r.ipHash !== undefined) entry.lastIpHash = r.ipHash
+      if (r.machineLabel !== undefined) entry.machineLabel = r.machineLabel
+      map.set(r.clerkSessionId, entry)
     }
     return Array.from(map.values())
   },

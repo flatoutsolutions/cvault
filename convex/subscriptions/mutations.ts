@@ -384,6 +384,20 @@ export const commitRefreshedTokens = internalMutation({
       })
     }
 
+    // CAS on `expiresAt`: if a parallel adoptLocalState / adopt-from-Anthropic
+    // already pushed the row to a NEWER expiresAt, this commit's token
+    // material is older — refusing to patch keeps the freshest token
+    // material live. We still drop the lease (the lease holder did
+    // legitimately complete its work; not releasing would force a 30s
+    // TTL wait for the next attempt). Mirrors `adoptLocalState`'s CAS.
+    if (args.expiresAt < sub.expiresAt) {
+      await ctx.db.patch('subscriptions', args.subId, {
+        refreshLeaseHolder: undefined,
+        refreshLeaseUntil: undefined,
+      })
+      return null
+    }
+
     await ctx.db.patch('subscriptions', args.subId, {
       ciphertext: args.ciphertext,
       nonce: args.nonce,
@@ -419,6 +433,79 @@ export const patchUsage = internalMutation({
 
     await ctx.db.patch('subscriptions', args.subId, patch)
     return null
+  },
+})
+
+/**
+ * Internal mutation used by `refreshSub` to adopt a CLI-supplied local
+ * state when its embedded `claudeAiOauth.expiresAt` is strictly newer than
+ * the row's. Encryption is done by the calling action (we accept ciphertext
+ * + nonce here; mutations can't use `node:crypto`).
+ *
+ * CAS check: re-reads the row inside the transaction and only patches if
+ * the row's `expiresAt` is still strictly less than the supplied
+ * `localExpiresAt`. This guards against the race where two CLIs from two
+ * machines both call `refreshSub` with their respective local states; the
+ * second to land will see the first's adoption already applied and no-op.
+ *
+ * Upper-bound cap: a skewed laptop clock or a manipulated Keychain blob
+ * can ship `expiresAt = Date.now() + 100 years`. If we adopted that, the
+ * cron's `findExpiringSubs` window would never catch it (the `byExpiry`
+ * index range query would always miss the future date) and the row would
+ * be poisoned indefinitely. Anthropic's access-token lifetime is 8h; 24h
+ * is a generous bound for clock skew. Any incoming `localExpiresAt` past
+ * `Date.now() + 24h` is rejected (return `adopted: false`, log a warning
+ * with redacted state).
+ *
+ * Returns whether the row was actually patched so the caller can decide
+ * which `action` label to surface in its return payload.
+ */
+const ADOPT_MAX_FUTURE_MS = 24 * 60 * 60 * 1000
+
+export const adoptLocalState = internalMutation({
+  args: {
+    subId: v.id('subscriptions'),
+    ciphertext: v.bytes(),
+    nonce: v.bytes(),
+    localExpiresAt: v.number(),
+  },
+  returns: v.object({ adopted: v.boolean() }),
+  handler: async (ctx, { subId, ciphertext, nonce, localExpiresAt }) => {
+    const sub = await ctx.db.get('subscriptions', subId)
+    if (!sub) {
+      throw new ConvexError({ code: 'NOT_FOUND', message: 'Subscription does not exist' })
+    }
+    if (sub.removedAt !== undefined) {
+      // Don't resurrect a tombstoned sub via local adoption.
+      throw new ConvexError({ code: 'NOT_FOUND', message: 'Subscription has been removed' })
+    }
+    const now = Date.now()
+    if (localExpiresAt > now + ADOPT_MAX_FUTURE_MS) {
+      // Skewed clock or tampered blob — refuse to adopt and log a
+      // warning. Logging redacts subId-only context (no token material is
+      // present in this scope) so the operator can grep `[cvault]` to
+      // see vault-poisoning attempts in Convex logs.
+      console.warn(
+        `[cvault] adoptLocalState: refusing to adopt out-of-bound expiresAt for ` +
+          `subId=${String(subId)} (localExpiresAt=${String(localExpiresAt)}, ceiling=${String(now + ADOPT_MAX_FUTURE_MS)})`
+      )
+      return { adopted: false }
+    }
+    if (localExpiresAt <= sub.expiresAt) {
+      // Race lost — another caller already adopted a state >= ours.
+      return { adopted: false }
+    }
+    await ctx.db.patch('subscriptions', subId, {
+      ciphertext,
+      nonce,
+      expiresAt: localExpiresAt,
+      lastRefreshedAt: Date.now(),
+      // Adopting local clears any stale reloginRequired marker from a
+      // prior run of this very sub on a different machine — the local
+      // state being newer means the user successfully refreshed somewhere.
+      refreshExpiresAt: undefined,
+    })
+    return { adopted: true }
   },
 })
 

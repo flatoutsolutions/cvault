@@ -45,6 +45,11 @@ export const record = internalMutation({
     subscriptionId: v.optional(v.id('subscriptions')),
     at: v.number(),
     rawIp: v.optional(v.string()),
+    /**
+     * Human-readable identifier for the originating machine. See the
+     * field's docstring in `schema.ts` for why this is optional.
+     */
+    machineLabel: v.optional(v.string()),
   },
   returns: v.id('machineActivity'),
   handler: async (ctx, args) => {
@@ -57,6 +62,7 @@ export const record = internalMutation({
       subscriptionId: args.subscriptionId,
       at: args.at,
       ipHash,
+      machineLabel: args.machineLabel,
     })
   },
 })

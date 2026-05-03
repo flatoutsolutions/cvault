@@ -192,6 +192,17 @@ describe('Scenario #12 — Concurrent cvault switch lock contention (in-process)
     // writeActiveCredentials).
     expect(fake.action).toHaveBeenCalledTimes(2)
     expect(writeActiveCredentials).toHaveBeenCalledTimes(2)
+
+    // INVARIANT 4 (post proper-lockfile migration): the lock TARGET is
+    // `<HOME>/.claude` (= getClaudeConfigHome()), so proper-lockfile
+    // creates `<HOME>/.claude.lock` as the companion mutex. By the time
+    // the writes complete and both releases ran, the companion is
+    // gone. We can't observe the companion mid-run from this test
+    // without instrumenting proper-lockfile, but we CAN assert the
+    // post-state cleanup: the companion path is absent.
+    const companionLock = join(tempHome, '.claude.lock')
+    const { existsSync } = await import('node:fs')
+    expect(existsSync(companionLock)).toBe(false)
   })
 
   /**
