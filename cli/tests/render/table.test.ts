@@ -57,7 +57,7 @@ describe('renderSubsTable', () => {
     expect(out).toContain('alice@x.com')
   })
 
-  it('marks STORED as `local` for the active sub and `cloud` for vault-only subs', () => {
+  it('marks STORED as `local+cloud` for the active sub and `cloud` for vault-only subs', () => {
     const out = renderSubsTable(
       [row({ slot: 1, email: 'a@b.com', isActive: true }), row({ slot: 2, email: 'c@d.com', isActive: false })],
       NOW
@@ -65,8 +65,10 @@ describe('renderSubsTable', () => {
     const lines = out.split('\n')
     const aLine = lines.find((l) => l.includes('a@b.com'))
     const cLine = lines.find((l) => l.includes('c@d.com'))
-    expect(aLine).toContain('local')
+    expect(aLine).toContain('local+cloud')
+    // Vault-only row must NOT incidentally match "cloud" via "local+cloud".
     expect(cLine).toContain('cloud')
+    expect(cLine).not.toContain('local')
   })
 
   it('marks the active sub with a dot prefix', () => {
