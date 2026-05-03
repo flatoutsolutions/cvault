@@ -1,11 +1,17 @@
 /**
  * Spec: §7 — `cvault remove <slot|email>`.
  *
- * `remove` is a SERVER-ONLY soft-delete: tombstones the row in Convex
- * and leaves local credentials untouched. The earlier "also clear local
- * if it matches the active sub" guard was removed after it surprised
- * users by silently logging them out of Claude Code; use `cvault clean`
- * for the local-wipe case.
+ * `remove` does a server-side soft-delete and ALSO clears the local
+ * credentials when the removed sub matches the currently-active local
+ * account (R4-H4 conditional-clear). Removing a non-active sub leaves
+ * the local Keychain untouched. See `cli/src/commands/remove.ts` for
+ * the full rationale.
+ *
+ * These unit tests don't stub `getActiveAccount`, so on a test machine
+ * with no real `claude.json` the active-account check returns null and
+ * the local-clear branch is skipped — the tests focus on the server
+ * dispatch + slot-resolution paths. The active-vs-inactive branching is
+ * exercised in `tests/scenarios/forceRemoveCli.scenario.test.ts`.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
