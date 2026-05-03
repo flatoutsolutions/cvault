@@ -152,7 +152,10 @@ jobs:
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
-          DASHBOARD_URL: https://cvault.pages.dev
+          # Cloudflare auto-suffixed our `cvault` project name (the
+          # bare `cvault.pages.dev` host was already taken globally by an
+          # unrelated project). Use the real assigned hostname.
+          DASHBOARD_URL: https://cvault-bsy.pages.dev
         run: |
           DEPLOY_NAME=$(echo "$CONVEX_DEPLOY_KEY" | sed 's/.*:\(.*\)|.*/\1/')
           export VITE_CONVEX_URL="https://${DEPLOY_NAME}.convex.cloud"
