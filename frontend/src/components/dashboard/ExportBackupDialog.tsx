@@ -30,13 +30,21 @@ interface Props {
 
 const MIN_PASSPHRASE_LEN = 12
 
-function base64ToBytes(base64: string): Uint8Array {
+/**
+ * Decode a base64 string into a fresh ArrayBuffer (NOT a Uint8Array
+ * over a SharedArrayBuffer-compatible backing store). Allocating a
+ * dedicated ArrayBuffer first lets us pass it to `new Blob([...])`
+ * without TypeScript widening to `BufferSource | ArrayBufferLike`,
+ * which the Blob constructor rejects under strict typing.
+ */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
+  const buf = new ArrayBuffer(binary.length)
+  const bytes = new Uint8Array(buf)
   for (let i = 0; i < binary.length; i += 1) {
     bytes[i] = binary.charCodeAt(i)
   }
-  return bytes
+  return buf
 }
 
 export function ExportBackupDialog({ open, onOpenChange }: Props) {
@@ -59,8 +67,8 @@ export function ExportBackupDialog({ open, onOpenChange }: Props) {
     setBusy(true)
     try {
       const result = await exportBackup({ passphrase })
-      const bytes = base64ToBytes(result.contentBase64)
-      const blob = new Blob([bytes], { type: 'application/octet-stream' })
+      const buf = base64ToArrayBuffer(result.contentBase64)
+      const blob = new Blob([buf], { type: 'application/octet-stream' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
