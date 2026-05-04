@@ -43,11 +43,12 @@ const subscriptionMetaValidator = v.object({
   removedAt: v.optional(v.number()),
 })
 
-/** Strip ciphertext + nonce before sending a sub over the wire. */
+/** Strip ciphertext + nonce + keyVersion before sending a sub over the wire. */
 function toMeta(sub: Doc<'subscriptions'>) {
-  const { ciphertext: _ciphertext, nonce: _nonce, ...rest } = sub
+  const { ciphertext: _ciphertext, nonce: _nonce, keyVersion: _keyVersion, ...rest } = sub
   void _ciphertext
   void _nonce
+  void _keyVersion
   return rest
 }
 

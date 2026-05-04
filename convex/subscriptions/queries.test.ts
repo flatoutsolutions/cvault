@@ -154,4 +154,41 @@ describe('subscriptions.queries.listForUser', () => {
     expect(sub?.slot).toBe(1)
     expect(sub?.subscriptionType).toBe('max')
   })
+
+  it('strips keyVersion from the response payload (server-only encryption metadata)', async () => {
+    // Regression guard for the prod incident triggered by PR #10:
+    // `keyVersion` was added to the schema and started being persisted on
+    // every mutation, but `toMeta()` did not strip it. The returns
+    // validator rejected the leaked field with `ReturnsValidationError`,
+    // taking listForUser / getMetaByEmail / getStatus down for any sub
+    // written or refreshed since the rotation feature shipped.
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'rotated@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        keyVersion: 'v1',
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    const [sub] = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
+    expect(sub).toBeDefined()
+    // The bug: keyVersion leaked through, failing the returns validator.
+    expect(sub).not.toHaveProperty('keyVersion')
+    // Defense-in-depth: confirm the existing strips still hold alongside it.
+    expect(sub).not.toHaveProperty('ciphertext')
+    expect(sub).not.toHaveProperty('nonce')
+    // Sanity: metadata that should be exposed is still present.
+    expect(sub?.email).toBe('rotated@example.com')
+    expect(sub?.slot).toBe(1)
+  })
 })
