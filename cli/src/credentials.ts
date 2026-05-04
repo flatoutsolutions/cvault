@@ -1,7 +1,12 @@
 import { readGlobalConfig } from './native/claudeConfig'
 import { readCredentials } from './native/credentialStore'
 import type { ClaudeSwapEnvelope } from './native/envelope'
-import { applyEnvelope, buildEnvelope, clearActive as nativeClearActive } from './native/envelope'
+import {
+  applyEnvelope,
+  applyEnvelopeUnlocked,
+  buildEnvelope,
+  clearActive as nativeClearActive,
+} from './native/envelope'
 
 /**
  * Façade for the active Claude Code credentials.
@@ -72,6 +77,19 @@ export function exportAll(): ClaudeSwapEnvelope {
  */
 export async function importEnvelope(envelope: ClaudeSwapEnvelope, _force = false): Promise<void> {
   await applyEnvelope(envelope)
+}
+
+/**
+ * Unlocked variant of `importEnvelope` — runs the same write logic but
+ * does NOT acquire the cross-process file lock. Callers MUST already
+ * hold the lock (via `withFileLock` from `'./native/lock'`) before
+ * calling this. Used by `cvault sync` to hold the lock once across the
+ * whole per-sub loop (proper-lockfile is NOT reentrant within one
+ * process — calling `importEnvelope` from inside `withFileLock` would
+ * deadlock waiting for self).
+ */
+export function importEnvelopeUnlocked(envelope: ClaudeSwapEnvelope, _force = false): void {
+  applyEnvelopeUnlocked(envelope)
 }
 
 /**

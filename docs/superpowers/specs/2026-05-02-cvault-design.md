@@ -54,7 +54,7 @@ Anthropic Max / Pro subscriptions are licensed per individual. v1 design serves 
 │          machineActivity                              │
 │  Functions: queries, mutations, actions, crons        │
 │  HTTP: /api/cli/sync                                  │
-│  Crons: refreshExpiringTokens (10m), pollUsage (5m)   │
+│  Crons: pollUsage (5m)                                │
 └────────────────┬────────────────────┬─────────────────┘
                  │ Clerk JWT          │ Clerk JWT
        ┌─────────┴────────┐  ┌────────┴──────────┐
@@ -204,8 +204,16 @@ Per Blueprint convention, each domain folder owns its `queries.ts`, `mutations.t
 
 ### `convex/subscriptions/crons.ts`
 
-- `refreshExpiringTokens` every 10 min — scans `byExpiry`, schedules `refreshOAuthToken` for each.
 - `pollUsage` every 5 min — fanout `fetchUsageForSub` per active sub per user.
+
+Note: the original spec also included a `refreshExpiringTokens` cron that
+proactively refreshed access tokens 15 minutes before expiry. It was
+removed in v1 (post-launch audit) because Anthropic rotates the refresh
+token on every refresh and the vault has no `localState` channel from the
+cron — running the cron against a stale RT racing a recent on-machine
+rotation produced false `reloginRequired` flags. Pull-on-use refresh
+(`pullForSwitch` proactively refreshes when `expiresAt < now+5min`)
+covers the same need without the race.
 
 ### `convex/subscriptions/http.ts`
 
@@ -316,11 +324,11 @@ The `refreshOAuthToken` action calls this first. Loser sleeps 1 second, re-queri
 | Failure                                    | Response                                                                                   |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | Anthropic refresh 401 (refresh_token dead) | Patch `refreshExpiresAt=now`; log `reloginRequired`; surface in `list` w/ `⚠ relogin` flag |
-| Anthropic refresh 5xx / network            | Log `failure`; cron retries next tick; no exponential backoff in v1                        |
+| Anthropic refresh 5xx / network            | Log `failure`; next pull-on-use call retries; no exponential backoff in v1                 |
 | Lease loss                                 | Sleep 1s, re-query; if still expired, log + abort                                          |
 | Anthropic usage 429                        | Skip cycle, retry next 5m                                                                  |
 | Decrypt failure (GCM auth tag)             | Throw, log error w/ subId; surface as "creds corrupt — re-add"                             |
-| Action timeout                             | Lease TTL (30s) auto-expires; next cron picks up                                           |
+| Action timeout                             | Lease TTL (30s) auto-expires; next pull-on-use refresh re-attempts                         |
 
 ### CLI side
 
@@ -343,7 +351,7 @@ The `refreshOAuthToken` action calls this first. Loser sleeps 1 second, re-queri
 - `subscriptions/refresh.test.ts` — lease CAS, 401 → reloginRequired, 500 → failure, lease released
 - `subscriptions/usage.test.ts` — 200 patches cache, 429 skips silently
 - `subscriptions/crypto.test.ts` — encrypt/decrypt roundtrip, tampered ciphertext throws, nonce uniqueness
-- `crons.test.ts` — schedules only matching subs
+- `crons.test.ts` — `pollUsage` fanout + RT-dead skip
 - `auth.test.ts` — unauth → 401, cross-user → empty
 - `__scenarios__/refreshCycle.scenario.ts` — live cycle against dev deploy, gated on `VAULT_TEST_REFRESH_TOKEN` env
 

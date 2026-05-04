@@ -33,13 +33,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runSwitch } from '../../src/commands/switch'
 import { runSync } from '../../src/commands/sync'
 import { makeVaultClient } from '../../src/convex/vaultClient'
-import { getActiveAccount, importEnvelope, switchTo } from '../../src/credentials'
+import { getActiveAccount, importEnvelope, importEnvelopeUnlocked, switchTo } from '../../src/credentials'
 import { lastHashPath } from '../../src/paths'
 import { SAMPLE_OAUTH_BLOB, cleanupTempHome, createFakeVaultClient, makeSub, setupTempHome } from './_helpers'
 
 vi.mock('../../src/credentials', () => ({
   getActiveAccount: vi.fn(),
+  // After the sync lock fix, runSync calls `importEnvelopeUnlocked`
+  // (proper-lockfile is non-reentrant), while runSwitch still calls
+  // `importEnvelope`. Both must be mocked so this scenario can assert
+  // which one runs at each phase.
   importEnvelope: vi.fn(),
+  importEnvelopeUnlocked: vi.fn(),
   switchTo: vi.fn(),
 }))
 
@@ -90,7 +95,11 @@ describe('Scenario #5 — Switch on a second machine (sync, then switch)', () =>
     await runSync()
 
     // Sync pulled both subs and imported each into the local Keychain.
-    expect(importEnvelope).toHaveBeenCalledTimes(2)
+    // Note: post-fix, sync uses `importEnvelopeUnlocked` (it holds the
+    // file lock once across the whole loop). `importEnvelope` (which
+    // re-acquires the lock) is reserved for switch's per-call path.
+    expect(importEnvelopeUnlocked).toHaveBeenCalledTimes(2)
+    expect(importEnvelope).not.toHaveBeenCalled()
     expect(fake.action).toHaveBeenCalledTimes(2)
 
     // Local hash files were written with mode 0600 + correct hashes.

@@ -78,14 +78,14 @@ describe('scenario #14 — token redaction in refresh failure logs', () => {
     // ---------- RUN ----------
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: seeded.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     // ---------- ASSERTIONS ----------
     const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
     expect(logs).toHaveLength(1)
     expect(logs[0]?.outcome).toBe('failure')
-    expect(logs[0]?.triggeredBy).toBe('cron')
+    expect(logs[0]?.triggeredBy).toBe('manual')
 
     const errorText = logs[0]?.error ?? ''
     // Critical: NO leaked token substring is persisted.
@@ -135,7 +135,7 @@ describe('scenario #14 — token redaction in refresh failure logs', () => {
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: seeded.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
@@ -176,7 +176,7 @@ describe('scenario #14 — token redaction in refresh failure logs', () => {
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: seeded.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())

@@ -151,7 +151,7 @@ interface UpsertSubResult {
  * Canonicalize an email for storage and lookup. Anthropic emails are
  * case-insensitive at SMTP and Clerk normalizes inconsistently — without
  * this, `cvault add Stefan@x.com` followed by `cvault remove
- * stefan@x.com` would NOT_FOUND because the `byUserAndEmail` index does
+ * stefan@x.com` would NOT_FOUND because the `byEmail` index does
  * an exact-string comparison.
  *
  * Lowercasing is applied at every WRITE (so stored emails are always
@@ -170,10 +170,31 @@ function canonicalEmail(email: string): string {
  * and `upsertEncrypted` (called by the `upsertFromPlaintext` action after
  * encrypting plaintext server-side).
  *
+ * Dedupe is GLOBAL by email under the shared-vault doctrine
+ * (`convex/utils/users.ts:3-7`): every read path (including
+ * `softRemove`/`rename`, `getMetaByEmail`, `listAllActiveSubsRaw`) is
+ * keyed on the global `byEmail` index, so the write path must match.
+ * Pre-fix the lookup was scoped via `byUserAndEmail`, which let two
+ * Clerk users add the same Anthropic email and end up with TWO rows
+ * for one address — the dashboard rendered duplicates and backups
+ * exported them.
+ *
+ * Cross-user collision policy: when an existing row's `userId` differs
+ * from the caller's, KEEP the original `userId`. First claimer wins;
+ * subsequent adders rotate ciphertext + label only. This matches the
+ * shared-vault doctrine where tokens are shared and ownership is a
+ * bookkeeping field that records who first added the credential.
+ *
  * Behavior:
- *  - existing live row -> rotate ciphertext+nonce in place, keep slot stable
- *  - existing tombstoned row -> revive in place, keep slot, clear removedAt
- *  - no row -> allocate next free slot via `nextFreeSlot()` and insert
+ *  - existing live row (any userId) -> rotate ciphertext+nonce in place,
+ *    keep slot stable, KEEP original userId
+ *  - existing tombstoned row (any userId) -> revive in place under the
+ *    original userId, allocate fresh slot, clear removedAt
+ *  - no row anywhere -> allocate next free slot for the caller and insert
+ *
+ * Slot space is per-user. Slot only matters in CLI ergonomics (the
+ * shipped binary still references slot numbers); under shared vault the
+ * slot column is informational.
  */
 async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<UpsertSubResult> {
   // Canonicalize the incoming email once. Stored emails are lowercase
@@ -181,17 +202,37 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
   // Anthropic / Clerk happened to capitalize the same address.
   const email = canonicalEmail(input.email)
 
-  // Dedupe by (userId, email). The `byUserAndEmail` index makes this
-  // an O(matches) read instead of an O(allSubsGlobal) scan; matches per
-  // (user, email) is at most 1 by spec.
-  const existing = await ctx.db
+  // Global dedupe via `byEmail`. Multiple rows can technically share an
+  // email under the historical schema (live vs. tombstoned), so we
+  // collect, prefer the live row, and fall back to a tombstoned one for
+  // revival. `.unique()` won't work here — a live row + a tombstoned row
+  // for the same email is a legitimate shape from earlier soft-delete
+  // semantics.
+  const matches = await ctx.db
     .query('subscriptions')
-    .withIndex('byUserAndEmail', (q) => q.eq('userId', input.userId).eq('email', email))
-    .unique()
+    .withIndex('byEmail', (q) => q.eq('email', email))
+    .collect()
+  // Canary: more than one LIVE row for an email is a schema-invariant
+  // violation (the dedupe in this mutation is the only writer that
+  // should produce live rows by email, and it never inserts a second
+  // when one already exists). Tombstoned + live coexisting is
+  // legitimate from soft-delete semantics; only flag when >1 LIVE.
+  const liveMatches = matches.filter((r) => r.removedAt === undefined)
+  if (liveMatches.length > 1) {
+    console.warn(
+      `[cvault] upsertSub: more than one LIVE row for email=${email} — schema invariant violated. Inspect manually.`
+    )
+  }
+  const live = liveMatches[0]
+  const tombstoned = matches.find((r) => r.removedAt !== undefined)
+  const existing = live ?? tombstoned
 
   const now = Date.now()
 
   if (existing && existing.removedAt === undefined) {
+    // Live row exists. Rotate ciphertext + label in place; keep the
+    // original userId (first-claimer ownership) and slot. The caller
+    // doesn't get a "created" signal; their write is a refresh.
     await ctx.db.patch('subscriptions', existing._id, {
       ciphertext: input.ciphertext,
       nonce: input.nonce,
@@ -203,16 +244,17 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
       lastRefreshedAt: now,
       ...(input.label !== undefined ? { label: input.label } : {}),
     })
-    return { subId: existing._id, userId: input.userId, slot: existing.slot, created: false }
+    return { subId: existing._id, userId: existing.userId, slot: existing.slot, created: false }
   }
 
   if (existing && existing.removedAt !== undefined) {
     // Reviving a tombstoned row: re-allocate to the lowest free slot
-    // (per user) instead of preserving the tombstoned slot. Otherwise
-    // removing slots 1+2 then re-adding email-from-slot-2 would silently
-    // revive at slot 2 and leave slot 1 hole — confusing for users who
-    // expect dense slot numbers.
-    const reviveSlot = await nextFreeSlotForUser(ctx, input.userId)
+    // for the row's ORIGINAL owner (slot space is per-user) instead of
+    // preserving the tombstoned slot. Otherwise removing slots 1+2 then
+    // re-adding email-from-slot-2 would silently revive at slot 2 and
+    // leave a hole at slot 1 — confusing for users who expect dense
+    // slot numbers.
+    const reviveSlot = await nextFreeSlotForUser(ctx, existing.userId)
     await ctx.db.patch('subscriptions', existing._id, {
       ciphertext: input.ciphertext,
       nonce: input.nonce,
@@ -226,11 +268,10 @@ async function upsertSub(ctx: MutationCtx, input: UpsertSubInput): Promise<Upser
       removedAt: undefined,
       ...(input.label !== undefined ? { label: input.label } : {}),
     })
-    return { subId: existing._id, userId: input.userId, slot: reviveSlot, created: false }
+    return { subId: existing._id, userId: existing.userId, slot: reviveSlot, created: false }
   }
 
-  // Slot space is per-user (was global — that conflated different users'
-  // slot allocations and grew O(allSubs) per insert).
+  // No row anywhere — first claim. Allocate slot for the caller.
   const slot = await nextFreeSlotForUser(ctx, input.userId)
 
   const subId = await ctx.db.insert('subscriptions', {
@@ -317,11 +358,9 @@ export const softRemove = authenticatedMutation({
   handler: async (ctx, { email, machineLabel, clerkSessionId }) => {
     // SHARED-VAULT (`convex/utils/users.ts:3-7`): any authenticated
     // allowed-domain caller resolves any row regardless of nominal owner.
-    // Reads + actions were unscoped in PRs #15-#18; this is the parity
-    // fix for the public mutation layer. Lookup is by email only via the
-    // global `byEmail` index. The legacy `byUserAndEmail` index still
-    // exists for write-dedupe in `upsertSub` (deliberately left scoped
-    // — see PR #18 note on `upsertSub`).
+    // Reads, public mutations (this), AND the write-dedupe in
+    // `upsertSub` all use the global `byEmail` index now (the audit-fix
+    // closed the only remaining scoped path).
     //
     // Email is canonicalized to lowercase to match the storage convention
     // set in `upsertSub`. Without this, `cvault remove Stefan@x.com`
@@ -548,12 +587,11 @@ export const patchUsage = internalMutation({
  *
  * Upper-bound cap: a skewed laptop clock or a manipulated Keychain blob
  * can ship `expiresAt = Date.now() + 100 years`. If we adopted that, the
- * cron's `findExpiringSubs` window would never catch it (the `byExpiry`
- * index range query would always miss the future date) and the row would
- * be poisoned indefinitely. Anthropic's access-token lifetime is 8h; 24h
- * is a generous bound for clock skew. Any incoming `localExpiresAt` past
- * `Date.now() + 24h` is rejected (return `adopted: false`, log a warning
- * with redacted state).
+ * pull-on-use proactive-refresh check (`expiresAt < now + 5min`) would
+ * never fire and the row would be poisoned indefinitely. Anthropic's
+ * access-token lifetime is 8h; 24h is a generous bound for clock skew.
+ * Any incoming `localExpiresAt` past `Date.now() + 24h` is rejected
+ * (return `adopted: false`, log a warning with redacted state).
  *
  * Returns whether the row was actually patched so the caller can decide
  * which `action` label to surface in its return payload.

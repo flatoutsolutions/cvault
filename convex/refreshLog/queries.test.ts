@@ -32,7 +32,7 @@ describe('refreshLog.queries.recentForUser', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'success',
       at: 1000,
     })
@@ -98,7 +98,7 @@ describe('refreshLog.queries.recentForUser', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId: aliceId,
       subscriptionId: aliceSubId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'success',
       at: 1000,
     })
@@ -152,7 +152,7 @@ describe('refreshLog.queries.recentForSubscription', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId: bobId,
       subscriptionId: bobSubId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'success',
       at: 1000,
     })

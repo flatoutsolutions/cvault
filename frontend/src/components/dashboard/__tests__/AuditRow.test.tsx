@@ -4,7 +4,7 @@
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §8.
  *
  * The audit feed merges two backends:
- *   - refreshLog rows (Anthropic OAuth refresh attempts, cron + manual + onUse)
+ *   - refreshLog rows (Anthropic OAuth refresh attempts, manual + onUse)
  *   - machineActivity rows (CLI operations: switch / add / pull / remove / refresh)
  *
  * Each row gets a normalized `AuditRowData` shape that this component knows
@@ -31,14 +31,14 @@ describe('AuditRow', () => {
           id: 'log_abc',
           at: Date.now() - 60_000,
           subEmail: 'alice@example.com',
-          triggeredBy: 'cron',
+          triggeredBy: 'manual',
           outcome: 'success',
         }}
       />
     )
     expect(screen.getByText(/refresh/i)).toBeTruthy()
     expect(screen.getByText(/alice@example\.com/)).toBeTruthy()
-    expect(screen.getByText(/cron/i)).toBeTruthy()
+    expect(screen.getByText(/manual/i)).toBeTruthy()
     expect(screen.getByText(/success/i)).toBeTruthy()
     expect(container.querySelector('[data-slot="audit-row"]')?.getAttribute('data-state')).toBe('ok')
   })
@@ -69,7 +69,7 @@ describe('AuditRow', () => {
           id: 'log_x',
           at: Date.now() - 10_000,
           subEmail: 'a@b.com',
-          triggeredBy: 'cron',
+          triggeredBy: 'onUse',
           outcome: 'reloginRequired',
         }}
       />

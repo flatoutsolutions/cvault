@@ -47,7 +47,7 @@ interface VaultSubMeta {
 
 interface RefreshLogEntry {
   outcome: 'success' | 'failure' | 'reloginRequired'
-  triggeredBy: 'cron' | 'manual' | 'onUse'
+  triggeredBy: 'manual' | 'onUse'
   at: number
   error?: string
 }
@@ -355,7 +355,14 @@ export const statusCommand = defineCommand({
     const opts: RunStatusOptions = {}
     if (typeof args.slot === 'string' && args.slot.length > 0) {
       const slot = Number.parseInt(args.slot, 10)
-      if (Number.isNaN(slot)) throw new Error(`--slot must be a number, got ${args.slot}`)
+      // Reject NaN, zero, and negative slots up front with one unified
+      // message so the user sees a clear error instead of a confusing
+      // Convex rejection — and so we don't burn a network round trip
+      // just to discover an invalid slot. Slot is 1-indexed in the
+      // vault.
+      if (Number.isNaN(slot) || slot < 1) {
+        throw new Error(`--slot must be a positive integer, got ${args.slot}`)
+      }
       opts.slot = slot
     }
     if (args.all === true) opts.all = true

@@ -1,10 +1,17 @@
 /**
- * Refresh log — one row per OAuth refresh attempt (cron, manual, on-use).
+ * Refresh log — one row per OAuth refresh attempt (manual, on-use).
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §4.
  *
  * SECURITY: `error` text is run through redactTokens() before insert
  * to ensure plaintext OAuth tokens are never persisted here.
+ *
+ * NOTE on `triggeredBy`: the `'cron'` literal was dropped along with the
+ * `refreshExpiringTokens` cron (audit fix #5). No production caller emits
+ * `'cron'` anymore. Historical rows in long-lived deployments would now
+ * fail validation under the narrowed union, but cvault is fresh
+ * deployment-only so we accept that breakage in exchange for a correct
+ * type surface.
  */
 import { defineTable } from 'convex/server'
 import { v } from 'convex/values'
@@ -12,7 +19,7 @@ import { v } from 'convex/values'
 export const refreshLogSchema = defineTable({
   userId: v.id('users'),
   subscriptionId: v.id('subscriptions'),
-  triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
+  triggeredBy: v.union(v.literal('manual'), v.literal('onUse')),
   outcome: v.union(v.literal('success'), v.literal('failure'), v.literal('reloginRequired')),
   error: v.optional(v.string()),
   at: v.number(),

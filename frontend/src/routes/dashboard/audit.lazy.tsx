@@ -250,6 +250,14 @@ export function AuditPage() {
   const firstDisabled = isFirstPage
   const lastDisabled = totalPages === null || isLastPageKnown
 
+  // "Filter narrowed everything away" empty state: data is loaded, the
+  // user has rows in the merged feed, but the active filters exclude
+  // them all. Distinguished from the unfiltered empty case (kept inside
+  // the table body below) so users get an actionable hint to widen the
+  // filter set rather than concluding the feed is empty.
+  const filtersActive = subFilter !== 'all' || sessionFilter !== 'all' || outcomeFilter !== 'all'
+  const filteredAwayEmpty = filtersActive && merged.length > 0 && filtered.length === 0
+
   // Page indicator strings.
   const pageNumber = pagination.pageIndex + 1
   const totalPagesText = totalPages === null ? '?' : totalPages.toString()
@@ -308,6 +316,13 @@ export function AuditPage() {
           {filtered.length.toString()} of {merged.length.toString()} rows
         </span>
       </div>
+
+      {filteredAwayEmpty ? (
+        <div className="border-border bg-card flex flex-col items-center gap-1 rounded-lg border p-8 text-center text-sm">
+          <p className="text-foreground font-medium">No matching activity.</p>
+          <p className="text-muted-foreground">Try clearing filters or expanding the date range.</p>
+        </div>
+      ) : null}
 
       <div className="border-border bg-card overflow-hidden rounded-lg border">
         <Table>

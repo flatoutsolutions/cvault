@@ -117,13 +117,13 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
   })
 
   /**
-   * Cron spam recovery path. After Anthropic answers `invalid_grant`,
-   * `markReloginRequired` clamps `refreshExpiresAt` into the past so
-   * `findExpiringSubs` and the in-action defense both stop driving the
-   * cron loop. The user's recovery is `cvault add` — which lands here.
-   * If this path doesn't CLEAR the prior `refreshExpiresAt` clamp, the
-   * sub stays "RT-dead" forever and the cron never picks it up again
-   * even after a successful re-capture.
+   * RT-dead recovery path. After Anthropic answers `invalid_grant`,
+   * `markReloginRequired` clamps `refreshExpiresAt` into the past so the
+   * in-action defense stops driving Anthropic. The user's recovery is
+   * `cvault add` — which lands here. If this path doesn't CLEAR the
+   * prior `refreshExpiresAt` clamp, the sub stays "RT-dead" forever
+   * and pull-on-use callers (`pullForSwitch`) keep getting the
+   * REFRESH_FAILED error even after a successful re-capture.
    */
   it('clears stale refreshExpiresAt when re-capturing a sub previously marked reloginRequired', async () => {
     const t = vault()

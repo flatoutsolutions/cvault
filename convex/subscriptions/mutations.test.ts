@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { SECOND_IDENTITY, TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api, internal } from '../_generated/api'
@@ -111,9 +111,10 @@ describe('subscriptions.mutations.upsert', () => {
     const row = await t.run(async (ctx) => {
       return await ctx.db
         .query('subscriptions')
-        .withIndex('byUserAndEmail', (q) => q.eq('userId', initial.userId).eq('email', 'a@example.com'))
+        .withIndex('byEmail', (q) => q.eq('email', 'a@example.com'))
         .unique()
     })
+    expect(row?.userId).toEqual(initial.userId)
     expect(row?.ciphertext.byteLength).toBe(64)
   })
 
@@ -249,6 +250,65 @@ describe('subscriptions.mutations.upsert', () => {
     })
     expect(reborn.slot).toBe(1)
   })
+
+  it('warns when more than one LIVE row exists for the same email (schema invariant canary)', async () => {
+    // Bypassing the dedupe in `upsertSub` requires planting two live
+    // rows directly via the test DB. The schema invariant says this
+    // should never happen; the canary surfaces it loudly so an operator
+    // sees the violation rather than the row silently being ignored.
+    const t = vault()
+    const userId = await seedUser(t)
+
+    // Plant TWO live rows for the same email — what the canary should
+    // detect. Use direct ctx.db.insert so we sidestep the dedupe path.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId,
+        email: 'duplicate@example.com',
+        slot: 1,
+        ciphertext: FAKE_CIPHERTEXT,
+        nonce: FAKE_NONCE,
+        keyVersion: 'v1',
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+      await ctx.db.insert('subscriptions', {
+        userId,
+        email: 'duplicate@example.com',
+        slot: 2,
+        ciphertext: FAKE_CIPHERTEXT,
+        nonce: FAKE_NONCE,
+        keyVersion: 'v1',
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // Trigger upsert against the same email — the canary fires before
+    // the patch, regardless of which existing row gets selected as
+    // first.
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'duplicate@example.com',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      keyVersion: 'v1',
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    expect(warnSpy).toHaveBeenCalled()
+    const warnArgs = warnSpy.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(warnArgs).toMatch(/more than one LIVE row/i)
+    expect(warnArgs).toContain('duplicate@example.com')
+    warnSpy.mockRestore()
+  })
 })
 
 describe('subscriptions.mutations.softRemove', () => {
@@ -272,10 +332,11 @@ describe('subscriptions.mutations.softRemove', () => {
     const after = await t.run(async (ctx) => {
       return await ctx.db
         .query('subscriptions')
-        .withIndex('byUserAndEmail', (q) => q.eq('userId', inserted.userId).eq('email', 'gone@example.com'))
+        .withIndex('byEmail', (q) => q.eq('email', 'gone@example.com'))
         .unique()
     })
     expect(after).not.toBeNull()
+    expect(after?.userId).toEqual(inserted.userId)
     expect(after?.removedAt).toBeTypeOf('number')
   })
 
@@ -481,9 +542,10 @@ describe('subscriptions.mutations.rename', () => {
     const after = await t.run(async (ctx) => {
       return await ctx.db
         .query('subscriptions')
-        .withIndex('byUserAndEmail', (q) => q.eq('userId', inserted.userId).eq('email', 'rename@example.com'))
+        .withIndex('byEmail', (q) => q.eq('email', 'rename@example.com'))
         .unique()
     })
+    expect(after?.userId).toEqual(inserted.userId)
     expect(after?.label).toBe('My Personal Sub')
     // Other fields untouched.
     expect(after?.subscriptionType).toBe('max')
@@ -909,8 +971,8 @@ describe('subscriptions.mutations.adoptLocalState', () => {
   // M3 regression: cap the upper bound on localExpiresAt at 24h beyond now.
   // A skewed laptop clock or a manipulated Keychain blob with
   // `expiresAt = Date.now() + 100 years` would otherwise poison the vault
-  // for a century — `findExpiringSubs` would never schedule it because its
-  // window check `q.lt('expiresAt', cutoff)` would never match.
+  // for a century — pull-on-use proactive refresh (`expiresAt < now + 5min`)
+  // would never fire and the row would be permanently stuck.
   it('M3: rejects adoption when localExpiresAt exceeds the 24h ceiling', async () => {
     const t = vault()
     await seedUser(t)

@@ -315,7 +315,9 @@ Without burning a real refresh token, you can simulate the auto-refresh behavior
 The cleanest way to simulate without burning a real Anthropic refresh token:
 
 - [ ] In the Convex dashboard, edit the test sub: set `refreshExpiresAt` to a past timestamp (e.g. `Date.now() - 1000`) **and** set `expiresAt` to `Date.now() - 1000` so the next access triggers refresh
-- [ ] Either trigger the cron manually (via Convex dashboard → **Functions** → run `internal.subscriptions.crons.refreshExpiringTokens`) or wait for the 10-min tick
+- [ ] Trigger refresh from a CLI client: `./cvault refresh <slot>` (the
+      `refreshExpiringTokens` cron was removed in v1 — pull-on-use /
+      manual refresh covers the same path)
 - [ ] If `refreshExpiresAt < now`, Anthropic will return 401 invalid_grant (or 400 — the backend treats both as `reloginRequired` per IMPLEMENTATION_NOTES "Spec deviations")
 - [ ] Refresh the dashboard; the card now shows the **`⚠ relogin required`** badge
 - [ ] `./cvault list` shows a `⚠ relogin` indicator on that row
@@ -457,13 +459,14 @@ Sanity-check what's in the database. Open <https://dashboard.convex.dev> → you
 - [ ] Open **Logs** tab
 - [ ] Filter to recent: search for `sk-ant-` — should return zero results
 - [ ] Search for `console.error` from your refresh / decrypt failure tests; verify no plaintext leak
-- [ ] Cron invocations (`refreshExpiringTokens`, `pollUsage`) show `Promise.allSettled` (post-fix M2) — one failure does not surface as a failed cron run
+- [ ] `pollUsage` cron invocations show `Promise.allSettled` (post-fix M2) — one failure does not surface as a failed cron run. (`refreshExpiringTokens` was removed in v1.)
 
 ### 7.5 Manually trigger crons (handy for testing)
 
-- [ ] **Functions** tab → search `internal.subscriptions.crons.refreshExpiringTokens` → click **Run** with `{}`
-- [ ] Same for `internal.subscriptions.crons.pollUsage`
-- [ ] Watch the **Logs** tab for the resulting `refreshOAuthToken` / `fetchUsageForSub` invocations
+- [ ] **Functions** tab → search `internal.subscriptions.crons.pollUsage` → click **Run** with `{}`
+- [ ] Watch the **Logs** tab for the resulting `fetchUsageForSub` invocations
+- [ ] To trigger a token refresh manually, run `./cvault refresh <slot>`
+      from a CLI client — the cron-driven refresh path was removed.
 
 ---
 

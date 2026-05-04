@@ -95,7 +95,7 @@ export interface FakeMachineActivity {
 export interface FakeRefreshLogEntry {
   userId: Id<'users'>
   subscriptionId: Id<'subscriptions'>
-  triggeredBy: 'cron' | 'manual' | 'onUse'
+  triggeredBy: 'manual' | 'onUse'
   outcome: 'success' | 'failure' | 'reloginRequired'
   error?: string
   at: number
