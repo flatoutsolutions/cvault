@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 import pkg from '../../package.json' with { type: 'json' }
 import {
   CLI_VERSION,
+  ClerkEmailDomainNotAllowedError,
   ClerkSessionExpiredError,
   cliUserAgent,
   decodeJwtExp,
@@ -128,6 +129,60 @@ describe('mintConvexJwt', () => {
   it('throws a generic Error on other non-2xx', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(fetchErr('boom', 500))
     await expect(mintConvexJwt(baseSession())).rejects.toThrow(/500/)
+  })
+})
+
+describe('mintConvexJwt — 403 EMAIL_DOMAIN_NOT_ALLOWED', () => {
+  it('throws ClerkEmailDomainNotAllowedError on 403 + matching code', async () => {
+    const session = {
+      version: 1,
+      clerkSessionId: 'sess',
+      clerkSessionToken: 'tok',
+      convexJwt: '',
+      convexJwtExpiry: 0,
+      frontendApiUrl: 'https://x.clerk.accounts.dev',
+      convexUrl: 'https://x.convex.cloud',
+      issuedAt: Math.floor(Date.now() / 1000),
+    } as const
+    const original = globalThis.fetch
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: 'EMAIL_DOMAIN_NOT_ALLOWED',
+            message: 'Your email domain is not allowed to use cvault.',
+          }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    ) as unknown as typeof fetch
+    try {
+      await expect(mintConvexJwt(session)).rejects.toBeInstanceOf(ClerkEmailDomainNotAllowedError)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it('preserves ClerkSessionExpiredError on plain 401', async () => {
+    const session = {
+      version: 1,
+      clerkSessionId: 'sess',
+      clerkSessionToken: 'tok',
+      convexJwt: '',
+      convexJwtExpiry: 0,
+      frontendApiUrl: 'https://x.clerk.accounts.dev',
+      convexUrl: 'https://x.convex.cloud',
+      issuedAt: Math.floor(Date.now() / 1000),
+    } as const
+    const original = globalThis.fetch
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ error: 'SESSION_TOKEN_INVALID' }), { status: 401 }))
+    ) as unknown as typeof fetch
+    try {
+      await expect(mintConvexJwt(session)).rejects.toBeInstanceOf(ClerkSessionExpiredError)
+    } finally {
+      globalThis.fetch = original
+    }
   })
 })
 

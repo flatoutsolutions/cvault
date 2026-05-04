@@ -24,7 +24,7 @@ import { defineCommand } from 'citty'
 
 import { api } from '../../../convex/_generated/api'
 import { startCallbackServer } from '../auth/callbackServer'
-import { exchangeTicketForSession } from '../auth/clerkFapi'
+import { ClerkEmailDomainNotAllowedError, exchangeTicketForSession } from '../auth/clerkFapi'
 import { openBrowser } from '../auth/openBrowser'
 import { writeSession } from '../auth/session'
 import { resolveConfig } from '../config'
@@ -108,6 +108,11 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
   } catch (err) {
     // Make sure the callback server is fully torn down even on exchange failure.
     await handle.cancel()
+    if (err instanceof ClerkEmailDomainNotAllowedError) {
+      console.error(`Error: ${err.serverMessage}`)
+      console.error('Sign out at the cvault dashboard and try again with an allowlisted email.')
+      process.exit(1)
+    }
     throw err
   }
 

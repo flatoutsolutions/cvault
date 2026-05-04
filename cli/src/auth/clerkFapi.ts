@@ -46,6 +46,22 @@ export class ClerkSessionExpiredError extends Error {
 }
 
 /**
+ * Thrown when the Convex mint endpoint refuses the supplied session because
+ * the verified email is not on the cvault allowlist (HTTP 403 +
+ * `EMAIL_DOMAIN_NOT_ALLOWED`). Distinct from `ClerkSessionExpiredError` so
+ * the CLI can print a specific "wrong-domain" error instead of a generic
+ * "re-login" prompt.
+ */
+export class ClerkEmailDomainNotAllowedError extends Error {
+  override readonly name = 'ClerkEmailDomainNotAllowedError'
+  readonly serverMessage: string
+  constructor(serverMessage: string) {
+    super(serverMessage)
+    this.serverMessage = serverMessage
+  }
+}
+
+/**
  * Build a recognizable User-Agent. Per
  * `clerk-convex-tanstack-integration.md` §6, the dashboard surfaces this
  * as the "device" label for sessions.
@@ -131,12 +147,23 @@ export async function mintConvexJwt(session: SessionState): Promise<MintResult> 
     },
     body: JSON.stringify({ clerkSessionToken: session.clerkSessionToken }),
   })
-  if (res.status === 401 || res.status === 403 || res.status === 404) {
-    const body = await res.text().catch(() => '<no body>')
-    throw new ClerkSessionExpiredError(res.status, body)
-  }
   if (!res.ok) {
-    throw new Error(`Convex mint endpoint failed: ${String(res.status)} ${await res.text()}`)
+    const rawBody = await res.text().catch(() => '<no body>')
+    let parsed: { error?: unknown; message?: unknown } | null = null
+    try {
+      parsed = JSON.parse(rawBody) as { error?: unknown; message?: unknown }
+    } catch {
+      parsed = null
+    }
+    const code = parsed && typeof parsed.error === 'string' ? parsed.error : null
+    const message = parsed && typeof parsed.message === 'string' ? parsed.message : rawBody
+    if (res.status === 403 && code === 'EMAIL_DOMAIN_NOT_ALLOWED') {
+      throw new ClerkEmailDomainNotAllowedError(message)
+    }
+    if (res.status === 401 || res.status === 403 || res.status === 404) {
+      throw new ClerkSessionExpiredError(res.status, rawBody)
+    }
+    throw new Error(`Convex mint endpoint failed: ${String(res.status)} ${rawBody}`)
   }
   const body = (await res.json()) as { jwt: string }
   return { convexJwt: body.jwt, convexJwtExpiry: decodeJwtExp(body.jwt) }
