@@ -161,3 +161,42 @@ export const listAllActiveSubIds = internalQuery({
     return rows.filter((r) => r.removedAt === undefined && !isReloginRequired(r, now)).map((r) => ({ subId: r._id }))
   },
 })
+
+/**
+ * Internal query returning rows whose keyVersion does not match the supplied
+ * targetVersion. Used by `rotateAllSubscriptions` to find work to do.
+ *
+ * Returns the full row (ciphertext + nonce + keyVersion) so the action
+ * can decrypt without a second read.
+ *
+ * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §5.
+ */
+export const listSubsForRotation = internalQuery({
+  args: { userId: v.id('users'), targetVersion: v.string() },
+  returns: v.array(subscriptionRawValidator),
+  handler: async (ctx, { userId, targetVersion }) => {
+    const rows = await ctx.db
+      .query('subscriptions')
+      .withIndex('byUserAndSlot', (q) => q.eq('userId', userId))
+      .collect()
+    return rows.filter((r) => r.removedAt === undefined && (r.keyVersion ?? 'v1') !== targetVersion)
+  },
+})
+
+/**
+ * Internal query returning every active sub for a user. Used by the
+ * backup export action.
+ *
+ * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §6.
+ */
+export const listSubsForUserId = internalQuery({
+  args: { userId: v.id('users') },
+  returns: v.array(subscriptionRawValidator),
+  handler: async (ctx, { userId }) => {
+    const rows = await ctx.db
+      .query('subscriptions')
+      .withIndex('byUserAndSlot', (q) => q.eq('userId', userId))
+      .collect()
+    return rows.filter((r) => r.removedAt === undefined)
+  },
+})
