@@ -28,6 +28,7 @@ import { listCommand } from './commands/list'
 import { loginCommand } from './commands/login'
 import { refreshCommand } from './commands/refresh'
 import { removeCommand } from './commands/remove'
+import { rotateKeyCommand } from './commands/rotateKey'
 import { statusCommand } from './commands/status'
 import { switchCommand } from './commands/switch'
 import { syncCommand } from './commands/sync'
@@ -49,6 +50,7 @@ const main = defineCommand({
     status: statusCommand,
     sync: syncCommand,
     clean: cleanCommand,
+    'rotate-key': rotateKeyCommand,
   },
 })
 
