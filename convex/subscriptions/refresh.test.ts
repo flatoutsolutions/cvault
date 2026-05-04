@@ -517,11 +517,12 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
         scopes: ['user:inference'],
       },
     })
-    const { ciphertext, nonce } = encrypt(plaintext)
+    const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
     await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
       email: 'sid-pull@example.com',
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: futureExpiry,
       subscriptionType: 'max',
       rateLimitTier: 'tier1',

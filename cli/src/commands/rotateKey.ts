@@ -70,7 +70,7 @@ export async function runRotateKey(opts: RunRotateKeyOpts = {}): Promise<void> {
   log('Triggering rotation against the server...')
 
   const client = await (opts.makeClient ?? makeVaultClient)()
-  const result = await client.action(api.keyRotationJobs.actions.triggerKeyRotation, client.withMachineLabel({}))
+  const result = await client.action(api.keyRotationJobs.actions.triggerKeyRotation, client.withMeta({}))
   const triggerResult = result as { jobId: Id<'keyRotationJobs'>; totalRows: number; alreadyRunning: boolean }
 
   log(`Job ${triggerResult.jobId} (totalRows=${triggerResult.totalRows.toString()})`)

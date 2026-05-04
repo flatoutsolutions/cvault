@@ -40,7 +40,7 @@ export async function runImportBackup(opts: RunImportBackupOpts): Promise<void> 
   const client = await (opts.makeClient ?? makeVaultClient)()
   const result = await client.action(
     api.backup.actions.importEncryptedBackup,
-    client.withMachineLabel({ passphrase, bundleBase64 })
+    client.withMeta({ passphrase, bundleBase64 })
   )
 
   log(`Restored ${result.restoredCount.toString()} subs (skipped ${result.skippedCount.toString()}).`)

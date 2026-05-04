@@ -25,6 +25,7 @@ import { type Id } from '../_generated/dataModel'
 import { internalAction } from '../_generated/server'
 import { currentKeyVersion, decrypt, encrypt } from '../subscriptions/crypto'
 import { authenticatedAction, getIdentity } from '../utils/auth'
+import { resolveCallerSession } from '../utils/identity'
 
 const triggerResultValidator = v.object({
   jobId: v.id('keyRotationJobs'),
@@ -35,11 +36,9 @@ const triggerResultValidator = v.object({
 export const triggerKeyRotation = authenticatedAction({
   args: {
     /**
-     * Optional explicit Clerk session id from the caller. PR #9 lands a
-     * `convex/utils/identity.ts:resolveCallerSession(identity, argSid)`
-     * helper that prefers this arg over the JWT claim. PENDING:
-     * replace the inline resolver below with `resolveCallerSession`
-     * after PR #9 rebase.
+     * Explicit Clerk session id forwarded by the CLI. BAPI-minted JWTs
+     * lack the `sid` claim, so the server prefers `identity.sid` (FAPI)
+     * and falls back to this arg via `resolveCallerSession`.
      */
     clerkSessionId: v.optional(v.string()),
     machineLabel: v.optional(v.string()),
@@ -73,13 +72,9 @@ export const triggerKeyRotation = authenticatedAction({
     })
 
     // Audit row (A6): every rotation trigger leaves a row.
-    // PENDING: replace inline session resolver with resolveCallerSession after PR #9 rebase.
-    const sidClaim = (identity as { sid?: unknown }).sid
-    const resolvedSid =
-      clerkSessionId ?? (typeof sidClaim === 'string' && sidClaim.length > 0 ? sidClaim : 'unknown-session')
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId: resolvedSid,
+      clerkSessionId: resolveCallerSession(identity, clerkSessionId),
       action: 'rotate',
       at: Date.now(),
       ...(machineLabel !== undefined ? { machineLabel } : {}),

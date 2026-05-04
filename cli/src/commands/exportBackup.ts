@@ -40,7 +40,7 @@ export async function runExportBackup(opts: RunExportBackupOpts): Promise<void> 
     throw new Error(`Passphrase must be at least ${MIN_PASSPHRASE_LEN.toString()} characters.`)
   }
   const client = await (opts.makeClient ?? makeVaultClient)()
-  const result = await client.action(api.backup.actions.exportEncryptedBackup, client.withMachineLabel({ passphrase }))
+  const result = await client.action(api.backup.actions.exportEncryptedBackup, client.withMeta({ passphrase }))
 
   const bytes = Buffer.from(result.contentBase64, 'base64')
   writeFileSync(opts.out, bytes)

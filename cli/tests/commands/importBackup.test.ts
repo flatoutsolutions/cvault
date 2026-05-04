@@ -23,6 +23,8 @@ describe('runImportBackup', () => {
       action,
       query: vi.fn(),
       withMachineLabel: <A extends object>(a: A) => a,
+      withSessionId: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
+      withMeta: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
     }
     await runImportBackup({
       in: file,
@@ -50,6 +52,8 @@ describe('runImportBackup', () => {
       action,
       query: vi.fn(),
       withMachineLabel: <A extends object>(a: A) => a,
+      withSessionId: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
+      withMeta: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
     }
     const logs: string[] = []
     await runImportBackup({
