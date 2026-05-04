@@ -45,8 +45,14 @@ export async function runList(): Promise<void> {
     activeEmailLower = undefined
   }
 
-  const rows: SubRow[] = subs.map((s) => ({
-    slot: s.slot,
+  // Rank is the 1-indexed position in the server response. The server
+  // returns subs ordered by `_creationTime` ASC (FCFS, see
+  // `convex/subscriptions/queries.ts:list`), so the rendered rank
+  // matches the ordinal `cvault switch <N>` resolves on the server
+  // side. Critically, this is NOT `s.slot` — in the shared vault every
+  // user's first sub has `slot=1`, which would render duplicate `1`s.
+  const rows: SubRow[] = subs.map((s, index) => ({
+    rank: index + 1,
     email: s.email,
     label: s.label,
     expiresAt: s.expiresAt,

@@ -234,6 +234,56 @@ describe('runList', () => {
     expect(captured.join('\n')).not.toMatch(/recapture|re-capture/i)
   })
 
+  it('Bug 2: renders FCFS rank (#) per response order, not the stored slot field', async () => {
+    // Real shared-vault scenario: every user's first sub has stored
+    // slot=1 server-side. Pre-fix the table printed two `1`s — useless
+    // for `cvault switch <N>`. Post-fix: rank by response index (the
+    // server already orders FCFS by `_creationTime` ASC).
+    const client = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce([
+          meta({ slot: 1, email: 'saad@example.com', _creationTime: 1_700_000_000_000 }),
+          meta({ slot: 1, email: 'samuel@example.com', _creationTime: 1_700_000_001_000 }),
+        ]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
+
+    const captured: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+
+    const out = captured.join('\n')
+    const lines = out.split('\n')
+    // Header MUST use `#` (rank), not `SLOT` — the column shows position
+    // in the FCFS list, which is what `cvault switch <N>` accepts.
+    const headerLine = lines[0] ?? ''
+    expect(headerLine).toMatch(/(?:^|\s)#(?:\s|$)/)
+    expect(headerLine).not.toMatch(/SLOT/)
+
+    const saadLine = lines.find((l) => l.includes('saad@example.com'))
+    const samuelLine = lines.find((l) => l.includes('samuel@example.com'))
+    expect(saadLine).toBeDefined()
+    expect(samuelLine).toBeDefined()
+    // First row: rank 1. Second row: rank 2.
+    expect(saadLine).toMatch(/(?:^|\s)1(?:\s|$)/)
+    expect(samuelLine).toMatch(/(?:^|\s)2(?:\s|$)/)
+    // Critically: the second row must NOT render `1` (the stored slot).
+    // This catches the pre-fix bug where two rows both showed `1`.
+    const samuelCells = (samuelLine ?? '').trim().split(/\s{2,}/)
+    expect(samuelCells[0]).not.toBe('* 1')
+    expect(samuelCells[0]).not.toBe('  1')
+  })
+
   it('R2: matches active marker case-insensitively (vault has Stefan@x.com, oauthAccount has stefan@x.com)', async () => {
     // Anthropic SMTP is case-insensitive; Clerk normalizes inconsistently.
     // The active marker must follow case-insensitive equality so the user

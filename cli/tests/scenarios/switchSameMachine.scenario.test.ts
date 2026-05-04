@@ -33,7 +33,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { runSwitch } from '../../src/commands/switch'
 import { makeVaultClient } from '../../src/convex/vaultClient'
-import { importEnvelope, switchTo } from '../../src/credentials'
+import { getActiveAccount, importEnvelope, switchTo } from '../../src/credentials'
 import { ensureVaultDir, lastHashPath } from '../../src/paths'
 import {
   SAMPLE_OAUTH_BLOB,
@@ -46,6 +46,7 @@ import {
 } from './_helpers'
 
 vi.mock('../../src/credentials', () => ({
+  getActiveAccount: vi.fn(),
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
 }))
@@ -81,6 +82,14 @@ describe('Scenario #4 — Switch on the same machine (hash matches)', () => {
     // Pre-populate the local hash file so it matches the server's hash.
     await ensureVaultDir()
     writeFileSync(lastHashPath('a@b.com'), sub.contentHash, { mode: 0o600 })
+
+    // Scenario name says "same machine" — model that explicitly: the
+    // target sub IS the locally-active account. Bug 1 fix gates the
+    // import-skip optimization on this. Without the mock, getActiveAccount
+    // returns undefined and the CLI (correctly) re-imports despite the
+    // hash match, because in a shared vault that hash collision would
+    // otherwise leave the wrong user active.
+    vi.mocked(getActiveAccount).mockReturnValue({ email: 'a@b.com' })
 
     await runSwitch({ slotOrEmail: '1' })
 

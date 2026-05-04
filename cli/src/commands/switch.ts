@@ -25,7 +25,7 @@ import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
 import { makeVaultClient } from '../convex/vaultClient'
-import { importEnvelope } from '../credentials'
+import { getActiveAccount, importEnvelope } from '../credentials'
 import { buildSingleAccountEnvelope } from '../envelope'
 import { lastHashPath, readSecret, writeSecret } from '../paths'
 
@@ -85,17 +85,47 @@ export async function runSwitch(opts: RunSwitchOptions): Promise<void> {
     throw err
   }
 
+  // The skip-import optimization is only safe when the target email
+  // is ALREADY the active account on this machine. Pre-fix, the CLI
+  // skipped the import whenever `last-hash-{pull.email}.txt` matched
+  // — but in a shared vault `cvault sync` writes that file for every
+  // imported sub, so the hash matches even when a DIFFERENT user is
+  // currently active in `~/.claude.json`. Result: `cvault switch`
+  // claimed success while leaving the wrong tokens active. Comparing
+  // against `getActiveAccount()` closes that hole.
+  //
+  // Case-insensitive: Anthropic SMTP and Clerk normalize email casing
+  // inconsistently, so `Stefan@x` (vault) and `stefan@x` (oauthAccount)
+  // must compare equal. See `list.ts` for the same rationale.
+  let activeEmailLower: string | undefined
+  try {
+    const email = getActiveAccount()?.email
+    activeEmailLower = email !== undefined ? email.toLowerCase() : undefined
+  } catch {
+    // Reading the local credentials store can fail (Keychain locked,
+    // missing claude.json, etc.). Treat as "no active account" — the
+    // import will fire below, which is the safe fallback.
+    activeEmailLower = undefined
+  }
+  const targetEmailLower = pull.email.toLowerCase()
+  const alreadyActive = activeEmailLower === targetEmailLower
+
   // Compare server-side content hash with our local cache.
   const hashPath = lastHashPath(pull.email)
   const localHash = await readSecret(hashPath)
+  const hashesMatch = localHash === pull.contentHash
 
-  if (localHash !== pull.contentHash) {
+  if (!alreadyActive || !hashesMatch) {
     const envelope = buildSingleAccountEnvelope(pull)
     await importEnvelope(envelope, true)
     await writeSecret(hashPath, pull.contentHash)
   }
 
-  console.log(`Active credentials are now ${pull.email}.`)
+  if (alreadyActive && hashesMatch) {
+    console.log(`Already active: ${pull.email}.`)
+  } else {
+    console.log(`Active credentials are now ${pull.email}.`)
+  }
 }
 
 export const switchCommand = defineCommand({
