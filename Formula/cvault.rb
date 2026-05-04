@@ -34,10 +34,12 @@ class Cvault < Formula
   license "MIT"
 
   # The bundle is plain JavaScript — Bun is the only runtime dependency.
-  # Homebrew already has a maintained `bun` formula on both macOS and
-  # Linuxbrew, so leaning on it instead of vendoring a copy keeps cvault
-  # tiny and lets users pick up Bun upgrades automatically.
-  depends_on "bun"
+  # Bun is NOT in homebrew-core; it ships exclusively through the official
+  # `oven-sh/bun` tap (https://github.com/oven-sh/homebrew-bun). Declaring
+  # the dep with its fully-qualified name lets `brew install cvault`
+  # auto-tap `oven-sh/bun` for users who don't already have it, instead
+  # of failing with "No available formula with the name 'bun'".
+  depends_on "oven-sh/bun/bun"
 
   def install
     # The release tarball contains a single file: cvault.bundle.js. Drop
