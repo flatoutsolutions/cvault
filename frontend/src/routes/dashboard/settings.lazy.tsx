@@ -1,17 +1,18 @@
 /**
  * Lazy component for /dashboard/settings — split out per Track B item 9.
  *
- * Per spec §14 (open items deferred to v2):
- *   - Encryption key rotation
- *   - Encrypted backup / disaster recovery export
- *   - Notification on refresh failure
- *   - Per-user mutation rate limiting
+ * The Rotate Key + Export Backup cards are now wired up to live dialogs
+ * (RotateKeyDialog, ExportBackupDialog, ImportBackupDialog). The
+ * Refresh-failure notifications card remains a v2 placeholder.
  *
- * The placeholders document these for the user; they're intentionally
- * disabled controls so the affordance is honest.
+ * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §8.
  */
 import { createLazyFileRoute } from '@tanstack/react-router'
+import { useState } from 'react'
 
+import { ExportBackupDialog } from '@/components/dashboard/ExportBackupDialog'
+import { ImportBackupDialog } from '@/components/dashboard/ImportBackupDialog'
+import { RotateKeyDialog } from '@/components/dashboard/RotateKeyDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,6 +22,9 @@ export const Route = createLazyFileRoute('/dashboard/settings')({
 })
 
 function SettingsPage() {
+  const [rotateOpen, setRotateOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -31,17 +35,14 @@ function SettingsPage() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Rotate encryption key</CardTitle>
-              <Badge variant="outline">v2</Badge>
-            </div>
+            <CardTitle>Rotate encryption key</CardTitle>
             <CardDescription>
-              Re-wrap every stored credential blob with a fresh AES-256 master key. Currently a manual re-add of every
-              subscription is required if the key is lost or compromised.
+              Re-wrap every stored credential blob with a fresh AES-256 master key. Use after a suspected key compromise
+              or as part of routine credential rotation.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button type="button" variant="outline" disabled>
+            <Button type="button" onClick={() => setRotateOpen(true)}>
               Rotate key
             </Button>
           </CardContent>
@@ -49,18 +50,18 @@ function SettingsPage() {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Export encrypted backup</CardTitle>
-              <Badge variant="outline">v2</Badge>
-            </div>
+            <CardTitle>Encrypted backup</CardTitle>
             <CardDescription>
-              Download an encrypted bundle of all your subscriptions, secured by a passphrase you choose. Useful for
-              disaster recovery if the Convex deployment is lost.
+              Download a passphrase-protected bundle of all your subscriptions, secured by a passphrase you choose.
+              Restore from any previously exported bundle.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button type="button" variant="outline" disabled>
+          <CardContent className="flex gap-2">
+            <Button type="button" onClick={() => setExportOpen(true)}>
               Export backup
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setImportOpen(true)}>
+              Import backup
             </Button>
           </CardContent>
         </Card>
@@ -83,6 +84,10 @@ function SettingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <RotateKeyDialog open={rotateOpen} onOpenChange={setRotateOpen} />
+      <ExportBackupDialog open={exportOpen} onOpenChange={setExportOpen} />
+      <ImportBackupDialog open={importOpen} onOpenChange={setImportOpen} />
     </div>
   )
 }

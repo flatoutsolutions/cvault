@@ -33,9 +33,22 @@ const triggerResultValidator = v.object({
 })
 
 export const triggerKeyRotation = authenticatedAction({
-  args: {},
+  args: {
+    /**
+     * Optional explicit Clerk session id from the caller. PR #9 lands a
+     * `convex/utils/identity.ts:resolveCallerSession(identity, argSid)`
+     * helper that prefers this arg over the JWT claim. PENDING:
+     * replace the inline resolver below with `resolveCallerSession`
+     * after PR #9 rebase.
+     */
+    clerkSessionId: v.optional(v.string()),
+    machineLabel: v.optional(v.string()),
+  },
   returns: triggerResultValidator,
-  handler: async (ctx): Promise<{ jobId: Id<'keyRotationJobs'>; totalRows: number; alreadyRunning: boolean }> => {
+  handler: async (
+    ctx,
+    { clerkSessionId, machineLabel }
+  ): Promise<{ jobId: Id<'keyRotationJobs'>; totalRows: number; alreadyRunning: boolean }> => {
     const identity = getIdentity(ctx)
     const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
       externalId: identity.subject,
@@ -57,6 +70,19 @@ export const triggerKeyRotation = authenticatedAction({
       userId,
       totalRows: subs.length,
       toVersion: targetVersion,
+    })
+
+    // Audit row (A6): every rotation trigger leaves a row.
+    // PENDING: replace inline session resolver with resolveCallerSession after PR #9 rebase.
+    const sidClaim = (identity as { sid?: unknown }).sid
+    const resolvedSid =
+      clerkSessionId ?? (typeof sidClaim === 'string' && sidClaim.length > 0 ? sidClaim : 'unknown-session')
+    await ctx.runMutation(internal.machineActivity.mutations.record, {
+      userId,
+      clerkSessionId: resolvedSid,
+      action: 'rotate',
+      at: Date.now(),
+      ...(machineLabel !== undefined ? { machineLabel } : {}),
     })
 
     if (insertResult.alreadyRunning) {

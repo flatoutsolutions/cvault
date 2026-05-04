@@ -89,12 +89,20 @@ function clerkSessionFromIdentity(identity: { sid?: unknown }): string {
 export const exportEncryptedBackup = authenticatedAction({
   args: {
     passphrase: v.string(),
+    /**
+     * Optional explicit Clerk session id from the caller. PR #9 lands a
+     * `convex/utils/identity.ts:resolveCallerSession(identity, argSid)`
+     * helper that prefers this arg over the JWT claim. PENDING:
+     * replace the inline resolver below with `resolveCallerSession`
+     * after PR #9 rebase.
+     */
+    clerkSessionId: v.optional(v.string()),
     machineLabel: v.optional(v.string()),
   },
   returns: exportResultValidator,
   handler: async (
     ctx,
-    { passphrase, machineLabel }
+    { passphrase, clerkSessionId, machineLabel }
   ): Promise<{ filename: string; contentBase64: string; accountCount: number }> => {
     if (passphrase.length < MIN_PASSPHRASE_LEN) {
       throw new ConvexError({
@@ -147,10 +155,11 @@ export const exportEncryptedBackup = authenticatedAction({
     const contentBase64 = Buffer.from(JSON.stringify(bundle), 'utf8').toString('base64')
 
     // A6: audit row. No subscriptionId — this is a bulk operation.
-    const clerkSessionId = clerkSessionFromIdentity(identity as { sid?: unknown })
+    // PENDING: replace inline session resolver with resolveCallerSession after PR #9 rebase.
+    const resolvedSid = clerkSessionId ?? clerkSessionFromIdentity(identity as { sid?: unknown })
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId,
+      clerkSessionId: resolvedSid,
       action: 'export',
       at: Date.now(),
       ...(machineLabel !== undefined ? { machineLabel } : {}),
@@ -178,12 +187,16 @@ export const importEncryptedBackup = authenticatedAction({
   args: {
     passphrase: v.string(),
     bundleBase64: v.string(),
+    /**
+     * PENDING: see exportEncryptedBackup's docstring; same PR #9 contract.
+     */
+    clerkSessionId: v.optional(v.string()),
     machineLabel: v.optional(v.string()),
   },
   returns: importResultValidator,
   handler: async (
     ctx,
-    { passphrase, bundleBase64, machineLabel }
+    { passphrase, bundleBase64, clerkSessionId, machineLabel }
   ): Promise<{ restoredCount: number; skippedCount: number; errors: string[] }> => {
     const identity = getIdentity(ctx)
     const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
@@ -277,10 +290,11 @@ export const importEncryptedBackup = authenticatedAction({
     }
 
     // A6: audit row.
-    const clerkSessionId = clerkSessionFromIdentity(identity as { sid?: unknown })
+    // PENDING: replace inline session resolver with resolveCallerSession after PR #9 rebase.
+    const resolvedSid = clerkSessionId ?? clerkSessionFromIdentity(identity as { sid?: unknown })
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId,
+      clerkSessionId: resolvedSid,
       action: 'import',
       at: Date.now(),
       ...(machineLabel !== undefined ? { machineLabel } : {}),

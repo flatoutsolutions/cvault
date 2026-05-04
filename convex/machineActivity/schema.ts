@@ -26,9 +26,11 @@ export const machineActivitySchema = defineTable({
      * docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §6.
      * A6 from the 2026-05-04 review: backup export / import is the
      * highest-impact action in the system; it MUST leave an audit row.
+     * `rotate` covers `triggerKeyRotation` (re-wraps every sub).
      */
     v.literal('export'),
-    v.literal('import')
+    v.literal('import'),
+    v.literal('rotate')
   ),
   subscriptionId: v.optional(v.id('subscriptions')),
   at: v.number(),

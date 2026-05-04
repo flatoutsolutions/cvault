@@ -24,7 +24,8 @@ const actionLiteral = v.union(
   v.literal('rename'),
   v.literal('login'),
   v.literal('export'),
-  v.literal('import')
+  v.literal('import'),
+  v.literal('rotate')
 )
 
 async function hashIp(rawIp: string): Promise<string> {
