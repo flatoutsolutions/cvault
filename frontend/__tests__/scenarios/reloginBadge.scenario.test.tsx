@@ -153,14 +153,17 @@ describe('scenario / relogin badge', () => {
   it.todo('clicking the relogin badge surfaces "run `cvault add` to re-authorize" instructions')
 
   // Sanity check: the underlying SubscriptionCard semantics weren't broken
-  // by adding the badge — the email + slot still render normally.
-  it('still renders the sub email, slot, and Force Refresh button when relogin required', () => {
+  // by adding the badge — the email + Force Refresh button still render
+  // normally. The slot chip was removed (cvault is a shared vault, slot
+  // is per-user-keychain and meaningless globally), so we assert it is
+  // NOT rendered alongside the relogin badge.
+  it('still renders the sub email and Force Refresh button without a slot chip when relogin required', () => {
     useQueryMock.mockReturnValue([makeReloginRequiredSub()])
 
     render(<SubsPage />)
 
     expect(screen.getByText('alice@example.com')).toBeTruthy()
-    expect(screen.getByText(/slot 1/i)).toBeTruthy()
+    expect(screen.queryByText(/slot/i)).toBeNull()
     // The Force Refresh button is present even for a relogin-required sub.
     // (Pressing it would fail server-side, but the UI doesn't pre-empt
     // that — the user sees the failure via a refreshLog row.)
