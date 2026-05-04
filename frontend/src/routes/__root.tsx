@@ -5,6 +5,7 @@ import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from '@tanst
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { ConvexProviderWithClerk } from 'convex/react-clerk'
 
+import { DomainGuard } from '../components/auth/DomainGuard'
 import { env } from '../lib/env'
 import type { RouterContext } from '../router'
 import appCss from '../styles.css?url'
@@ -42,7 +43,9 @@ function RootComponent() {
   return (
     <ClerkProvider appearance={{ baseTheme: dark }}>
       <ConvexProviderWithClerk client={convexClient} useAuth={useAuth}>
-        <Outlet />
+        <DomainGuard>
+          <Outlet />
+        </DomainGuard>
       </ConvexProviderWithClerk>
     </ClerkProvider>
   )
