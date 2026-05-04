@@ -3,11 +3,20 @@
  * `/dashboard/audit` route's "refresh attempts" feed.
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §5 + §8.
+ *
+ * SHARED-VAULT CONTRACT: per `convex/utils/users.ts:3-7`, any authenticated
+ * Clerk identity that passes the email-domain allowlist is a peer reader
+ * of the entire vault. These queries therefore do NOT filter rows by the
+ * caller's userId or by subscription ownership — both would re-introduce
+ * the per-user scoping the shared-vault design explicitly rejects.
+ * Authentication + the domain gate (in `authenticatedQuery`) are the only
+ * access controls; row-level data filters (e.g. by `subscriptionId`) are
+ * fine because they narrow what is returned, not who may read.
  */
 import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 
-import { authenticatedQuery, getIdentity } from '../utils/auth'
+import { authenticatedQuery } from '../utils/auth'
 
 const refreshLogRowValidator = v.object({
   _id: v.id('refreshLog'),
@@ -22,13 +31,16 @@ const refreshLogRowValidator = v.object({
 
 /**
  * Refresh history for `/dashboard/audit`. Cursor-paginated — `refreshLog`
- * gets one row per attempt (manual + cron + on-use), so a busy user
- * accumulates rows fast and a `take(100)` cap silently truncates the
- * history at 100 entries.
+ * gets one row per attempt (manual + cron + on-use), so the table
+ * accumulates rows fast and an unpaginated read would silently truncate.
  *
- * SECURITY: scopes to the caller via `byUserAndAt`. Without this, every
- * signed-in user received everyone's refresh attempts (sub IDs, error
- * strings, outcomes).
+ * Vault-wide: returns rows from every user's refresh attempts, newest
+ * first. Per the shared-vault contract (`convex/utils/users.ts:3-7`),
+ * any allowlisted authenticated identity may read every row — re-adding
+ * a `userId` filter here would silently re-introduce the per-user
+ * scoping the shared-vault model rejects. Iterates the global `byAt`
+ * index in `desc` order so pagination is index-driven rather than a
+ * full-table scan.
  */
 export const recentForUser = authenticatedQuery({
   args: { paginationOpts: paginationOptsValidator },
@@ -40,19 +52,7 @@ export const recentForUser = authenticatedQuery({
     pageStatus: v.optional(v.union(v.literal('SplitRecommended'), v.literal('SplitRequired'), v.null())),
   }),
   handler: async (ctx, { paginationOpts }) => {
-    const identity = getIdentity(ctx)
-    const user = await ctx.db
-      .query('users')
-      .withIndex('byExternalId', (q) => q.eq('externalId', identity.subject))
-      .unique()
-    if (!user) {
-      return { page: [], isDone: true, continueCursor: '' }
-    }
-    return await ctx.db
-      .query('refreshLog')
-      .withIndex('byUserAndAt', (q) => q.eq('userId', user._id))
-      .order('desc')
-      .paginate(paginationOpts)
+    return await ctx.db.query('refreshLog').withIndex('byAt').order('desc').paginate(paginationOpts)
   },
 })
 
@@ -60,8 +60,13 @@ export const recentForUser = authenticatedQuery({
  * Per-subscription refresh history (drilldown view). Cursor-paginated
  * for the same reason as `recentForUser`.
  *
- * SECURITY: verifies the caller owns the subscription before paging
- * over its history; subscription IDs are not unguessable secrets.
+ * Vault-wide: returns rows for the given subscription regardless of
+ * which user owns it. Per the shared-vault contract
+ * (`convex/utils/users.ts:3-7`), the prior owner-vs-caller check has
+ * been removed — subscription IDs are not access-control tokens, the
+ * `subscriptionId` argument is a data filter (which rows), not an
+ * authorization check (who may read). Authentication + the email-domain
+ * allowlist (in `authenticatedQuery`) are the only gates.
  */
 export const recentForSubscription = authenticatedQuery({
   args: {
@@ -76,15 +81,6 @@ export const recentForSubscription = authenticatedQuery({
     pageStatus: v.optional(v.union(v.literal('SplitRecommended'), v.literal('SplitRequired'), v.null())),
   }),
   handler: async (ctx, { subscriptionId, paginationOpts }) => {
-    const identity = getIdentity(ctx)
-    const sub = await ctx.db.get('subscriptions', subscriptionId)
-    if (!sub) {
-      return { page: [], isDone: true, continueCursor: '' }
-    }
-    const owner = await ctx.db.get('users', sub.userId)
-    if (!owner || owner.externalId !== identity.subject) {
-      return { page: [], isDone: true, continueCursor: '' }
-    }
     return await ctx.db
       .query('refreshLog')
       .withIndex('bySubscriptionAndAt', (q) => q.eq('subscriptionId', subscriptionId))
