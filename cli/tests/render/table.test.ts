@@ -1,8 +1,11 @@
 /**
  * Spec: §7 — `cvault list` table renderer.
  *
- * Renders subscription rows with columns: slot, email, label, 5h%, 7d%,
- * expires-in (relative), last refresh (relative), active marker.
+ * Renders subscription rows with columns: rank (#), email, label, 5h%,
+ * 7d%, expires-in (relative), last refresh (relative), stored, status,
+ * plus an active marker. Rank is the FCFS ordinal in the response (1-
+ * indexed) — NOT the stored `slot` field, which collides across users
+ * in the shared vault.
  */
 import { describe, expect, it } from 'vitest'
 
@@ -12,7 +15,7 @@ const NOW = 1_700_000_000_000
 
 function row(overrides: Partial<SubRow> = {}): SubRow {
   return {
-    slot: 1,
+    rank: 1,
     email: 'a@b.com',
     label: 'work',
     expiresAt: NOW + 60 * 60 * 1000,
@@ -45,8 +48,11 @@ describe('formatRelativeMs', () => {
 
 describe('renderSubsTable', () => {
   it('renders a header row + each sub row with stable columns', () => {
-    const out = renderSubsTable([row({ slot: 1, email: 'alice@x.com', isActive: true })], NOW)
-    expect(out).toContain('SLOT')
+    const out = renderSubsTable([row({ rank: 1, email: 'alice@x.com', isActive: true })], NOW)
+    // `#` is the rank header. SLOT is gone — see file-level docstring
+    // for why (cross-user slot collision in the shared vault).
+    expect(out).toContain('#')
+    expect(out).not.toContain('SLOT')
     expect(out).toContain('EMAIL')
     expect(out).toContain('LABEL')
     expect(out).toContain('5H')
@@ -59,7 +65,7 @@ describe('renderSubsTable', () => {
 
   it('marks STORED as `local+cloud` for the active sub and `cloud` for vault-only subs', () => {
     const out = renderSubsTable(
-      [row({ slot: 1, email: 'a@b.com', isActive: true }), row({ slot: 2, email: 'c@d.com', isActive: false })],
+      [row({ rank: 1, email: 'a@b.com', isActive: true }), row({ rank: 2, email: 'c@d.com', isActive: false })],
       NOW
     )
     const lines = out.split('\n')
@@ -73,7 +79,7 @@ describe('renderSubsTable', () => {
 
   it('marks the active sub with a dot prefix', () => {
     const out = renderSubsTable(
-      [row({ slot: 1, email: 'a@b.com', isActive: false }), row({ slot: 2, email: 'c@d.com', isActive: true })],
+      [row({ rank: 1, email: 'a@b.com', isActive: false }), row({ rank: 2, email: 'c@d.com', isActive: true })],
       NOW
     )
     const lines = out.split('\n')

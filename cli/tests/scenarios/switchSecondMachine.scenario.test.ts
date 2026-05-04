@@ -33,11 +33,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runSwitch } from '../../src/commands/switch'
 import { runSync } from '../../src/commands/sync'
 import { makeVaultClient } from '../../src/convex/vaultClient'
-import { importEnvelope, switchTo } from '../../src/credentials'
+import { getActiveAccount, importEnvelope, switchTo } from '../../src/credentials'
 import { lastHashPath } from '../../src/paths'
 import { SAMPLE_OAUTH_BLOB, cleanupTempHome, createFakeVaultClient, makeSub, setupTempHome } from './_helpers'
 
 vi.mock('../../src/credentials', () => ({
+  getActiveAccount: vi.fn(),
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
 }))
@@ -99,13 +100,16 @@ describe('Scenario #5 — Switch on a second machine (sync, then switch)', () =>
     const hashC = readFileSync(lastHashPath('c@d.com'), 'utf8')
     expect(hashC).toBe(subC.contentHash)
 
-    // Phase B step 2: runSwitch on a@b.com — local hash now matches, skip
-    // import, just flip the active slot.
+    // Phase B step 2: runSwitch on a@b.com — local hash now matches AND
+    // a@b.com is the locally-active account, so the import is skipped
+    // (Bug 1 fix: same-email + same-hash is the only safe skip path).
+    // Model that explicitly via getActiveAccount.
     vi.mocked(importEnvelope).mockClear()
     vi.mocked(switchTo).mockClear()
+    vi.mocked(getActiveAccount).mockReturnValue({ email: 'a@b.com' })
     await runSwitch({ slotOrEmail: 'a@b.com' })
 
-    expect(importEnvelope).not.toHaveBeenCalled() // post-sync, hash matches
+    expect(importEnvelope).not.toHaveBeenCalled() // post-sync, hash matches AND target is active
     // On native, no separate `switchTo` step — import IS the switch.
     expect(switchTo).not.toHaveBeenCalled()
 

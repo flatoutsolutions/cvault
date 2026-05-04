@@ -24,11 +24,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { runSwitch } from '../../src/commands/switch'
 import { makeVaultClient } from '../../src/convex/vaultClient'
-import { importEnvelope, switchTo } from '../../src/credentials'
+import { getActiveAccount, importEnvelope, switchTo } from '../../src/credentials'
 import { ensureVaultDir, lastHashPath } from '../../src/paths'
 import { noopWithMachineLabel, noopWithMeta, noopWithSessionId } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
+  getActiveAccount: vi.fn(),
   importEnvelope: vi.fn(),
   switchTo: vi.fn(),
 }))
@@ -84,6 +85,8 @@ function setupClientReturning(blob: string, contentHash: string): FakeClient {
 describe('runSwitch — fresh switch (no local hash)', () => {
   it('pulls, imports, and writes hash (switchTo is no longer called)', async () => {
     setupClientReturning(SAMPLE_BLOB, 'hash-abc')
+    // No active local account yet — `cvault switch` from a clean machine.
+    vi.mocked(getActiveAccount).mockReturnValue(null)
 
     await runSwitch({ slotOrEmail: '1' })
 
@@ -102,31 +105,127 @@ describe('runSwitch — fresh switch (no local hash)', () => {
   })
 })
 
-describe('runSwitch — hash match', () => {
-  it('skips import when local hash matches the server hash', async () => {
+describe('runSwitch — already-active no-op (hash match + email already active)', () => {
+  it('skips import when local hash matches AND the target email is already active', async () => {
     // Pre-populate the hash file so the local cache "matches".
     await ensureVaultDir()
     const path = lastHashPath('a@b.com')
     writeFileSync(path, 'hash-abc', { mode: 0o600 })
 
     setupClientReturning(SAMPLE_BLOB, 'hash-abc')
+    // Active local account is the same email we're switching to.
+    vi.mocked(getActiveAccount).mockReturnValue({ email: 'a@b.com' })
+
+    const captured: string[] = []
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
 
     await runSwitch({ slotOrEmail: 'a@b.com' })
 
+    // Truly idempotent path: nothing imported.
     expect(importEnvelope).not.toHaveBeenCalled()
-    // Hash matched → no work to do; switchTo isn't called either.
     expect(switchTo).not.toHaveBeenCalled()
+    // User-visible message reflects the no-op so they aren't lied to.
+    expect(captured.join('\n')).toMatch(/already active/i)
+    logSpy.mockRestore()
+  })
+
+  it('case-insensitive: Stefan@x.com active, target stefan@x.com → no-op', async () => {
+    await ensureVaultDir()
+    setupClientReturning(SAMPLE_BLOB, 'hash-abc')
+    // Active local account uses different casing than the vault row.
+    vi.mocked(getActiveAccount).mockReturnValue({ email: 'Stefan@example.com' })
+    // Server returns the lowercased canonical email + matching hash.
+    vi.mocked(makeVaultClient).mockReset()
+    const client = {
+      action: vi.fn().mockResolvedValue({
+        email: 'stefan@example.com',
+        slot: 1,
+        plaintextBlob: SAMPLE_BLOB,
+        contentHash: 'hash-abc',
+      }),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
+    // Match the hash on disk under the server-canonical (lowercase) email.
+    const path = lastHashPath('stefan@example.com')
+    writeFileSync(path, 'hash-abc', { mode: 0o600 })
+
+    await runSwitch({ slotOrEmail: 'stefan@example.com' })
+
+    expect(importEnvelope).not.toHaveBeenCalled()
+  })
+})
+
+describe('runSwitch — cross-user switch with hash collision (Bug 1 fix)', () => {
+  it('imports even when local last-hash-{target}.txt matches, because target is NOT the active email', async () => {
+    // Repro of the prod incident:
+    //   - `cvault sync` earlier wrote `last-hash-saad.txt` with saad's hash.
+    //   - claude.json's oauthAccount points at samuel (last imported).
+    //   - User runs `cvault switch saad@x.com`. Server returns saad's
+    //     blob + the SAME hash that's already on disk.
+    // Pre-fix: hash matches → import skipped → samuel stays active and
+    // the CLI lies "Active credentials are now saad". Post-fix: must
+    // detect that saad is NOT currently active and import anyway.
+    await ensureVaultDir()
+    const saadHashPath = lastHashPath('saad@example.com')
+    writeFileSync(saadHashPath, 'hash-shared', { mode: 0o600 })
+
+    vi.mocked(makeVaultClient).mockReset()
+    const client = {
+      action: vi.fn().mockResolvedValue({
+        email: 'saad@example.com',
+        slot: 1,
+        plaintextBlob: SAMPLE_BLOB,
+        contentHash: 'hash-shared',
+      }),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
+    // Samuel is the locally active account — different from `pull.email`.
+    vi.mocked(getActiveAccount).mockReturnValue({ email: 'samuel@example.com' })
+
+    const captured: string[] = []
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runSwitch({ slotOrEmail: '1' })
+
+    // Import MUST run despite the hash match because the target email
+    // is not the active one.
+    expect(importEnvelope).toHaveBeenCalledOnce()
+    const env = vi.mocked(importEnvelope).mock.calls[0]?.[0]
+    expect(env?.accounts[0]?.email).toBe('saad@example.com')
+    // Hash is rewritten (no-op in value, but the act of writing is fine).
+    expect(readFileSync(saadHashPath, 'utf8')).toBe('hash-shared')
+    // Truth-in-output: print the actual switch message, not "already active".
+    expect(captured.join('\n')).not.toMatch(/already active/i)
+    expect(captured.join('\n')).toMatch(/active credentials are now/i)
+    logSpy.mockRestore()
   })
 })
 
 describe('runSwitch — hash mismatch', () => {
-  it('imports the new blob when hashes differ', async () => {
+  it('imports the new blob when hashes differ (regardless of active email)', async () => {
     // Existing local hash is stale.
     await ensureVaultDir()
     const path = lastHashPath('a@b.com')
     writeFileSync(path, 'hash-old', { mode: 0o600 })
 
     setupClientReturning(SAMPLE_BLOB, 'hash-new')
+    // Even when the target is already locally active, a hash mismatch
+    // means the vault has fresher tokens — import to pick them up.
+    vi.mocked(getActiveAccount).mockReturnValue({ email: 'a@b.com' })
 
     await runSwitch({ slotOrEmail: 'a@b.com' })
 

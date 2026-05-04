@@ -3,13 +3,24 @@
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §7.
  *
- * Columns: slot, email, label, 5h%, 7d%, expires (relative), last refresh
- * (relative), active marker. Designed to be readable in a 100-col terminal
- * without external deps (no chalk, no cli-table — keeps the binary lean).
+ * Columns: rank (#), email, label, 5h%, 7d%, expires (relative), last
+ * refresh (relative), stored, status. Designed to be readable in a
+ * 100-col terminal without external deps (no chalk, no cli-table —
+ * keeps the binary lean).
+ *
+ * Why `#` (rank) instead of the stored `slot` field:
+ *   The shared vault assigns slots per-user, so two different users'
+ *   first subs both have `slot=1`. Rendering the stored slot produced
+ *   two `1`s in the table — useless for `cvault switch <N>`. The CLI
+ *   now renders the FCFS rank (server returns rows ordered by
+ *   `_creationTime` ASC, see `convex/subscriptions/queries.ts:list`),
+ *   which `cvault switch <N>` already interprets as the ordinal it
+ *   should resolve to. End-to-end consistent.
  */
 
 export interface SubRow {
-  slot: number
+  /** 1-indexed FCFS rank — the integer the user passes to `cvault switch <N>`. */
+  rank: number
   email: string
   label?: string | undefined
   /** Access-token expiry in ms epoch. */
@@ -31,9 +42,9 @@ export interface SubRow {
 // returns), so the column reflects whether a copy ALSO exists locally:
 //   - `local+cloud` → vault row + active local Keychain entry. Native is
 //                     single-slot so at most one row gets this label.
-//   - `cloud`       → vault-only on this machine. `cvault switch <slot>`
+//   - `cloud`       → vault-only on this machine. `cvault switch <N>`
 //                     will pull + import it.
-const HEADERS = ['SLOT', 'EMAIL', 'LABEL', '5H', '7D', 'EXPIRES', 'LAST REFRESH', 'STORED', 'STATUS'] as const
+const HEADERS = ['#', 'EMAIL', 'LABEL', '5H', '7D', 'EXPIRES', 'LAST REFRESH', 'STORED', 'STATUS'] as const
 
 /**
  * Format a future or past timestamp relative to `now` ms.
@@ -81,14 +92,14 @@ export function renderSubsTable(rows: SubRow[], now: number = Date.now()): strin
     return 'No subscriptions yet. Run `cvault add` to capture your first Claude Code login.'
   }
 
-  // Build cells per row. Active marker prefixes the SLOT column.
+  // Build cells per row. Active marker prefixes the rank (#) column.
   const dataRows: string[][] = rows.map((r) => {
-    const slotCell = `${r.isActive ? '*' : ' '} ${String(r.slot)}`
+    const rankCell = `${r.isActive ? '*' : ' '} ${String(r.rank)}`
     const reloginRequired = r.refreshExpiresAt !== undefined && r.refreshExpiresAt <= now
     const statusCell = reloginRequired ? '⚠ relogin' : 'ok'
     const storedCell = r.isActive ? 'local+cloud' : 'cloud'
     return [
-      slotCell,
+      rankCell,
       r.email,
       r.label ?? '',
       pct(r.usage5hPct),
