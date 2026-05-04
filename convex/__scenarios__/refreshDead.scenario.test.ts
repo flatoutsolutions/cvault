@@ -140,7 +140,7 @@ describe('scenario #8 — refresh dead (relogin required)', () => {
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: seeded.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     expect(fetchStub).toHaveBeenCalledTimes(1)
@@ -157,7 +157,7 @@ describe('scenario #8 — refresh dead (relogin required)', () => {
     const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
     expect(logs).toHaveLength(1)
     expect(logs[0]?.outcome).toBe('reloginRequired')
-    expect(logs[0]?.triggeredBy).toBe('cron')
+    expect(logs[0]?.triggeredBy).toBe('manual')
   })
 
   it('400 with non-invalid_grant body falls through to plain failure (NOT reloginRequired)', async () => {
@@ -188,7 +188,7 @@ describe('scenario #8 — refresh dead (relogin required)', () => {
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: seeded.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', seeded.subId))

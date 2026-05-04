@@ -93,7 +93,7 @@ describe('runStatus', () => {
         subscriptionType: 'max',
         rateLimitTier: 'tier1',
       },
-      refreshLog: [{ outcome: 'success', triggeredBy: 'cron', at: 1_900_000_000_000 - 60_000 }],
+      refreshLog: [{ outcome: 'success', triggeredBy: 'manual', at: 1_900_000_000_000 - 60_000 }],
       lastMachineActivity: { action: 'switch', clerkSessionId: 'sess_1', at: 1_900_000_000_000 - 5 * 60_000 },
     })
     vi.mocked(makeVaultClient).mockResolvedValue({
@@ -176,7 +176,7 @@ describe('runStatus', () => {
         subscriptionType: 'max',
         rateLimitTier: 'tier1',
       },
-      refreshLog: [{ outcome: 'reloginRequired', triggeredBy: 'cron', at: NOW - 60_000 }],
+      refreshLog: [{ outcome: 'reloginRequired', triggeredBy: 'manual', at: NOW - 60_000 }],
       lastMachineActivity: { action: 'add', clerkSessionId: 'sess_old', at: NOW - 24 * 60 * 60_000 },
     })
     vi.mocked(makeVaultClient).mockResolvedValue({
@@ -287,6 +287,30 @@ describe('runStatus', () => {
     expect(parsed[0]?.slot).toBe(4)
     // The drift summary string is part of the JSON contract.
     expect(typeof parsed[0]?.drift).toBe('string')
+  })
+
+  // The prior parse-int guard (`Number.parseInt(args.slot, 10)` +
+  // `Number.isNaN`) accepted zero and negative values, sending them
+  // through to Convex which would then reject with a confusing error.
+  // The fix validates up front, before constructing the convex
+  // client, with a single unified "positive integer" message.
+  it.each([
+    ['0', /positive integer/i],
+    ['-1', /positive integer/i],
+    ['-99', /positive integer/i],
+    ['abc', /positive integer/i],
+  ])('rejects --slot %s with an actionable error before constructing the convex client', async (input, pattern) => {
+    const { statusCommand } = await import('../../src/commands/status')
+    type RunArg = Parameters<NonNullable<typeof statusCommand.run>>[0]
+    const fakeCtx = {
+      args: { slot: input, all: false, json: false },
+      cmd: statusCommand,
+      rawArgs: [],
+      data: undefined,
+    } as unknown as RunArg
+
+    await expect(statusCommand.run!(fakeCtx)).rejects.toThrow(pattern)
+    expect(makeVaultClient).not.toHaveBeenCalled()
   })
 
   it('uses --slot when provided to bypass the active-email lookup', async () => {

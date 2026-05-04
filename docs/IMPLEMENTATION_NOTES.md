@@ -236,8 +236,8 @@ for is shipped + tested.
 | `subscriptions/queries`       | `listForUser`, `getMetaByEmail`                                                                                                                                                                                                  |
 | `subscriptions/mutations`     | `upsert` (ciphertext path), `softRemove`, `rename`, `tryAcquireRefreshLease`, `releaseRefreshLease`, `commitRefreshedTokens`, `patchUsage`, `markReloginRequired`, `upsertEncrypted` (internal, called by `upsertFromPlaintext`) |
 | `subscriptions/actions`       | `pullForSwitch`, `requestRefresh`, **`upsertFromPlaintext`** (public, server-side encrypt for `cvault add`), `refreshOAuthToken` (internal), `fetchUsageForSub` (internal)                                                       |
-| `subscriptions/internalReads` | `getSubscriptionRaw`, `getSubscriptionForActor`, `getSubscriptionByIdForActor`, `findExpiringSubs`, `listAllActiveSubIds`                                                                                                        |
-| `subscriptions/crons`         | `refreshExpiringTokens`, `pollUsage`                                                                                                                                                                                             |
+| `subscriptions/internalReads` | `getSubscriptionRaw`, `getSubscriptionForActor`, `getSubscriptionByIdForActor`, `listAllActiveSubIds`                                                                                                                            |
+| `subscriptions/crons`         | `pollUsage`                                                                                                                                                                                                                      |
 | `subscriptions/crypto`        | `encrypt`, `decrypt` (Node, AES-256-GCM, master key from `VAULT_AES_KEY` env)                                                                                                                                                    |
 | `subscriptions/redact`        | `redactTokens` (sk-ant-\* shape -> `<redacted>`)                                                                                                                                                                                 |
 | `subscriptions/anthropic`     | `refreshAccessToken`, `fetchUsage`, `generateHolderToken` (with `__setAnthropicFetch` test seam)                                                                                                                                 |
@@ -250,7 +250,7 @@ for is shipped + tested.
 | `cli/internalReads`           | `listSubsRawForUser`                                                                                                                                                                                                             |
 | `cli/httpSync`                | GET `/api/cli/sync` HTTP route (auth, then delegates to syncAction)                                                                                                                                                              |
 | `cli/clerk`                   | `mintSignInToken`, `revokeClerkSession` (with `__setClerkFetch` test seam)                                                                                                                                                       |
-| `crons.ts`                    | Schedule: `refreshExpiringTokens` every 10 min, `pollUsage` every 5 min                                                                                                                                                          |
+| `crons.ts`                    | Schedule: `pollUsage` every 5 min (the `refreshExpiringTokens` cron was removed in v1; pull-on-use covers proactive refresh)                                                                                                     |
 | `utils/auth`                  | `authenticatedQuery/Mutation/Action` + `getIdentity(ctx)` helper                                                                                                                                                                 |
 | `utils/users`                 | `getCurrentUserOrThrowFromIdentity`, `getCurrentUserOrNullFromIdentity`                                                                                                                                                          |
 
@@ -716,12 +716,10 @@ rules counsel against. The following Mediums DID land alongside the
 Critical/High fixes:
 
 - **M1/M2 — `Promise.allSettled` in cron fanout (AUDIT M2)**: Fixed at
-  `convex/subscriptions/crons.ts`. Both `refreshExpiringTokens` and
-  `pollUsage` use `Promise.allSettled`; rejections logged via
-  `console.error` with the offending subId. Test:
-  `convex/subscriptions/crons.test.ts:115-200` — three subs, middle one
-  has tampered ciphertext, asserts the other two complete + only the
-  middle's failure log row was inserted.
+  `convex/subscriptions/crons.ts`. `pollUsage` (the only remaining cron
+  in v1 — `refreshExpiringTokens` was dropped per audit fix #5) uses
+  `Promise.allSettled`; rejections logged via `console.error` with the
+  offending subId. Test: `convex/subscriptions/crons.test.ts`.
 - **M3 — Per-user rate limit on `/api/cli/sync` (AUDIT M3)**: New
   `convex/rateLimit/{schema,mutations}.ts` token-bucket using a Convex
   table indexed `byUserAndKey`. The mutation is internal; the HTTP

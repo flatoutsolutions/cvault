@@ -120,28 +120,12 @@ export const getSubscriptionById = internalQuery({
 })
 
 /**
- * How far back the cron looks for already-expired tokens whose refresh
- * tokens may still be valid. Anthropic refresh tokens are valid ~30 days
- * (per docs/research/anthropic-oauth-refresh.md); a row whose access
- * token expired before this lookback floor is unrecoverable, and
- * including it in the scan only burns index bandwidth.
- *
- * The motivating perf bug (Track B item 10): the prior implementation
- * scanned `byExpiry` from the lowest-historical `expiresAt` up to the
- * cutoff with NO lower bound, which dragged in long-tombstoned rows.
- * The `removedAt === undefined` JS filter still excluded them from the
- * result, but the read amplification was unbounded as the table grew.
- */
-const RECOVERABLE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000
-
-/**
  * A sub is "RT dead" once `markReloginRequired` clamps `refreshExpiresAt`
  * to `Date.now()` after Anthropic answered `invalid_grant`. Dead subs MUST
- * be excluded from cron scans — otherwise every tick re-drives Anthropic
- * (burns an API call), logs a fresh `reloginRequired` row (spam), and
- * gives the user nothing they didn't already know. Recovery requires the
- * user to `cvault add` again on a machine that holds a fresh blob; until
- * that happens, the cron has no productive work to do.
+ * be excluded from the usage cron — polling Anthropic against a token
+ * whose refresh path is dead burns an API call and gives the dashboard
+ * nothing actionable. Recovery requires the user to `cvault add` again
+ * on a machine that holds a fresh blob.
  *
  * `refreshExpiresAt === undefined` is treated as "alive" because legacy /
  * never-refreshed rows lack the field — excluding them would silently
@@ -150,24 +134,6 @@ const RECOVERABLE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000
 function isReloginRequired(row: { refreshExpiresAt?: number }, now: number): boolean {
   return row.refreshExpiresAt !== undefined && row.refreshExpiresAt <= now
 }
-
-/** Internal query used by the cron to find subs whose access token expires soon. */
-export const findExpiringSubs = internalQuery({
-  args: { withinMs: v.number() },
-  returns: v.array(v.object({ subId: v.id('subscriptions') })),
-  handler: async (ctx, { withinMs }) => {
-    const now = Date.now()
-    const cutoff = now + withinMs
-    const floor = now - RECOVERABLE_LOOKBACK_MS
-    const rows = await ctx.db
-      .query('subscriptions')
-      .withIndex('byExpiry', (q) => q.gt('expiresAt', floor).lt('expiresAt', cutoff))
-      .collect()
-    // Filter out tombstoned subs in JS (low cardinality of soft-deletes per spec §4).
-    // Also exclude RT-dead subs — see `isReloginRequired` above.
-    return rows.filter((r) => r.removedAt === undefined && !isReloginRequired(r, now)).map((r) => ({ subId: r._id }))
-  },
-})
 
 /** Internal query used by the usage cron — list every active sub. */
 export const listAllActiveSubIds = internalQuery({

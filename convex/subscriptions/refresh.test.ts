@@ -130,7 +130,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: inserted.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
@@ -151,7 +151,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: inserted.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
@@ -181,7 +181,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: inserted.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
@@ -509,7 +509,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     // propagate, which leaves the lease held for the full 30s TTL.)
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: inserted.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     // Anthropic was NEVER called (decrypt failed before any HTTP work).
@@ -554,7 +554,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     // First call fails decrypt and releases the lease.
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: inserted.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     // Try to acquire the lease right away — it must succeed (no 30s TTL wait).
@@ -566,14 +566,14 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
   })
 
   /**
-   * Cron spam guard: a sub whose `refreshExpiresAt <= now` was already
+   * RT-dead spam guard: a sub whose `refreshExpiresAt <= now` was already
    * marked dead (a prior refresh got `invalid_grant` from Anthropic).
-   * The action MUST NOT re-drive Anthropic in that state — every cron
-   * tick would otherwise burn an API call and log a fresh
-   * `reloginRequired` row. The cron-side `findExpiringSubs` filter is
-   * the primary defense; this is the defense-in-depth re-check inside
-   * the action so manual `cvault refresh` calls and any future caller
-   * also short-circuit cleanly.
+   * The action MUST NOT re-drive Anthropic in that state — repeated
+   * calls would otherwise burn an API call and log a fresh
+   * `reloginRequired` row each time. With the `refreshExpiringTokens`
+   * cron removed (audit fix #5), the only remaining callers are direct
+   * (`cvault refresh`) or pull-on-use (`pullForSwitch`); this in-action
+   * re-check ensures both short-circuit cleanly.
    */
   it('short-circuits when refreshExpiresAt <= now (no Anthropic call, no spurious log)', async () => {
     const t = vault()
@@ -595,7 +595,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
 
     await t.action(internal.subscriptions.actions.refreshOAuthToken, {
       subId: inserted.subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
     })
 
     expect(fetchStub).not.toHaveBeenCalled()

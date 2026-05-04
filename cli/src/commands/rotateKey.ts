@@ -10,8 +10,15 @@
  * rotating. We print the commands, wait for a "yes" confirmation on
  * stdin, then call `triggerKeyRotation`. The server's job-id is
  * returned so the user can correlate with dashboard progress.
+ *
+ * SECURITY: the master key is NEVER written to stdout. Anything the CLI
+ * prints can leak via shell history, terminal scrollback, and CI logs;
+ * once leaked we can't reach into those places to scrub it. Instead we
+ * write the key to `~/.vault/new-key.txt` at mode 0600 and print only
+ * the file path + a short SHA-256 fingerprint. The user `cat`s the file
+ * themselves and `shred -u`s it after copying.
  */
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { createInterface } from 'node:readline/promises'
 
 import { api } from '@cvault/convex/api'
@@ -19,6 +26,7 @@ import type { Id } from '@cvault/convex/dataModel'
 import { defineCommand } from 'citty'
 
 import { type VaultClient, makeVaultClient } from '../convex/vaultClient'
+import { vaultFile, writeSecret } from '../paths'
 
 interface RotateJobView {
   status: string
@@ -50,12 +58,26 @@ async function readConfirmation(prompt: string): Promise<boolean> {
 export async function runRotateKey(opts: RunRotateKeyOpts = {}): Promise<void> {
   const log = opts.log ?? ((m: string): void => console.log(m))
   const newKey = randomBytes(32).toString('base64')
-  log('Generated new AES-256 master key:')
-  log(`  NEW_KEY=${newKey}`)
+
+  // SECURITY: write the key to disk + print only the path & a fingerprint.
+  // The fingerprint is the first 16 hex chars of sha256(key) — enough to
+  // tell two keys apart with overwhelming probability (~2^-64 collisions
+  // for accidental near-matches) but reveals nothing about the key
+  // itself.
+  const keyPath = vaultFile('new-key.txt')
+  await writeSecret(keyPath, newKey)
+  const fingerprint = createHash('sha256').update(newKey).digest('hex').slice(0, 16)
+
+  log('Generated new AES-256 master key.')
+  log(`  Key file:    ${keyPath}`)
+  log(`  Fingerprint: ${fingerprint}`)
+  log('')
+  log('Read the key with: cat ~/.vault/new-key.txt')
+  log('After copying, scrub the file: shred -u ~/.vault/new-key.txt')
   log('')
   log('Run these commands in your shell to install the new key:')
   log('  npx convex env set VAULT_AES_KEY_PREVIOUS "$(npx convex env get VAULT_AES_KEY)"')
-  log(`  npx convex env set VAULT_AES_KEY "${newKey}"`)
+  log('  npx convex env set VAULT_AES_KEY "<paste the key from the file>"')
   log('  npx convex env set VAULT_KEY_VERSION "v2"   # bump per rotation')
   log('')
 

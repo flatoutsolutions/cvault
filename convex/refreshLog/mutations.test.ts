@@ -1,19 +1,21 @@
 /**
  * Spec: cron-spam fix sweep — `reloginRequired` log dedupe.
  *
- * The original failure mode: `findExpiringSubs` kept selecting RT-dead
- * subs every cron tick → `refreshOAuthToken` kept hitting Anthropic →
- * Anthropic kept answering `invalid_grant` → `reloginRequired` rows
- * accumulated forever. Stefan's audit log showed 21+ identical rows
- * within 3.5h.
+ * The original failure mode: the `refreshExpiringTokens` cron kept
+ * selecting RT-dead subs every tick → `refreshOAuthToken` kept hitting
+ * Anthropic → Anthropic kept answering `invalid_grant` →
+ * `reloginRequired` rows accumulated forever. Stefan's audit log
+ * showed 21+ identical rows within 3.5h.
  *
- * The primary fix is upstream (exclude RT-dead subs from the cron scan,
- * short-circuit in the action itself). This dedupe is defense-in-depth:
- * even if some future caller bypasses both upstream guards and lands a
- * `reloginRequired` insert here within 5 minutes of the previous one for
- * the same sub, we silently drop the duplicate. `failure` and `success`
- * rows are NEVER deduped — they're meaningful per-attempt and the
- * dashboard's audit feed needs them all.
+ * The cron itself was removed in v1 (audit fix #5; the `'cron'` literal
+ * was dropped from `triggeredBy` so these tests now emit `'manual'`).
+ * The in-action `refreshExpiresAt` short-circuit catches direct callers;
+ * this dedupe is the last line of defense: even if some future caller
+ * bypasses both upstream guards and lands a `reloginRequired` insert
+ * here within 5 minutes of the previous one for the same sub, we silently
+ * drop the duplicate. `failure` and `success` rows are NEVER deduped —
+ * they're meaningful per-attempt and the dashboard's audit feed needs
+ * them all.
  */
 import { describe, expect, it } from 'vitest'
 
@@ -46,7 +48,7 @@ describe('refreshLog.mutations.insert dedupe', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       error: 'invalid_grant',
       at: now,
@@ -55,7 +57,7 @@ describe('refreshLog.mutations.insert dedupe', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       error: 'invalid_grant (again)',
       at: now + 30_000,
@@ -75,7 +77,7 @@ describe('refreshLog.mutations.insert dedupe', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       at: now,
     })
@@ -83,7 +85,7 @@ describe('refreshLog.mutations.insert dedupe', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       at: now + 6 * 60 * 1000,
     })
@@ -101,7 +103,7 @@ describe('refreshLog.mutations.insert dedupe', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'failure',
       error: 'Anthropic 503 service_unavailable',
       at: now,
@@ -109,7 +111,7 @@ describe('refreshLog.mutations.insert dedupe', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'failure',
       error: 'Anthropic 503 service_unavailable (still)',
       at: now + 30_000,
@@ -128,14 +130,14 @@ describe('refreshLog.mutations.insert dedupe', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'success',
       at: now,
     })
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'success',
       at: now + 30_000,
     })
@@ -166,14 +168,14 @@ describe('refreshLog.mutations.insert dedupe', () => {
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subA,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       at: now,
     })
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subB,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       at: now + 30_000,
     })

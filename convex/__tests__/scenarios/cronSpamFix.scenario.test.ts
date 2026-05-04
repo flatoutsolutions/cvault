@@ -2,31 +2,29 @@
  * Scenario — production cron-spam bug repro + fix verification.
  *
  * Bug background (from real production usage):
- *   `refreshExpiringTokens` cron runs every 10 minutes. The original
- *   `findExpiringSubs` query selected ALL subs whose access token was
- *   inside the 15-minute proactive window — including subs whose REFRESH
- *   TOKEN was already dead (Anthropic returned `invalid_grant` on a prior
- *   tick). Each tick re-drove Anthropic against the same dead RT, got the
- *   same `invalid_grant`, and inserted a new `reloginRequired` row.
+ *   The original `refreshExpiringTokens` cron ran every 10 minutes and
+ *   selected ALL subs whose access token was inside the 15-minute
+ *   proactive window — including subs whose REFRESH TOKEN was already
+ *   dead (Anthropic returned `invalid_grant` on a prior tick). Each tick
+ *   re-drove Anthropic against the same dead RT, got the same
+ *   `invalid_grant`, and inserted a new `reloginRequired` row.
  *   Stefan's audit log showed 21+ identical rows in 3.5 hours.
  *
- * Fix (already in tree, exercised here end-to-end):
- *   1. `findExpiringSubs` and `listAllActiveSubIds` filter out RT-dead
- *      subs (`refreshExpiresAt <= now`).
- *   2. `refreshOAuthToken` short-circuits in-action: after acquiring the
- *      lease it re-checks `refreshExpiresAt` and exits silently rather
- *      than calling Anthropic.
- *   3. `refreshLog.insert` dedupes consecutive `reloginRequired` rows for
- *      the same sub within 5 minutes.
+ * Fix layers (after audit fix #5 dropped the cron entirely):
+ *   1. The `refreshExpiringTokens` cron is gone — pull-on-use refresh
+ *      handles proactive rotation per spec §2 ("pull-on-use only in
+ *      v1"). See `cronDoesNotPoisonStaleRT.scenario.test.ts`.
+ *   2. `refreshOAuthToken` short-circuits in-action: after acquiring
+ *      the lease it re-checks `refreshExpiresAt` and exits silently
+ *      rather than calling Anthropic. Covers direct CLI `cvault refresh`
+ *      callers and pull-on-use callers landing on an RT-dead sub.
+ *   3. `refreshLog.insert` dedupes consecutive `reloginRequired` rows
+ *      for the same sub within 5 minutes — last line of defense.
  *
- * What this scenario asserts (the END-TO-END behavior the bug violated):
- *   - Three back-to-back cron ticks against an RT-dead sub make ZERO
- *     Anthropic fetches.
- *   - The sub state is unchanged across ticks (still RT-dead).
- *   - At most one `reloginRequired` row exists after the ticks (no spam).
- *   - The dedupe ALSO catches an in-action attempt that bypasses the cron
- *     filter — e.g. a manual `cvault refresh` directly invoking
- *     `refreshOAuthToken` against an RT-dead sub.
+ * What this scenario asserts (the in-action + dedupe behavior):
+ *   - Three direct invocations of `refreshOAuthToken` against an RT-dead
+ *     sub make ZERO Anthropic fetches.
+ *   - At most one `reloginRequired` row exists after each batch.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -97,55 +95,14 @@ async function seedRtDeadSub(t: ReturnType<typeof vault>): Promise<{
 }
 
 describe('Scenario — cron-spam fix prevents Anthropic hammering on RT-dead subs', () => {
-  it('three back-to-back refreshExpiringTokens ticks make ZERO Anthropic calls + ZERO refreshLog rows', async () => {
-    const t = vault()
-    const { subId } = await seedRtDeadSub(t)
-
-    let fetchCount = 0
-    __setAnthropicFetch(
-      vi.fn(() => {
-        fetchCount += 1
-        return Promise.resolve(
-          new Response(JSON.stringify({ error: 'invalid_grant' }), {
-            status: 401,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        )
-      }) as typeof fetch
-    )
-
-    // Snapshot the row before any cron tick so we can assert nothing changed.
-    const before = await t.run(async (ctx) => await ctx.db.get('subscriptions', subId))
-    expect(before?.refreshExpiresAt).toBeDefined()
-    expect(before?.refreshExpiresAt).toBeLessThanOrEqual(Date.now())
-
-    // Tick 1, 2, 3 — simulating 30 minutes of cron activity. Each call
-    // SHOULD find no work to do because `findExpiringSubs` excludes the
-    // RT-dead sub.
-    for (let i = 0; i < 3; i += 1) {
-      await t.action(internal.subscriptions.crons.refreshExpiringTokens, {})
-    }
-
-    // INVARIANT 1: Anthropic was NEVER called. The cron filter should
-    // have excluded the sub from `findExpiringSubs`'s result; absent that
-    // filter, three ticks would generate three `invalid_grant` calls.
-    expect(fetchCount).toBe(0)
-
-    // INVARIANT 2: NO refreshLog rows. The cron didn't pick up the sub,
-    // so no row of any outcome (success, failure, or reloginRequired)
-    // landed. Pre-fix this would have been at least 3.
-    const logs = await t.run(async (ctx) => await ctx.db.query('refreshLog').collect())
-    expect(logs).toHaveLength(0)
-
-    // INVARIANT 3: The sub's row is byte-identical to before — the cron
-    // didn't accidentally mutate it (no clearing of refreshExpiresAt, no
-    // shifting of expiresAt).
-    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', subId))
-    expect(after?.refreshExpiresAt).toBe(before?.refreshExpiresAt)
-    expect(after?.expiresAt).toBe(before?.expiresAt)
-    expect(after?.lastRefreshedAt).toBe(before?.lastRefreshedAt)
-  })
-
+  // The original first test exercised the (now-removed)
+  // `refreshExpiringTokens` cron driving Anthropic against an RT-dead
+  // sub. Audit fix #5 removed the cron entirely (see
+  // `cronDoesNotPoisonStaleRT.scenario.test.ts`), so the cron-side
+  // assertion is no longer applicable. The two remaining tests cover
+  // the in-action defense (manual `refreshOAuthToken` invocations) and
+  // the `refreshLog` dedupe — both still load-bearing for direct CLI
+  // `cvault refresh` callers.
   it('manual refreshOAuthToken against an RT-dead sub bypasses cron filter, but in-action defense + dedupe still keep refreshLog clean', async () => {
     // This proves the layered defense works even when a future caller
     // invokes the inner action directly (skipping `findExpiringSubs`'s
@@ -206,7 +163,7 @@ describe('Scenario — cron-spam fix prevents Anthropic hammering on RT-dead sub
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       error: 'invalid_grant',
       at: now,
@@ -214,7 +171,7 @@ describe('Scenario — cron-spam fix prevents Anthropic hammering on RT-dead sub
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       error: 'invalid_grant',
       at: now + 10_000,
@@ -222,7 +179,7 @@ describe('Scenario — cron-spam fix prevents Anthropic hammering on RT-dead sub
     await t.mutation(internal.refreshLog.mutations.insert, {
       userId,
       subscriptionId: subId,
-      triggeredBy: 'cron',
+      triggeredBy: 'manual',
       outcome: 'reloginRequired',
       error: 'invalid_grant',
       at: now + 20_000,

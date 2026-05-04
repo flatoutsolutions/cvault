@@ -86,8 +86,9 @@ function computeMac(macKey: Buffer, canonicalJson: string): Buffer {
 /**
  * Per A4 (vault poisoning defense): clamp expiresAt / refreshExpiresAt
  * read out of an untrusted bundle so a tampered bundle can't poison the
- * vault with a `Date.now() + 100yr` value that would forever evade
- * `findExpiringSubs`. Mirrors `ADOPT_MAX_FUTURE_MS` in
+ * vault with a `Date.now() + 100yr` value that would forever evade the
+ * pull-on-use proactive-refresh window check (`expiresAt < now + 5min`)
+ * in `refreshOAuthToken`. Mirrors `ADOPT_MAX_FUTURE_MS` in
  * `convex/subscriptions/mutations.ts`.
  */
 const ADOPT_MAX_FUTURE_MS = 24 * 60 * 60 * 1000
@@ -277,14 +278,21 @@ export const importEncryptedBackup = authenticatedAction({
 
       // A3 (refuse-overwrite): reject the import upfront if any of the
       // bundle's emails already have a LIVE sub anywhere in the vault.
-      // Under shared-vault doctrine the collision check is vault-wide
-      // because ANY co-tenant's row would be silently replaced/parallel-
-      // inserted on import — `upsertSub` dedupes by (userId, email) so a
-      // cross-tenant collision wouldn't actually overwrite, but it would
-      // create a duplicate row for the same email that the dashboard
-      // would render twice. Either disaster mode is bad enough to refuse
-      // the import upfront and force the user to soft-remove the
-      // colliding row first.
+      // Under shared-vault doctrine the collision check is vault-wide.
+      // Now that `upsertSub` dedupes globally by email, an import-time
+      // collision would silently overwrite the existing live row's
+      // ciphertext (last writer wins), which is probably surprising for
+      // the operator who triggered the restore. Refusing the import
+      // upfront forces them to soft-remove the colliding row first.
+      //
+      // NOTE: this is a best-effort UX gate — NOT atomic. The check uses
+      // `runQuery → runMutation`; a concurrent `cvault add` or import
+      // racing this check would slip past. The mutation path's
+      // global-byEmail dedupe means the late writer rotates ciphertext
+      // in place under first-claimer ownership — no duplicate row, just
+      // last-writer-wins on ciphertext. The gate exists to give the
+      // operator a clearer error in the common single-user case; it
+      // does not enforce mutual exclusion vault-wide.
       const existingLive = await ctx.runQuery(internal.subscriptions.internalReads.listAllActiveSubsRaw, {})
       const liveEmails = new Set(existingLive.map((s) => s.email.toLowerCase()))
       const collisions = bundle.accounts.map((a) => a.email.toLowerCase()).filter((e) => liveEmails.has(e))

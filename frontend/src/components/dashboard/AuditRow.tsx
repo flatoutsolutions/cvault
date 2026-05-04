@@ -19,7 +19,7 @@ export type AuditRefreshRow = {
   id: string
   at: number
   subEmail: string | undefined
-  triggeredBy: 'cron' | 'manual' | 'onUse'
+  triggeredBy: 'manual' | 'onUse'
   outcome: 'success' | 'failure' | 'reloginRequired'
   error?: string | undefined
 }

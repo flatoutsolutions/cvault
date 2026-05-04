@@ -118,7 +118,7 @@ function buildRefreshRows(count: number, opts?: { now?: number; subscriptionId?:
     _creationTime: now,
     userId: 'u_1',
     subscriptionId,
-    triggeredBy: 'cron' as const,
+    triggeredBy: 'manual' as const,
     outcome: 'success' as const,
     at: now - (i + 1) * 60_000,
   }))
@@ -164,7 +164,7 @@ describe('/dashboard/audit', () => {
           _creationTime: now,
           userId: 'u_1',
           subscriptionId: 'sub_1',
-          triggeredBy: 'cron',
+          triggeredBy: 'manual',
           outcome: 'success',
           at: now - 10 * 60_000,
         },
@@ -195,6 +195,30 @@ describe('/dashboard/audit', () => {
     expect(rows[1]?.textContent).toContain('refresh')
   })
 
+  it('renders explicit empty-state card when filters narrow non-empty data to 0 rows', () => {
+    const now = Date.now()
+    setRefreshLog({
+      results: [
+        {
+          _id: 'log_1',
+          _creationTime: now,
+          userId: 'u_1',
+          subscriptionId: 'sub_1',
+          triggeredBy: 'manual',
+          outcome: 'success',
+          at: now - 1000,
+        },
+      ],
+      status: 'Exhausted',
+    })
+    setMachineActivity({ results: [], status: 'Exhausted' })
+    setSubscriptions([{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
+    render(<AuditPage />)
+    // Apply a filter that excludes the only loaded row.
+    fireEvent.change(screen.getByLabelText(/outcome/i), { target: { value: 'failure' } })
+    expect(screen.getByText(/no matching activity/i)).toBeTruthy()
+  })
+
   it('filters by outcome=failure and excludes activity rows', () => {
     const now = Date.now()
     setRefreshLog({
@@ -204,7 +228,7 @@ describe('/dashboard/audit', () => {
           _creationTime: now,
           userId: 'u_1',
           subscriptionId: 'sub_1',
-          triggeredBy: 'cron',
+          triggeredBy: 'manual',
           outcome: 'success',
           at: now - 1000,
         },
@@ -213,7 +237,7 @@ describe('/dashboard/audit', () => {
           _creationTime: now,
           userId: 'u_1',
           subscriptionId: 'sub_1',
-          triggeredBy: 'cron',
+          triggeredBy: 'manual',
           outcome: 'failure',
           error: 'Anthropic refresh 500',
           at: now - 2000,

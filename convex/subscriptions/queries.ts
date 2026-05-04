@@ -126,7 +126,7 @@ export const getMetaByEmail = authenticatedQuery({
 
 const refreshLogEntryValidator = v.object({
   outcome: v.union(v.literal('success'), v.literal('failure'), v.literal('reloginRequired')),
-  triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
+  triggeredBy: v.union(v.literal('manual'), v.literal('onUse')),
   at: v.number(),
   error: v.optional(v.string()),
 })

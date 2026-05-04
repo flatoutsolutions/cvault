@@ -309,6 +309,35 @@ async function runRefreshAll(
   }
 }
 
+/**
+ * Translate proper-lockfile's lock-acquisition failures into an
+ * actionable user-facing message. We trip on `code === 'ELOCKED'` and
+ * `code === 'ELOCKACQUIRED'` (the two codes proper-lockfile emits when
+ * retries are exhausted), and as a defensive fallback also on the
+ * `/lock|locked/i` substring in case the underlying library ever
+ * changes its codes. Non-lock errors are re-thrown verbatim so real
+ * failures aren't masked as a lock issue.
+ *
+ * NOTE: `ECOMPROMISED` is intentionally NOT matched here. proper-lockfile
+ * emits it when a HELD lock is yanked mid-critical-section (the heartbeat
+ * detects a stale or stolen lockfile), NOT during acquisition. Conflating
+ * it with acquisition failures hides a corruption signal behind a
+ * "try again" message; better to let the original error propagate so the
+ * operator sees the actual integrity failure.
+ */
+function isLockAcquisitionError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const code = (err as { code?: unknown }).code
+  if (typeof code === 'string' && (code === 'ELOCKED' || code === 'ELOCKACQUIRED')) {
+    return true
+  }
+  // Fallback: proper-lockfile's lock-failure messages contain "lock"
+  // ("Lock file is already being held"). We match conservatively to
+  // avoid misclassifying unrelated errors that happen to mention the
+  // word "lock".
+  return /lock file is already being held|exceeded.*retries.*lock/i.test(err.message)
+}
+
 export async function runRefresh(opts: RunRefreshOptions): Promise<void> {
   if (opts.all !== true && opts.slot === undefined) {
     throw new Error('cvault refresh: provide --slot <n> or --all')
@@ -322,39 +351,55 @@ export async function runRefresh(opts: RunRefreshOptions): Promise<void> {
   // For --all we hold the lock across ALL subs because the per-sub
   // writes mutate the same `~/.claude.json` slice; serialized batch
   // matches the single-sub semantics.
-  await withFileLock(async () => {
-    const { localState, localHash } = readLocalForRefresh()
+  try {
+    await withFileLock(async () => {
+      const { localState, localHash } = readLocalForRefresh()
 
-    if (opts.all === true) {
-      await runRefreshAll(client, {
-        ...(opts.force === true ? { force: true } : {}),
-        localState,
-        localHash,
-      })
-      return
-    }
+      if (opts.all === true) {
+        await runRefreshAll(client, {
+          ...(opts.force === true ? { force: true } : {}),
+          localState,
+          localHash,
+        })
+        return
+      }
 
-    // Single-slot path.
-    if (opts.slot === undefined) {
-      // Defensive — already checked above, but the type narrowing
-      // doesn't carry through the closure boundary.
-      throw new Error('cvault refresh: --slot is required when --all is not set')
+      // Single-slot path.
+      if (opts.slot === undefined) {
+        // Defensive — already checked above, but the type narrowing
+        // doesn't carry through the closure boundary.
+        throw new Error('cvault refresh: --slot is required when --all is not set')
+      }
+      let result: RefreshSubResult
+      try {
+        result = await refreshOneSlotUnlocked(client, {
+          slot: opts.slot,
+          ...(opts.force === true ? { force: true } : {}),
+          localState,
+          localHash,
+        })
+      } catch (err) {
+        const relogin = maybeReloginError(err)
+        if (relogin) throw relogin
+        throw err
+      }
+      console.log(summarize(result))
+    })
+  } catch (err) {
+    // Translate lock-acquisition failures into an actionable message.
+    // The previous behavior surfaced raw `ELOCKED` / "Lock file is
+    // already being held" strings, which are unhelpful for the user
+    // — they don't know which process is holding the lock or what to
+    // do about it. The new message names the likely culprits and
+    // suggests retry.
+    if (isLockAcquisitionError(err)) {
+      throw new Error(
+        'Unable to acquire credentials lock — another cvault or claude process is using the keychain. ' +
+          'Try again in a few seconds.'
+      )
     }
-    let result: RefreshSubResult
-    try {
-      result = await refreshOneSlotUnlocked(client, {
-        slot: opts.slot,
-        ...(opts.force === true ? { force: true } : {}),
-        localState,
-        localHash,
-      })
-    } catch (err) {
-      const relogin = maybeReloginError(err)
-      if (relogin) throw relogin
-      throw err
-    }
-    console.log(summarize(result))
-  })
+    throw err
+  }
 }
 
 export const refreshCommand = defineCommand({
@@ -395,8 +440,13 @@ export const refreshCommand = defineCommand({
       throw new Error('cvault refresh: provide --slot <n> or --all')
     }
     const slot = Number.parseInt(args.slot, 10)
-    if (Number.isNaN(slot)) {
-      throw new Error(`--slot must be a number, got ${args.slot}`)
+    // Reject NaN, zero, and negative values up front with one unified
+    // message so the user sees a clear error instead of a confusing
+    // downstream Convex rejection (and so we don't burn a network
+    // round trip just to discover an invalid slot). Slot is 1-indexed
+    // in the vault.
+    if (Number.isNaN(slot) || slot < 1) {
+      throw new Error(`--slot must be a positive integer, got ${args.slot}`)
     }
     await runRefresh({ slot, force: args.force })
   },

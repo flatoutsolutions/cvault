@@ -185,3 +185,131 @@ describe('clerkUsersWebhook (domain gate)', () => {
     expect(res.status).toBe(200)
   })
 })
+
+/**
+ * `user.deleted` event handling — audit fix #3 + null-id safety fix #2.
+ *
+ * The Clerk `user.deleted` payload carries the deleted user's id at
+ * `event.data.id`. The pre-fix code used `event.data.id!` which crashes
+ * on a malformed payload (Svix would then retry with backoff because the
+ * webhook handler errored out). Per project rules we never use `!`; the
+ * handler must check for `null`/`undefined` explicitly and respond 200
+ * (Svix retries on 4xx → bad payloads should drop, not loop).
+ *
+ * Fix #3 (audit row): every `user.deleted` event must leave a
+ * `machineActivity` row attributing the removal to the soon-to-be-removed
+ * user, captured BEFORE the row is deleted.
+ */
+describe('clerkUsersWebhook (user.deleted audit + null-id safety)', () => {
+  it('on user.deleted: removes the users row AND inserts a machineActivity audit row', async () => {
+    const t = vault()
+    // Seed a user that the deletion event will target.
+    const seededId = await t.run(async (ctx) =>
+      ctx.db.insert('users', {
+        externalId: 'user_to_delete',
+        name: 'Doomed Dan',
+        primaryEmail: 'dan@flatout.solutions',
+        otherEmails: [],
+      })
+    )
+
+    const validateRequest = await import('../utils/validateRequest')
+    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue({
+      type: 'user.deleted',
+      data: { id: 'user_to_delete' },
+    } as never)
+
+    const res = await t.fetch('/webhooks/clerk', {
+      method: 'POST',
+      body: '{}',
+      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    })
+
+    expect(res.status).toBe(200)
+
+    // The users row was hard-deleted.
+    const after = await t.run(async (ctx) => await ctx.db.get('users', seededId))
+    expect(after).toBeNull()
+
+    // An audit row was written attributing the removal to the deleted
+    // user. The webhook captures `userId`, writes the audit row WHILE
+    // the user row still exists, then deletes — so the FK target is
+    // valid at audit-write time. After the delete the FK is dangling
+    // (Convex doesn't enforce FK constraints), which matches typical
+    // audit-log semantics ("the record of 'this user was removed'
+    // survives the user").
+    const audit = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    expect(audit).toHaveLength(1)
+    expect(audit[0]?.action).toBe('remove')
+    expect(audit[0]?.userId).toEqual(seededId)
+    // Sentinel `clerkSessionId` for webhook-origin events: there is no
+    // CLI session associated with a domain-gate / user.deleted event.
+    expect(audit[0]?.clerkSessionId).toBe('webhook')
+  })
+
+  it('on user.deleted with no users row: returns 200 gracefully and writes no audit row', async () => {
+    // The webhook may fire for a Clerk user that was rejected at
+    // creation time (domain-gate already deleted the orphan row). In
+    // that case there is no user to attribute the audit to, so we skip
+    // the audit row but still return 200.
+    const t = vault()
+    const validateRequest = await import('../utils/validateRequest')
+    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue({
+      type: 'user.deleted',
+      data: { id: 'user_never_existed' },
+    } as never)
+
+    const res = await t.fetch('/webhooks/clerk', {
+      method: 'POST',
+      body: '{}',
+      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    })
+
+    expect(res.status).toBe(200)
+    const audit = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    expect(audit).toHaveLength(0)
+  })
+
+  it('on user.deleted with missing data.id: returns 200, makes no DB mutation, does not throw', async () => {
+    // Pre-fix: `event.data.id!` would type-coerce `undefined` to a string
+    // and call `userByExternalId(ctx, "undefined")` (then `console.warn`).
+    // The audit fix replaces the non-null assertion with an explicit
+    // null check + console.error + return 200. We verify no users row
+    // was written/removed and no audit row landed.
+    const t = vault()
+    // Seed a row that should remain untouched.
+    const survivor = await t.run(async (ctx) =>
+      ctx.db.insert('users', {
+        externalId: 'user_survives',
+        name: 'Surviving Sue',
+        primaryEmail: 'sue@flatout.solutions',
+        otherEmails: [],
+      })
+    )
+
+    const validateRequest = await import('../utils/validateRequest')
+    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue({
+      type: 'user.deleted',
+      data: {},
+    } as never)
+
+    // Suppress the expected console.error so test output stays clean
+    // while still proving the handler logged the malformed-payload case.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await t.fetch('/webhooks/clerk', {
+      method: 'POST',
+      body: '{}',
+      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    })
+
+    expect(res.status).toBe(200)
+    expect(errSpy).toHaveBeenCalled()
+
+    // Survivor untouched.
+    const stillThere = await t.run(async (ctx) => await ctx.db.get('users', survivor))
+    expect(stillThere).not.toBeNull()
+    // No audit row.
+    const audit = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    expect(audit).toHaveLength(0)
+  })
+})

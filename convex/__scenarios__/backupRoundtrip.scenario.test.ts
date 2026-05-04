@@ -107,17 +107,13 @@ describe('scenario: encrypted backup round-trip', () => {
     expect(after).toHaveLength(0)
   })
 
-  it("A3 cross-user import: user B importing A's bundle creates a row owned by B, separate from A's", async () => {
-    // Original intent (from when reads were per-user-scoped): "B sees
-    // only B's row; no leak across users." With the shared-vault read
-    // model (`convex/utils/users.ts:3-7`), `list` returns every row
-    // regardless of caller. The structural property still under test —
-    // and what backup's separation guarantee actually enforces — is
-    // that the restored row's `userId` belongs to B, not A. Both rows
-    // coexist in the shared vault (`list` shows both); ownership is
-    // tracked on the row.
+  it('A3 refuse-overwrite: importing into a vault that already has a live row for the same email throws BACKUP_WOULD_OVERWRITE and does NOT mutate the live row', async () => {
+    // Under shared-vault doctrine + global-byEmail dedupe, a live row
+    // for `shared@example.com` is unique vault-wide. An import that
+    // would silently rotate that ciphertext is surprising to operators
+    // running disaster recovery on a live vault. The action refuses
+    // upfront (see `convex/backup/actions.ts:278-296`).
     const t = vault()
-    // Seed user A with the original sub.
     const seeded = await seedSubscription({
       t,
       identity: TEST_IDENTITY,
@@ -128,8 +124,69 @@ describe('scenario: encrypted backup round-trip', () => {
       passphrase: 'correcthorsebatterystaple',
     })
 
-    // User B is a separate identity. They import A's bundle: the
-    // restored row should land under B's userId, NOT A's.
+    // Snapshot the existing row's ciphertext so we can prove the failed
+    // import did NOT touch it.
+    const beforeRow = await t.run(async (ctx) => ctx.db.get('subscriptions', seeded.subId))
+    if (!beforeRow) throw new Error('seeded row missing pre-import')
+    const beforeCipher = Buffer.from(beforeRow.ciphertext).toString('base64')
+
+    const bIdentity = {
+      subject: 'user_test_charlie',
+      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_charlie',
+      name: 'Charlie',
+      email: 'charlie@flatout.solutions',
+    }
+    await t.run(async (ctx) => {
+      await ctx.db.insert('users', {
+        externalId: bIdentity.subject,
+        name: bIdentity.name,
+        primaryEmail: bIdentity.email,
+        otherEmails: [],
+      })
+    })
+
+    await expect(
+      t.withIdentity(bIdentity).action(api.backup.actions.importEncryptedBackup, {
+        passphrase: 'correcthorsebatterystaple',
+        bundleBase64: aBundle.contentBase64,
+      })
+    ).rejects.toThrow(/BACKUP_WOULD_OVERWRITE|overwrite/i)
+
+    // Vault still has exactly one row for that email. Owner unchanged.
+    // Ciphertext unchanged. The action's refuse-overwrite is atomic.
+    const allSubs = await t.withIdentity(bIdentity).query(api.subscriptions.queries.list, {})
+    expect(allSubs.filter((s) => s.email === 'shared@example.com')).toHaveLength(1)
+    const surviving = allSubs.find((s) => s.email === 'shared@example.com')
+    if (!surviving) throw new Error('row vanished — refuse-overwrite was not atomic')
+    expect(surviving.userId).toBe(seeded.userId)
+    const afterRow = await t.run(async (ctx) => ctx.db.get('subscriptions', seeded.subId))
+    if (!afterRow) throw new Error('row vanished post-import')
+    const afterCipher = Buffer.from(afterRow.ciphertext).toString('base64')
+    expect(afterCipher).toBe(beforeCipher)
+  })
+
+  it("A3 disaster recovery: when the live row is soft-removed first, B's import revives it in place and ownership stays with the original adder (A)", async () => {
+    // Global-byEmail dedupe means a tombstoned row for the same email
+    // is REVIVED in place — the row's `userId` does NOT transfer to the
+    // caller. First-claimer ownership doctrine
+    // (`convex/subscriptions/mutations.ts:182-186`).
+    const t = vault()
+    const seeded = await seedSubscription({
+      t,
+      identity: TEST_IDENTITY,
+      email: 'shared@example.com',
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    })
+    const aBundle = await t.withIdentity(TEST_IDENTITY).action(api.backup.actions.exportEncryptedBackup, {
+      passphrase: 'correcthorsebatterystaple',
+    })
+
+    // Disaster: A soft-removes the live row, then B steps in to restore.
+    await t
+      .withIdentity(TEST_IDENTITY)
+      .mutation(api.subscriptions.mutations.softRemove, { email: 'shared@example.com' })
+
     const bIdentity = {
       subject: 'user_test_charlie',
       issuer: 'https://clear-redbird-6.clerk.accounts.dev',
@@ -152,13 +209,19 @@ describe('scenario: encrypted backup round-trip', () => {
     })
     expect(restored.restoredCount).toBe(1)
 
-    // Shared vault: every authed reader sees both rows. The two rows
-    // share an email but differ in `userId` — that's the ownership
-    // separation backup enforces.
+    // Exactly one live row vault-wide. Owner is A (first claimer), NOT B.
     const allSubs = await t.withIdentity(bIdentity).query(api.subscriptions.queries.list, {})
-    expect(allSubs.map((s) => s.email).sort()).toEqual(['shared@example.com', 'shared@example.com'])
-    const owners = new Set(allSubs.map((s) => s.userId))
-    expect(owners).toEqual(new Set([seeded.userId, bUserId]))
+    expect(allSubs.filter((s) => s.email === 'shared@example.com')).toHaveLength(1)
+    const revived = allSubs.find((s) => s.email === 'shared@example.com')
+    if (!revived) throw new Error('expected revived row')
+    expect(revived.userId).toBe(seeded.userId)
+    expect(revived.userId).not.toBe(bUserId)
+
+    // pullForSwitch must work on the revived sub (B can now use it).
+    const pulled = await t.withIdentity(bIdentity).action(api.subscriptions.actions.pullForSwitch, {
+      slotOrEmail: 'shared@example.com',
+    })
+    expect(pulled.plaintextBlob.length).toBeGreaterThan(0)
 
     // Sanity: A's view matches B's view (shared vault).
     const fromA = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})

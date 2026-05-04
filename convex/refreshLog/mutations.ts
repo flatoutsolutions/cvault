@@ -10,12 +10,13 @@
  *
  * DEDUPE: `reloginRequired` rows for the same subscription are silently
  * collapsed when the prior `reloginRequired` for that sub landed within
- * `RELOGIN_DEDUPE_WINDOW_MS`. The motivating bug had `findExpiringSubs`
- * keep selecting RT-dead subs, generating identical `reloginRequired`
- * rows every cron tick. The upstream fix (exclude RT-dead subs from the
- * scan) prevents that pattern, and the in-action short-circuit catches
- * any caller who bypasses the cron filter; this dedupe is the last line
- * of defense if a future caller bypasses both.
+ * `RELOGIN_DEDUPE_WINDOW_MS`. The motivating bug was the
+ * `refreshExpiringTokens` cron repeatedly hitting Anthropic against
+ * RT-dead subs and generating identical `reloginRequired` rows every
+ * tick. The cron itself was removed in v1 (audit fix #5); this dedupe
+ * is the last line of defense for any direct CLI caller (`cvault
+ * refresh`) or future code path that bypasses the in-action
+ * `refreshExpiresAt` short-circuit.
  *
  * `failure` and `success` rows are NEVER deduped — they are meaningful
  * per-attempt and the dashboard's audit feed needs every one.
@@ -30,7 +31,7 @@ export const insert = internalMutation({
   args: {
     userId: v.id('users'),
     subscriptionId: v.id('subscriptions'),
-    triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
+    triggeredBy: v.union(v.literal('manual'), v.literal('onUse')),
     outcome: v.union(v.literal('success'), v.literal('failure'), v.literal('reloginRequired')),
     error: v.optional(v.string()),
     at: v.number(),

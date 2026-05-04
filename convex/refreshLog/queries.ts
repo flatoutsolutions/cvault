@@ -23,7 +23,7 @@ const refreshLogRowValidator = v.object({
   _creationTime: v.number(),
   userId: v.id('users'),
   subscriptionId: v.id('subscriptions'),
-  triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
+  triggeredBy: v.union(v.literal('manual'), v.literal('onUse')),
   outcome: v.union(v.literal('success'), v.literal('failure'), v.literal('reloginRequired')),
   error: v.optional(v.string()),
   at: v.number(),
@@ -31,7 +31,7 @@ const refreshLogRowValidator = v.object({
 
 /**
  * Refresh history for `/dashboard/audit`. Cursor-paginated — `refreshLog`
- * gets one row per attempt (manual + cron + on-use), so the table
+ * gets one row per attempt (manual + on-use), so the table
  * accumulates rows fast and an unpaginated read would silently truncate.
  *
  * Vault-wide: returns rows from every user's refresh attempts, newest

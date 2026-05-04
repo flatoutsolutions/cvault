@@ -267,7 +267,7 @@ describe('subscriptions.queries.getStatus', () => {
         await ctx.db.insert('refreshLog', {
           userId: inserted.userId,
           subscriptionId: inserted.subId,
-          triggeredBy: 'cron',
+          triggeredBy: 'manual',
           outcome: i === 4 ? 'failure' : 'success',
           at: baseAt + i * 60 * 1000,
         })

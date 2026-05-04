@@ -2,9 +2,11 @@ import type { UserJSON } from '@clerk/backend'
 import { type Validator, v } from 'convex/values'
 
 import { type QueryCtx, internalMutation, internalQuery, query } from '../_generated/server'
+import { userRowValidator } from './schema'
 
 export const current = query({
   args: {},
+  returns: v.union(userRowValidator, v.null()),
   handler: async (ctx) => {
     return await getCurrentUser(ctx)
   },

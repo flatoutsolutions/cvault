@@ -556,7 +556,7 @@ export const requestRefresh = authenticatedAction({
 export const refreshOAuthToken = internalAction({
   args: {
     subId: v.id('subscriptions'),
-    triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
+    triggeredBy: v.union(v.literal('manual'), v.literal('onUse')),
     /**
      * When `true`, skip the M1 lease-winner re-check — the user
      * explicitly asked for a rotation regardless of whether the row
@@ -602,18 +602,16 @@ export const refreshOAuthToken = internalAction({
     // Two post-lease re-checks share one read. Both decisions need the
     // freshest row; doing them in one query halves the read.
     //
-    // 1. Cron spam guard (defense-in-depth): the cron's `findExpiringSubs`
-    //    already excludes RT-dead subs from the scan, but a manual
-    //    `cvault refresh` or any future caller could still arrive here
-    //    with a sub whose `refreshExpiresAt <= now` (Anthropic already
-    //    told us the RT is dead via a prior `invalid_grant`). Re-driving
-    //    Anthropic in that state would just earn another `invalid_grant`
-    //    and a duplicate `reloginRequired` log row. Drop the lease and
-    //    exit silently — the original `reloginRequired` row from the
-    //    refresh that first marked this sub dead is enough; further rows
-    //    are noise. This check runs regardless of `force` because no
-    //    value of `--force` makes Anthropic accept a dead RT; the only
-    //    recovery is `cvault add` to re-capture a fresh blob.
+    // 1. RT-dead spam guard: a manual `cvault refresh` or pull-on-use
+    //    caller could arrive here with a sub whose `refreshExpiresAt
+    //    <= now` (Anthropic already told us the RT is dead via a prior
+    //    `invalid_grant`). Re-driving Anthropic in that state would just
+    //    earn another `invalid_grant` and a duplicate `reloginRequired`
+    //    log row. Drop the lease and exit silently — the original
+    //    `reloginRequired` row is enough; further rows are noise. This
+    //    check runs regardless of `force` because no value of `--force`
+    //    makes Anthropic accept a dead RT; the only recovery is
+    //    `cvault add` to re-capture a fresh blob.
     //
     // 2. M1 (race protection): two callers can each independently decide
     //    "needs refresh" against stale reads; the loser then acquires the

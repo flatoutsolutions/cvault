@@ -380,6 +380,52 @@ describe('runRefresh', () => {
   })
 })
 
+// When `withFileLock` throws — typically `proper-lockfile`'s ELOCKED
+// after exhausting retries because a peer cvault or Claude Code
+// process is holding the same `~/.claude.lock` companion — the user
+// sees the raw `[object Error]` / "ELOCKED" message. The fix wraps
+// that throw in a friendlier message that names the likely cause
+// ("another cvault or claude process is using the keychain") and
+// suggests a remediation ("try again in a few seconds").
+describe('runRefresh lock acquisition failure UX', () => {
+  it('translates ELOCKED from withFileLock into a friendly actionable error', async () => {
+    vi.mocked(readCredentials).mockReturnValue(SAMPLE_LOCAL_BLOB)
+    vi.mocked(makeVaultClient).mockResolvedValue({
+      query: vi.fn(),
+      action: vi.fn(),
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
+
+    // Simulate proper-lockfile giving up on lock acquisition.
+    const elocked = Object.assign(new Error('Lock file is already being held'), { code: 'ELOCKED' })
+    vi.mocked(withFileLock).mockRejectedValueOnce(elocked)
+
+    await expect(runRefresh({ slot: 1 })).rejects.toThrow(
+      /unable to acquire credentials lock|another cvault|try again in a few seconds/i
+    )
+  })
+
+  it('rethrows non-lock errors verbatim (no spurious "lock" wrap)', async () => {
+    vi.mocked(readCredentials).mockReturnValue(SAMPLE_LOCAL_BLOB)
+    vi.mocked(makeVaultClient).mockResolvedValue({
+      query: vi.fn(),
+      action: vi.fn(),
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
+
+    // A non-lock failure (e.g. an internal bug in the locked body)
+    // must NOT be re-skinned as a lock error — that would mask real
+    // failures.
+    vi.mocked(withFileLock).mockRejectedValueOnce(new Error('something completely unrelated boom'))
+
+    await expect(runRefresh({ slot: 1 })).rejects.toThrow(/something completely unrelated boom/)
+  })
+})
+
 describe('refreshCommand argument parsing', () => {
   it('S4: rejects non-numeric --slot with a clean error before invoking runRefresh', async () => {
     // citty handlers receive `args` already shape-validated by the
@@ -397,7 +443,34 @@ describe('refreshCommand argument parsing', () => {
       rawArgs: [],
       data: undefined,
     } as unknown as RunArg
-    await expect(refreshCommand.run!(fakeCtx)).rejects.toThrow(/--slot.*number|got foo/i)
+    await expect(refreshCommand.run!(fakeCtx)).rejects.toThrow(/positive integer/i)
+  })
+
+  // The prior parse-int guard accepted negative and zero values
+  // (`Number.isNaN(parsed)` was the only check). The Convex backend
+  // would then reject the call with a confusing downstream error;
+  // worse, the command had already constructed the convex client and
+  // burned a network round trip. Validating up front with a single
+  // unified "must be a positive integer" message means the user sees
+  // one consistent error AND we avoid the makeVaultClient cost.
+  it.each([
+    ['0', /positive integer/i],
+    ['-1', /positive integer/i],
+    ['-42', /positive integer/i],
+    ['abc', /positive integer/i],
+  ])('rejects --slot %s with an actionable error before constructing the convex client', async (input, pattern) => {
+    const { refreshCommand } = await import('../../src/commands/refresh')
+    type RunArg = Parameters<NonNullable<typeof refreshCommand.run>>[0]
+    const fakeCtx = {
+      args: { slot: input, force: false, all: false },
+      cmd: refreshCommand,
+      rawArgs: [],
+      data: undefined,
+    } as unknown as RunArg
+
+    await expect(refreshCommand.run!(fakeCtx)).rejects.toThrow(pattern)
+    // No network — the convex client must NOT have been constructed.
+    expect(makeVaultClient).not.toHaveBeenCalled()
   })
 })
 

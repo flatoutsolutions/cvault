@@ -41,7 +41,45 @@ export const clerkUsersWebhook = httpAction(async (ctx, request) => {
     }
 
     case 'user.deleted': {
-      const clerkUserId = event.data.id!
+      // Clerk's `user.deleted` payload should always carry `data.id`, but
+      // a malformed/forged Svix-passing payload could omit it. Per
+      // project rule (no `!`, no `as any`): check + drop on missing.
+      // Returning 200 means Svix won't retry — bad payloads are not
+      // recoverable by retry, and looping on them is worse than dropping.
+      const clerkUserId = event.data.id
+      if (clerkUserId == null) {
+        console.error(`clerk webhook: user.deleted event missing data.id — dropping payload`)
+        return new Response(null, { status: 200 })
+      }
+      // Capture the users row BEFORE the delete so the audit row's
+      // `userId` foreign key still resolves. Convex doesn't enforce FK
+      // constraints, but recording the actual id (rather than a
+      // sentinel) keeps the dashboard's per-user activity view coherent
+      // for the deleted account.
+      //
+      // Order: capture → audit → delete. The audit row is written while
+      // the user row still exists, so the FK target is valid at write
+      // time. After the subsequent delete the FK is dangling, which is
+      // standard audit-log semantics (the record of "this user was
+      // removed" survives the user). The pre-fix order (delete first,
+      // then audit) wrote the FK after its target had been removed —
+      // functionally equivalent given Convex's lack of FK enforcement,
+      // but the new order documents intent more clearly.
+      const userRow = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
+        externalId: clerkUserId,
+      })
+      // Skip audit when there is no users row — domain-gate may have
+      // already cleared an orphan during the create path; emitting an
+      // audit row with a null userId would violate the schema validator.
+      if (userRow !== null) {
+        await ctx.runMutation(internal.machineActivity.mutations.record, {
+          userId: userRow,
+          // Sentinel — webhook events have no associated CLI session.
+          clerkSessionId: 'webhook',
+          action: 'remove',
+          at: Date.now(),
+        })
+      }
       await ctx.runMutation(internal.users.actions.remove, { clerkUserId })
       break
     }
