@@ -6,35 +6,46 @@ import { api } from '../_generated/api'
 /**
  * Spec: §4 (schema) + §5 (queries) + §11 (testing) + §12 (security).
  *
- * Contract under test:
- * - listForUser returns the caller's subs only (user isolation)
- * - removed (soft-deleted) subs are excluded
- * - results are sorted by slot ascending (so the UI can render slots stably)
- * - ciphertext + nonce are stripped from the response (defense-in-depth: never
- *   leak encrypted blobs over the public query channel)
- * - unauthenticated callers get an error
+ * Architectural intent: cvault is a shared vault. Per
+ * `convex/utils/users.ts:3-7`:
+ *
+ *   "Any authenticated Clerk identity (= you) reads/writes the same vault
+ *    can read/write any row."
+ *
+ * That means read queries MUST NOT scope by `userId`. The contract under
+ * test:
+ *  - `list` returns every non-removed sub regardless of which user wrote
+ *    it, sorted by `_creationTime` ASC (first-come-first-serve).
+ *  - `getMetaByEmail` looks up by email globally; any authed caller can
+ *    resolve any sub.
+ *  - Soft-removed subs are excluded.
+ *  - Ciphertext / nonce / keyVersion are stripped from every wire shape.
+ *  - Unauthenticated callers are rejected.
+ *  - `listForUser` is preserved as a thin alias for `list` so the prod CLI
+ *    0.1.6 binary keeps working until the next major bump.
  */
 
-describe('subscriptions.queries.listForUser', () => {
+describe('subscriptions.queries.list', () => {
   it('throws when the caller is not authenticated', async () => {
     const t = vault()
-    await expect(t.query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(/authenticated/i)
+    await expect(t.query(api.subscriptions.queries.list, {})).rejects.toThrow(/authenticated/i)
   })
 
-  it('returns an empty array when the authenticated user has no subs', async () => {
+  it('returns an empty array when the vault has no subs', async () => {
     const t = vault()
     await seedUser(t)
 
-    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})
     expect(result).toEqual([])
   })
 
-  it("returns only the caller's subscriptions, not other users'", async () => {
+  it('returns subs across all users — shared vault visibility', async () => {
     const t = vault()
     const aliceId = await seedUser(t, TEST_IDENTITY)
     const bobId = await seedUser(t, SECOND_IDENTITY)
 
     await t.run(async (ctx) => {
+      // Inserted in this order so `_creationTime` ASC = [alice, bob].
       await ctx.db.insert('subscriptions', {
         userId: aliceId,
         email: 'alice-sub@example.com',
@@ -59,23 +70,24 @@ describe('subscriptions.queries.listForUser', () => {
       })
     })
 
-    const aliceResult = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
-    expect(aliceResult).toHaveLength(1)
-    expect(aliceResult[0]?.email).toBe('alice-sub@example.com')
+    const aliceResult = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})
+    const bobResult = await t.withIdentity(SECOND_IDENTITY).query(api.subscriptions.queries.list, {})
 
-    const bobResult = await t.withIdentity(SECOND_IDENTITY).query(api.subscriptions.queries.listForUser, {})
-    expect(bobResult).toHaveLength(1)
-    expect(bobResult[0]?.email).toBe('bob-sub@example.com')
+    // Both users see the same set.
+    expect(aliceResult.map((s) => s.email)).toEqual(['alice-sub@example.com', 'bob-sub@example.com'])
+    expect(bobResult.map((s) => s.email)).toEqual(['alice-sub@example.com', 'bob-sub@example.com'])
   })
 
-  it('excludes subscriptions that have been soft-removed', async () => {
+  it('excludes soft-removed subs across users', async () => {
     const t = vault()
-    const aliceId = await seedUser(t)
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
 
     await t.run(async (ctx) => {
+      // Alice: 1 live + 1 removed. Bob: 1 live. Carol: nothing.
       await ctx.db.insert('subscriptions', {
         userId: aliceId,
-        email: 'live@example.com',
+        email: 'alice-live@example.com',
         slot: 1,
         ciphertext: new ArrayBuffer(8),
         nonce: new ArrayBuffer(12),
@@ -86,7 +98,7 @@ describe('subscriptions.queries.listForUser', () => {
       })
       await ctx.db.insert('subscriptions', {
         userId: aliceId,
-        email: 'gone@example.com',
+        email: 'alice-gone@example.com',
         slot: 2,
         ciphertext: new ArrayBuffer(8),
         nonce: new ArrayBuffer(12),
@@ -96,35 +108,68 @@ describe('subscriptions.queries.listForUser', () => {
         lastRefreshedAt: Date.now(),
         removedAt: Date.now(),
       })
+      await ctx.db.insert('subscriptions', {
+        userId: bobId,
+        email: 'bob-live@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
     })
 
-    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
-    expect(result.map((s) => s.email)).toEqual(['live@example.com'])
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})
+    expect(result.map((s) => s.email)).toEqual(['alice-live@example.com', 'bob-live@example.com'])
   })
 
-  it('returns subs sorted by slot ascending', async () => {
+  it('returns subs sorted by _creationTime ASC (first-come-first-serve)', async () => {
     const t = vault()
-    const aliceId = await seedUser(t)
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
 
     await t.run(async (ctx) => {
-      // Insert out of order to confirm the query (not insertion order) sorts.
-      for (const slot of [3, 1, 2]) {
-        await ctx.db.insert('subscriptions', {
-          userId: aliceId,
-          email: `slot${slot.toString()}@example.com`,
-          slot,
-          ciphertext: new ArrayBuffer(8),
-          nonce: new ArrayBuffer(12),
-          expiresAt: Date.now() + 60_000,
-          subscriptionType: 'max',
-          rateLimitTier: 'tier1',
-          lastRefreshedAt: Date.now(),
-        })
-      }
+      // Insert order = creation order. Bob's sub lands in the middle to
+      // exercise the cross-user sort path.
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'first@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+      await ctx.db.insert('subscriptions', {
+        userId: bobId,
+        email: 'second@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'third@example.com',
+        slot: 2,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
     })
 
-    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
-    expect(result.map((s) => s.slot)).toEqual([1, 2, 3])
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})
+    expect(result.map((s) => s.email)).toEqual(['first@example.com', 'second@example.com', 'third@example.com'])
   })
 
   it('strips ciphertext and nonce from the response payload', async () => {
@@ -145,7 +190,7 @@ describe('subscriptions.queries.listForUser', () => {
       })
     })
 
-    const [sub] = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
+    const [sub] = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})
     expect(sub).toBeDefined()
     expect(sub).not.toHaveProperty('ciphertext')
     expect(sub).not.toHaveProperty('nonce')
@@ -180,15 +225,178 @@ describe('subscriptions.queries.listForUser', () => {
       })
     })
 
-    const [sub] = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
+    const [sub] = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})
     expect(sub).toBeDefined()
-    // The bug: keyVersion leaked through, failing the returns validator.
     expect(sub).not.toHaveProperty('keyVersion')
-    // Defense-in-depth: confirm the existing strips still hold alongside it.
     expect(sub).not.toHaveProperty('ciphertext')
     expect(sub).not.toHaveProperty('nonce')
-    // Sanity: metadata that should be exposed is still present.
     expect(sub?.email).toBe('rotated@example.com')
     expect(sub?.slot).toBe(1)
+  })
+})
+
+describe('subscriptions.queries.listForUser (legacy alias)', () => {
+  // The shipped CLI 0.1.6 binary still calls `listForUser`. Keep the
+  // alias until the next CLI major so homebrew users on 0.1.5 / 0.1.6
+  // don't break.
+  it('mirrors `list` exactly — same shape, same cross-user visibility', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'alice@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+      await ctx.db.insert('subscriptions', {
+        userId: bobId,
+        email: 'bob@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    const aliasResult = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
+    const newResult = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})
+
+    expect(aliasResult.map((s) => s.email)).toEqual(['alice@example.com', 'bob@example.com'])
+    expect(aliasResult).toEqual(newResult)
+  })
+})
+
+describe('subscriptions.queries.getMetaByEmail', () => {
+  it('throws when the caller is not authenticated', async () => {
+    const t = vault()
+    await expect(t.query(api.subscriptions.queries.getMetaByEmail, { email: 'x@y.com' })).rejects.toThrow(
+      /authenticated/i
+    )
+  })
+
+  it('returns null when no sub matches the email anywhere in the vault', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getMetaByEmail, {
+      email: 'nobody@example.com',
+    })
+    expect(result).toBeNull()
+  })
+
+  it('resolves a sub written by another user — shared vault visibility', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'alice@flatout.solutions',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+      await ctx.db.insert('subscriptions', {
+        userId: bobId,
+        email: 'bob@flatout.solutions',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    // Alice looks up Bob's sub — this MUST resolve in shared mode.
+    const fromAlice = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getMetaByEmail, {
+      email: 'bob@flatout.solutions',
+    })
+    expect(fromAlice).not.toBeNull()
+    expect(fromAlice?.email).toBe('bob@flatout.solutions')
+
+    // Bob looks up the same row — same result.
+    const fromBob = await t.withIdentity(SECOND_IDENTITY).query(api.subscriptions.queries.getMetaByEmail, {
+      email: 'bob@flatout.solutions',
+    })
+    expect(fromBob?.email).toBe('bob@flatout.solutions')
+  })
+
+  it('lowercases the email lookup key (matches storage canonicalization)', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'casey@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getMetaByEmail, {
+      email: 'Casey@example.com',
+    })
+    expect(result?.email).toBe('casey@example.com')
+  })
+
+  it('skips removed rows and resolves the first live row instead', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'reused@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+        removedAt: Date.now(),
+      })
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'reused@example.com',
+        slot: 2,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getMetaByEmail, {
+      email: 'reused@example.com',
+    })
+    expect(result).not.toBeNull()
+    expect(result?.slot).toBe(2)
   })
 })

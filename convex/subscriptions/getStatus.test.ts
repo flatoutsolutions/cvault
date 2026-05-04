@@ -8,9 +8,23 @@
  * render an actionable hint (e.g. "Last machineActivity: switch on
  * macbook-2, 3 hours ago").
  *
+ * Architectural intent — shared vault. Per `convex/utils/users.ts:3-7`,
+ * any authenticated identity reads any sub. `getStatus` therefore takes
+ * either:
+ *   - `{ subId }` — the precise way; works across users.
+ *   - `{ slot }`  — legacy, ambiguous in shared mode (multiple users may
+ *                   have the same slot number). Disambiguates by lowest
+ *                   `_creationTime` (first-come-first-serve). Documented
+ *                   for the shipped CLI 0.1.6 binary; new clients should
+ *                   pass `subId`.
+ *
  * Behaviors covered:
  *  - throws when caller is not authenticated
- *  - throws NOT_FOUND when slot doesn't match a sub the caller owns
+ *  - subId mode: returns the sub for any caller (cross-user)
+ *  - subId mode: throws NOT_FOUND when the sub does not exist or is removed
+ *  - slot mode: returns the row with the lowest `_creationTime` when
+ *    multiple users have a row at that slot (FCFS disambiguation)
+ *  - slot mode: throws NOT_FOUND when no live row exists at that slot
  *  - returns the sub meta + last 3 refresh log entries (newest first)
  *  - returns empty refreshLog when no entries exist yet
  *  - returns the most recent machineActivity row for the sub
@@ -18,7 +32,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { SECOND_IDENTITY, TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api } from '../_generated/api'
 import { encrypt } from './crypto'
 
@@ -64,12 +78,99 @@ describe('subscriptions.queries.getStatus', () => {
     await expect(t.query(api.subscriptions.queries.getStatus, { slot: 1 })).rejects.toThrow(/authenticated/i)
   })
 
-  it('throws NOT_FOUND when slot does not match a sub the caller owns', async () => {
+  it('throws NOT_FOUND when slot does not match any live sub anywhere in the vault', async () => {
     const t = vault()
     await seedSub(t)
     await expect(
       t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getStatus, { slot: 99 })
     ).rejects.toThrow(/not.*found|no subscription/i)
+  })
+
+  it("subId mode: cross-user lookup — alice can read bob's sub", async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    const bobSubId = await t.run(async (ctx) => {
+      return await ctx.db.insert('subscriptions', {
+        userId: bobId,
+        email: 'bob@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+    void aliceId
+
+    const status = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getStatus, { subId: bobSubId })
+    expect(status.sub.email).toBe('bob@example.com')
+    expect(status.sub._id).toBe(bobSubId)
+  })
+
+  it('subId mode: throws NOT_FOUND when the sub is soft-removed', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    const subId = await t.run(async (ctx) => {
+      return await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'gone@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+        removedAt: Date.now(),
+      })
+    })
+
+    await expect(t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getStatus, { subId })).rejects.toThrow(
+      /not.*found|no subscription/i
+    )
+  })
+
+  it('slot mode: returns the lowest-_creationTime row when multiple users have rows at the same slot (FCFS)', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    // Insert order = creation order. Both at slot 1 — FCFS picks alice.
+    const aliceSubId = await t.run(async (ctx) => {
+      return await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'alice@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId: bobId,
+        email: 'bob@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    const status = await t.withIdentity(SECOND_IDENTITY).query(api.subscriptions.queries.getStatus, { slot: 1 })
+    expect(status.sub._id).toBe(aliceSubId)
+    expect(status.sub.email).toBe('alice@example.com')
   })
 
   it('returns sub meta with no refreshLog when none exists', async () => {
@@ -161,18 +262,11 @@ describe('subscriptions.queries.getStatus', () => {
       slot: inserted.slot,
     })
 
-    // Either undefined (omitted from validator) or null is fine — what
-    // matters is the field signals "no activity yet" so the CLI can omit
-    // the hint section.
     expect(status.lastMachineActivity ?? null).toBeNull()
   })
 
   // M4 regression: a high-churn sub A's activity rows must not push sub B's
-  // most recent row out of the lookup window. The previous implementation
-  // took the user's 50 most-recent rows and then filtered to subId — for
-  // a heavy sub A, sub B's recent activity could fall outside the take(50)
-  // window and silently appear as null. The fix is a composite
-  // (subscriptionId, at) index used directly.
+  // most recent row out of the lookup window.
   it("M4: finds sub B's most recent activity even when sub A has 100+ recent rows", async () => {
     const t = vault()
     const subA = await seedSub(t)
@@ -197,10 +291,6 @@ describe('subscriptions.queries.getStatus', () => {
       rateLimitTier: 'tier1',
     })
 
-    // Seed an OLD machineActivity row for sub B and 100 NEW rows for sub A.
-    // With the old `take(50).find(...)` approach, sub B's row would be
-    // pushed out of the 50-row window. The composite index lookup must
-    // still find it.
     await t.run(async (ctx) => {
       const subBAt = Date.now() - 24 * 60 * 60 * 1000
       await ctx.db.insert('machineActivity', {
@@ -226,8 +316,6 @@ describe('subscriptions.queries.getStatus', () => {
       slot: subB.slot,
     })
 
-    // Sub B's old row MUST be found — even with 100 newer sub A rows
-    // crowding the user's recent-activity timeline.
     expect(status.lastMachineActivity).not.toBeNull()
     expect(status.lastMachineActivity?.action).toBe('switch')
     expect(status.lastMachineActivity?.clerkSessionId).toBe('sess_B_old')
