@@ -19,3 +19,9 @@ export const refreshLogSchema = defineTable({
 })
   .index('bySubscriptionAndAt', ['subscriptionId', 'at'])
   .index('byUserAndAt', ['userId', 'at'])
+  // Global by-time index — backs `queries.recentForUser`, which under the
+  // shared-vault contract (`convex/utils/users.ts:3-7`) returns refresh
+  // attempts across ALL users, not just the caller's. `byUserAndAt` is
+  // retained for any future per-user drilldown but is no longer used by
+  // the unscoped recent feed. Adding an index is zero-downtime.
+  .index('byAt', ['at'])
