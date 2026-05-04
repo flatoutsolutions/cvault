@@ -29,7 +29,7 @@ export type AuditActivityRow = {
   id: string
   at: number
   subEmail: string | undefined
-  action: 'switch' | 'add' | 'pull' | 'remove' | 'refresh' | 'rename' | 'login'
+  action: 'switch' | 'add' | 'pull' | 'remove' | 'refresh' | 'rename' | 'login' | 'export' | 'import'
   ipHash: string | undefined
   clerkSessionId: string
 }
