@@ -84,9 +84,14 @@ export function SubscriptionCard({
           <CardTitle className="truncate text-base">{sub.label ?? sub.email}</CardTitle>
           <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
             {sub.label && <span className="truncate">{sub.email}</span>}
-            <Badge variant="outline" className="font-mono">
-              slot {sub.slot}
-            </Badge>
+            {/*
+             * No `slot` chip here. cvault is a shared vault: every user's
+             * first sub stores slot=1 in their own keychain (per
+             * convex/utils/users.ts), so a global `slot N` chip is
+             * meaningless and confusing on the dashboard. The `slot`
+             * field still ships in the payload — CLI 0.1.6 reads it for
+             * `cvault list` rendering — only the visual chip is gone.
+             */}
             <Badge variant="secondary">{sub.subscriptionType}</Badge>
           </div>
         </div>

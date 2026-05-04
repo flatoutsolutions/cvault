@@ -42,7 +42,13 @@ function makeSub(overrides: Partial<SubscriptionMeta> = {}): SubscriptionMeta {
 }
 
 describe('SubscriptionCard', () => {
-  it('renders the email, slot, and subscription type', () => {
+  it('renders the email and subscription type without a slot chip (shared vault — slot is per-user, meaningless globally)', () => {
+    // cvault is a shared vault: every authenticated user's first sub has
+    // slot=1 in their own keychain, so two users' cards both labelled
+    // "slot 1" on the dashboard is confusing. Slot is a CLI-local
+    // concept — the web dashboard identifies subs by email instead.
+    // The `slot` field still ships in the payload (CLI 0.1.6 reads it
+    // for `cvault list`); only the visual chip is gone.
     render(
       <SubscriptionCard
         sub={makeSub({ email: 'alice@example.com', slot: 3, subscriptionType: 'max' })}
@@ -54,7 +60,7 @@ describe('SubscriptionCard', () => {
       />
     )
     expect(screen.getByText('alice@example.com')).toBeTruthy()
-    expect(screen.getByText(/slot 3/i)).toBeTruthy()
+    expect(screen.queryByText(/slot/i)).toBeNull()
     expect(screen.getByText(/max/i)).toBeTruthy()
   })
 
