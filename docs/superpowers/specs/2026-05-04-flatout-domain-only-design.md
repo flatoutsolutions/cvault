@@ -155,16 +155,37 @@ return await fn.handler(Object.assign(ctx, { identity }), args as Args)
 const domains = await loadAllowedDomainsFromAction(ctx)    // calls internalQuery
 ```
 
-`identity.email` comes from the Clerk JWT's `primary_email_address` claim (Clerk's `convex` JWT template includes it by default, but we document the requirement explicitly in `MANUAL_TESTING.md`). If the claim is missing the helper returns `false` and the call is rejected — that's the correct safe-default.
+`identity.email` comes from the Clerk JWT's `email` claim. The browser/SSR flow uses Clerk's `convex` JWT template (configured to include `email`) and `ctx.auth.getUserIdentity()` reads it. The CLI flow is different — see §3.5 — and resolves email via BAPI. If the claim is missing in the convex-template path the helper returns `false` and the call is rejected — that's the correct safe-default. The convex-template requirement is documented explicitly in `MANUAL_TESTING.md`.
 
 This is the strict-server enforcement layer. Every authenticated function pays the cost of one indexed table read on `allowedEmailDomains` per call — Convex query latency is ~ms in-region, and the table will hold at most a few rows. No caching needed.
 
 ### 3.5 CLI mint flow (layer 4)
 
-`convex/cli/mintAction.ts::mintConvexJwt` already verifies the supplied Clerk session JWT via `@clerk/backend.verifyToken`. The verified payload contains `email` (or we read the user via BAPI `/v1/users/{id}` if the JWT template doesn't include it — but Clerk's session JWT does include `email` by default). We add the runtime-allowlist check:
+`convex/cli/mintAction.ts::mintConvexJwt` verifies the supplied Clerk session JWT via `@clerk/backend.verifyToken`, then resolves the caller's email and runs the runtime-allowlist check.
+
+**Important:** the CLI passes Clerk's _default session token_ (the `last_active_token.jwt` returned from `/v1/client/sign_ins`), NOT a custom JWT-template token. Per Clerk's session-token reference, the default session token's claims are only `azp, exp, iat, iss, jti, nbf, sub` — there is **no `email` claim**. (The `email` claim is something the `convex` JWT template adds for browser/SSR clients via `ctx.auth.getUserIdentity()`; it does not apply to the CLI's session-token path.)
+
+So the gate has two paths:
+
+1. If `payload.email` is present (browser/SSR clients calling this action with a template token), trust the JWKS-verified claim.
+2. Otherwise (CLI session-token path), call BAPI `users.getUser(payload.sub)` and read `primaryEmailAddress.emailAddress`. `payload.sub` is JWKS-verified, so this is an authenticated lookup of the user the caller already proved they are — not a trust-the-input situation.
 
 ```ts
-const email = typeof payload.email === 'string' ? payload.email : null
+let email: string | null = null
+if (typeof payload.email === 'string' && payload.email.length > 0) {
+  email = payload.email
+} else {
+  const clerk = getClerkBackendClient({ secretKey })
+  try {
+    const user = await clerk.users.getUser(payload.sub)
+    email = user.primaryEmailAddress?.emailAddress ?? null
+  } catch (err) {
+    throw new ConvexError({
+      code: 'CLERK_BACKEND_ERROR',
+      message: `BAPI getUser failed while resolving session email: ${err instanceof Error ? err.message : String(err)}`,
+    })
+  }
+}
 const domains = await loadAllowedDomainsFromAction(ctx)
 if (!isAllowedEmail(email, domains)) {
   throw new ConvexError({
@@ -173,6 +194,8 @@ if (!isAllowedEmail(email, domains)) {
   })
 }
 ```
+
+The `getClerkBackendClient` factory in `convex/cli/clerk.ts` is a separate test seam from `__setClerkFetch`, because `createClerkClient` from `@clerk/backend` uses its own internal request layer that the fetch hook does not reach.
 
 `convex/cli/httpMint.ts::cliMintHandler` maps `EMAIL_DOMAIN_NOT_ALLOWED` → HTTP 403.
 

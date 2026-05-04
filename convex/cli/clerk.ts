@@ -10,6 +10,7 @@
  *
  * Reference: docs/research/clerk-convex-tanstack-integration.md §4.
  */
+import { type ClerkClient, type ClerkOptions, createClerkClient } from '@clerk/backend'
 import { ConvexError } from 'convex/values'
 
 const CLERK_API_BASE = 'https://api.clerk.com'
@@ -22,6 +23,27 @@ export function __setClerkFetch(stub: typeof fetch | undefined): void {
 
 function activeFetch(): typeof fetch {
   return _fetch ?? fetch
+}
+
+/**
+ * Factory for the @clerk/backend ClerkClient. We need a *separate*
+ * injection point from `__setClerkFetch` because `createClerkClient`
+ * uses its own internal request layer — `_fetch` does not reach it.
+ *
+ * Production: defaults to `createClerkClient` directly.
+ * Tests: replace via `__setClerkBackendClientFactory(() => fakeClient)`
+ * to drive `users.getUser` etc. without going to api.clerk.com.
+ */
+export type ClerkBackendClientFactory = (options: ClerkOptions) => ClerkClient
+
+let _clerkBackendClientFactory: ClerkBackendClientFactory | undefined
+
+export function __setClerkBackendClientFactory(stub: ClerkBackendClientFactory | undefined): void {
+  _clerkBackendClientFactory = stub
+}
+
+export function getClerkBackendClient(options: ClerkOptions): ClerkClient {
+  return (_clerkBackendClientFactory ?? createClerkClient)(options)
 }
 
 function loadSecretKey(): string {
