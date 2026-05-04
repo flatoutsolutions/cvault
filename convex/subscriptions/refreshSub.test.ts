@@ -100,7 +100,7 @@ describe('subscriptions.actions.refreshSub', () => {
     await expect(t.action(api.subscriptions.actions.refreshSub, { slot: 1 })).rejects.toThrow(/authenticated/i)
   })
 
-  it('throws NOT_FOUND when slot does not match a sub the caller owns', async () => {
+  it('throws NOT_FOUND when slot does not match any sub in the shared vault', async () => {
     const t = vault()
     await seedSub(t, { expiresAt: Date.now() + 60 * 60 * 1000, rtSuffix: 'V1' })
     await expect(
@@ -330,10 +330,18 @@ describe('subscriptions.actions.refreshSub', () => {
     expect(recovered).toContain('GOOD')
   })
 
-  it('rejects refreshSub when the caller does not own the sub', async () => {
+  /**
+   * Shared-vault contract (`convex/utils/users.ts:3-7`): every authed
+   * allowed-domain caller resolves any sub. Pre-hotfix, the slot lookup
+   * was scoped to the caller's user; under shared-vault the slot scan is
+   * global (FCFS by `_creationTime`), so bob's `refreshSub({ slot: 1 })`
+   * correctly resolves alice's sub. The audit row captures bob as the
+   * acting identity, preserving accountability.
+   */
+  it('refreshSub resolves any sub by slot regardless of caller (shared vault)', async () => {
     const t = vault()
-    const inserted = await seedSub(t, { expiresAt: Date.now() + 60 * 60 * 1000, rtSuffix: 'OWNER' })
-    void inserted
+    const expiresAt = Date.now() + 60 * 60 * 1000
+    const inserted = await seedSub(t, { expiresAt, rtSuffix: 'OWNER' })
 
     const bob = {
       subject: 'user_test_bob',
@@ -351,13 +359,24 @@ describe('subscriptions.actions.refreshSub', () => {
       })
     })
 
-    // Bob's slot 1 doesn't exist either, so the action must not return
-    // Alice's row even though the slot number matches.
-    await expect(t.withIdentity(bob).action(api.subscriptions.actions.refreshSub, { slot: 1 })).rejects.toThrow(
-      /not.*found|no subscription/i
-    )
+    // localState matches alice's seeded plaintext, so the action takes
+    // the inSync branch (no Anthropic refresh required).
+    const localState = makePlaintextBlob({ expiresAt, rtSuffix: 'OWNER' })
 
-    // Suppress unused import warnings; internal isn't referenced here.
+    const result = await t.withIdentity(bob).action(api.subscriptions.actions.refreshSub, {
+      slot: inserted.slot,
+      localState,
+    })
+
+    expect(result.action).toBe('inSync')
+    expect(result.slot).toBe(inserted.slot)
+
+    // Audit row points at alice's sub.
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const refreshRow = rows.find((r) => r.action === 'refresh')
+    expect(refreshRow?.subscriptionId).toEqual(inserted.subId)
+
+    // Suppress unused-import warning; `internal` isn't referenced here.
     void internal
   })
 

@@ -6,7 +6,9 @@
  * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §5.
  *
  * `triggerKeyRotation` is the user-facing entrypoint. It:
- *   1. Resolves the caller's user.
+ *   1. Resolves the caller's user (used as the audit-row `userId` AND as
+ *      the `keyRotationJobs.userId` ownership stamp; the WORK is vault-wide
+ *      regardless of who triggered it — see `listSubsForRotation`).
  *   2. Asks `insertJob` to either return an existing pending/running
  *      job's id (A2: atomic existence check) or insert a fresh one.
  *   3. If a fresh job, schedules `rotateAllSubscriptions`.
@@ -17,6 +19,14 @@
  * under the current key, and patches via `patchRotatedRow`. Per-row
  * exceptions increment the job's `errorCount` so the rotation can complete
  * even if a few rows have stale ciphertexts.
+ *
+ * Vault-wide rotation: under shared-vault doctrine
+ * (`convex/utils/users.ts:3-7`) there is ONE master AES key encrypting
+ * every row, so a rotation is necessarily vault-wide. Any authed
+ * allowlisted email triggering a rotate re-encrypts every co-tenant's
+ * rows. The `keyRotationJobs.userId` column on the job row records who
+ * KICKED OFF the rotation (for the dashboard's progress UI and the
+ * `machineActivity` audit row); the WORK touches every active sub.
  */
 import { ConvexError, v } from 'convex/values'
 
@@ -60,8 +70,9 @@ export const triggerKeyRotation = authenticatedAction({
     }
 
     const targetVersion = currentKeyVersion()
+    // Vault-wide: no userId arg — see `listSubsForRotation` for the
+    // shared-vault rationale.
     const subs = await ctx.runQuery(internal.subscriptions.internalReads.listSubsForRotation, {
-      userId,
       targetVersion,
     })
 
@@ -71,7 +82,8 @@ export const triggerKeyRotation = authenticatedAction({
       toVersion: targetVersion,
     })
 
-    // Audit row (A6): every rotation trigger leaves a row.
+    // Audit row (A6): every rotation trigger leaves a row. userId is the
+    // ACTING caller's _id (already resolved via getIdByExternalId).
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId,
       clerkSessionId: resolveCallerSession(identity, clerkSessionId),
@@ -95,25 +107,29 @@ export const triggerKeyRotation = authenticatedAction({
 
     await ctx.runAction(internal.keyRotationJobs.actions.rotateAllSubscriptions, {
       jobId: insertResult.jobId,
-      userId,
       targetVersion,
     })
     return { jobId: insertResult.jobId, totalRows: subs.length, alreadyRunning: false }
   },
 })
 
+/**
+ * Vault-wide rotation worker. Iterates every active sub whose
+ * `keyVersion` differs from `targetVersion` and re-encrypts under the
+ * current master key. The `userId` arg was dropped when
+ * `listSubsForRotation` became vault-wide — there's no useful per-user
+ * partition for the work because all rows decrypt under the same key.
+ */
 export const rotateAllSubscriptions = internalAction({
   args: {
     jobId: v.id('keyRotationJobs'),
-    userId: v.id('users'),
     targetVersion: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, { jobId, userId, targetVersion }): Promise<null> => {
+  handler: async (ctx, { jobId, targetVersion }): Promise<null> => {
     await ctx.runMutation(internal.keyRotationJobs.mutations.markRunning, { jobId })
 
     const subs = await ctx.runQuery(internal.subscriptions.internalReads.listSubsForRotation, {
-      userId,
       targetVersion,
     })
 

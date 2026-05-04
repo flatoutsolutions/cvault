@@ -46,10 +46,15 @@ export const subscriptionsSchema = defineTable({
   .index('byUserAndSlot', ['userId', 'slot'])
   .index('byUserAndEmail', ['userId', 'email'])
   // Cross-user email lookup for the shared-vault read path. See
-  // `convex/utils/users.ts:3-7` — any authenticated identity reads any row,
-  // so `getMetaByEmail` resolves by email globally. The legacy
-  // `byUserAndEmail` index is retained because `internalReads` still uses
-  // (userId, email) keys for cron-path internal queries; index additions
-  // are zero-downtime, removals would need a migration commit.
+  // `convex/utils/users.ts:3-7` — any authenticated identity reads any
+  // row, so `getMetaByEmail` (queries.ts) and the internal
+  // `getSubscriptionBySlotOrEmail` (internalReads.ts) both resolve by
+  // email globally. The legacy `byUserAndEmail` index is retained
+  // because per-user paths still use it: `softRemove` / `rename` in
+  // mutations.ts (write-side ownership stamp). Key rotation
+  // (`listSubsForRotation`) and backup export (`listAllActiveSubsRaw`)
+  // are NOW vault-wide — they iterate all rows and don't use this
+  // index. Index additions are zero-downtime; removals would need a
+  // migration commit.
   .index('byEmail', ['email'])
   .index('byExpiry', ['expiresAt'])

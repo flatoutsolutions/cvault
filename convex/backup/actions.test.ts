@@ -60,11 +60,30 @@ describe('exportEncryptedBackup', () => {
     expect(rows.some((r) => r.action === 'export')).toBe(true)
   })
 
-  it('owner-scoped: bundle excludes other users subs', async () => {
+  /**
+   * Shared-vault doctrine (`convex/utils/users.ts:3-7`): the bundle is
+   * vault-wide. Pre-fix `listSubsForUserId` scoped the export to the
+   * caller's `users._id`, so alice's `cvault export` left bob's row
+   * outside the disaster-recovery archive — defeating the point of a
+   * shared vault. The corrected contract: export = "back up everything
+   * in the vault", because that's the only behavior consistent with the
+   * "any authed allowlisted email reads/writes any row" model.
+   *
+   * Operational implication (flagged to user): any authed allowlisted
+   * email can now export the FULL vault's encrypted bundle as a backup
+   * file. The bundle is still gated by:
+   *   1. The user's chosen passphrase (the per-account ciphertexts and
+   *      the bundle MAC are bound to it).
+   *   2. The server-side master key (decrypt happens server-side before
+   *      bundle re-encryption).
+   * But once exported, the bundle holds ALL co-tenants' rows. Sharing the
+   * passphrase with the wrong person leaks every co-tenant's tokens.
+   */
+  it('exports every active sub in the vault, not just the callers (shared vault)', async () => {
     const t = vault()
     await seedSubscription({ t, identity: TEST_IDENTITY, email: 'mine@example.com', expiresAt: 1 })
     // Seed a sub for a different identity. The export under TEST_IDENTITY
-    // must NOT include it.
+    // MUST include it under shared-vault doctrine.
     const other = {
       subject: 'user_other',
       issuer: 'i',
@@ -79,8 +98,9 @@ describe('exportEncryptedBackup', () => {
     })
     const json = Buffer.from(result.contentBase64, 'base64').toString('utf8')
     const bundle = parseBundle(json)
-    expect(bundle.accounts).toHaveLength(1)
-    expect(bundle.accounts[0]?.email).toBe('mine@example.com')
+    expect(bundle.accounts).toHaveLength(2)
+    const emails = bundle.accounts.map((a) => a.email).sort()
+    expect(emails).toEqual(['mine@example.com', 'theirs@example.com'])
   })
 })
 

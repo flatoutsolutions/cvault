@@ -144,9 +144,12 @@ export const exportEncryptedBackup = authenticatedAction({
       })
     }
 
-    const subs = await ctx.runQuery(internal.subscriptions.internalReads.listSubsForUserId, {
-      userId,
-    })
+    // Vault-wide export: per shared-vault doctrine
+    // (`convex/utils/users.ts:3-7`) the bundle holds every active sub in
+    // the vault, not just the caller's. The bundle is gated by the
+    // user's chosen passphrase + the server-side master key, but once
+    // exported it carries every co-tenant's encrypted rows.
+    const subs = await ctx.runQuery(internal.subscriptions.internalReads.listAllActiveSubsRaw, {})
 
     const salt = randomBytes(SALT_BYTES)
     const derivedKeys = deriveKeys(passphrase, salt)
@@ -273,12 +276,16 @@ export const importEncryptedBackup = authenticatedAction({
       }
 
       // A3 (refuse-overwrite): reject the import upfront if any of the
-      // bundle's emails already have a LIVE sub for this user. This avoids
-      // the silent-replace-of-current-credentials disaster path that
-      // upsertEncrypted's dedupe-by-(userId, email) would otherwise enable.
-      const existingLive = await ctx.runQuery(internal.subscriptions.internalReads.listSubsForUserId, {
-        userId,
-      })
+      // bundle's emails already have a LIVE sub anywhere in the vault.
+      // Under shared-vault doctrine the collision check is vault-wide
+      // because ANY co-tenant's row would be silently replaced/parallel-
+      // inserted on import — `upsertSub` dedupes by (userId, email) so a
+      // cross-tenant collision wouldn't actually overwrite, but it would
+      // create a duplicate row for the same email that the dashboard
+      // would render twice. Either disaster mode is bad enough to refuse
+      // the import upfront and force the user to soft-remove the
+      // colliding row first.
+      const existingLive = await ctx.runQuery(internal.subscriptions.internalReads.listAllActiveSubsRaw, {})
       const liveEmails = new Set(existingLive.map((s) => s.email.toLowerCase()))
       const collisions = bundle.accounts.map((a) => a.email.toLowerCase()).filter((e) => liveEmails.has(e))
       if (collisions.length > 0) {

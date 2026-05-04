@@ -41,60 +41,80 @@ export const getSubscriptionRaw = internalQuery({
 })
 
 /**
- * Look up a sub by either numeric slot or email, scoped to the actor's
- * Clerk subject. Used by `pullForSwitch` action.
+ * Look up a sub by either numeric slot or email. SHARED-VAULT semantics —
+ * any authenticated allowed-domain caller resolves any row (see
+ * `convex/utils/users.ts:3-7`). Authorization is enforced by the calling
+ * action's `authenticatedAction` wrapper (Clerk identity present + email
+ * on the `allowedEmailDomains` allowlist); this internal query has no
+ * additional access policy and DOES NOT scope by caller's `users._id`.
+ *
+ * Pre-hotfix this query took an `externalId` arg and scoped to the
+ * caller's user via `byUserAndSlot` / `byUserAndEmail`, which produced
+ * NOT_FOUND for `cvault sync --all` whenever the acting machine's owner
+ * differed from the sub's nominal owner. The contract was wrong; this
+ * is the corrected version.
+ *
+ * Email branch: index lookup via `byEmail` (lowercased to match the
+ * storage canonicalization in `mutations.ts:canonicalEmail`).
+ *
+ * Slot branch: rare path — the CLI normally uses email; only legacy
+ * `cvault switch <slot>` invocations end up here. Per the user's design
+ * ("locally any number, on the web FCFS"), the slot input is interpreted
+ * as a FCFS RANK ORDINAL on the global active table:
+ *   `1` = oldest non-removed sub by `_creationTime`
+ *   `2` = second-oldest, …
+ *   `N+1` = null (out of bounds)
+ *
+ * The stored `slot` column is per-user and ambiguous globally (two users'
+ * first subs both have stored slot=1), so matching against it produces
+ * the wrong answer cross-tenant — the bug behind `cvault switch 2` 404s
+ * in prod. The stored column is retained on the row only so shipped CLIs
+ * that print it in `cvault list` keep working; it is no longer used for
+ * lookups. `order('asc')` on the system `_creationTime` is the index
+ * ordering Convex defaults to when no `withIndex` is specified.
  */
-export const getSubscriptionForActor = internalQuery({
-  args: { externalId: v.string(), slotOrEmail: v.string() },
+export const getSubscriptionBySlotOrEmail = internalQuery({
+  args: { slotOrEmail: v.string() },
   returns: v.union(subscriptionRawValidator, v.null()),
-  handler: async (ctx, { externalId, slotOrEmail }) => {
-    // SECURITY: scope the lookup to the caller's user. The previous
-    // implementation matched on `slot=` / `email=` globally and would
-    // return another user's row if their slot or email collided.
-    // Using `byUserAndSlot` / `byUserAndEmail` indexes also keeps the
-    // read bounded to one user instead of scanning the whole table.
-    const user = await ctx.db
-      .query('users')
-      .withIndex('byExternalId', (q) => q.eq('externalId', externalId))
-      .unique()
-    if (!user) return null
-
+  handler: async (ctx, { slotOrEmail }) => {
     const asNum = Number.parseInt(slotOrEmail, 10)
     if (!Number.isNaN(asNum) && asNum.toString() === slotOrEmail) {
-      const subs = await ctx.db
-        .query('subscriptions')
-        .withIndex('byUserAndSlot', (q) => q.eq('userId', user._id).eq('slot', asNum))
-        .collect()
-      const sub = subs.find((s) => s.removedAt === undefined)
-      return sub ?? null
+      // FCFS rank-ordinal lookup. Filter to live rows first, then index
+      // into the resulting array. A naive `r.slot === asNum` match would
+      // match the per-user stored column, which is structurally wrong
+      // under shared-vault — see the function-level comment.
+      const live = (await ctx.db.query('subscriptions').order('asc').collect()).filter((r) => r.removedAt === undefined)
+      // Off-by-one note: the user-facing rank is 1-based; the array is
+      // 0-based. `live[asNum - 1]` returns undefined for asNum < 1 or
+      // asNum > live.length, both of which we surface as null.
+      if (asNum < 1) return null
+      return live[asNum - 1] ?? null
     }
 
-    // Email branch: lowercase the lookup key to match the storage
-    // canonicalization in `mutations.ts:upsertSub`. Without this,
-    // `cvault switch Stefan@x.com` would NOT_FOUND when the row was
-    // stored under `stefan@x.com`.
-    const sub = await ctx.db
+    const subs = await ctx.db
       .query('subscriptions')
-      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', slotOrEmail.toLowerCase()))
-      .unique()
-    return sub && sub.removedAt === undefined ? sub : null
+      .withIndex('byEmail', (q) => q.eq('email', slotOrEmail.toLowerCase()))
+      .collect()
+    const sub = subs.find((s) => s.removedAt === undefined)
+    return sub ?? null
   },
 })
 
-export const getSubscriptionByIdForActor = internalQuery({
-  args: { externalId: v.string(), subId: v.id('subscriptions') },
+/**
+ * Resolve a sub by id. SHARED-VAULT semantics — see
+ * `getSubscriptionBySlotOrEmail` above. The caller's `authenticatedAction`
+ * wrapper is the only access gate; this query intentionally has no
+ * ownership check.
+ *
+ * Returns `null` for soft-removed rows so callers don't have to filter
+ * `removedAt` themselves.
+ */
+export const getSubscriptionById = internalQuery({
+  args: { subId: v.id('subscriptions') },
   returns: v.union(subscriptionRawValidator, v.null()),
-  handler: async (ctx, { externalId, subId }) => {
-    // SECURITY: must verify caller owns the subscription. Without this
-    // check, any signed-in Clerk user could pass another user's `subId`
-    // to `requestRefresh` (or any caller of this query) and act on it —
-    // the deployment's CLERK_SECRET_KEY would be a confused deputy.
-    // Subscription IDs are not designed as unguessable secrets; they
-    // appear in dashboard URLs and audit rows.
+  handler: async (ctx, { subId }) => {
     const sub = await ctx.db.get('subscriptions', subId)
     if (!sub || sub.removedAt !== undefined) return null
-    const owner = await ctx.db.get('users', sub.userId)
-    if (!owner || owner.externalId !== externalId) return null
     return sub
   },
 })
@@ -169,34 +189,45 @@ export const listAllActiveSubIds = internalQuery({
  * Returns the full row (ciphertext + nonce + keyVersion) so the action
  * can decrypt without a second read.
  *
+ * Vault-wide: per the shared-vault model (`convex/utils/users.ts:3-7`),
+ * there is ONE master AES key encrypting every row. Rotating that key
+ * is therefore vault-wide by definition — there's no useful semantics
+ * for "rotate only my rows" because all rows decrypt under the same
+ * key. Pre-fix this query took a `userId` arg and scoped to that user's
+ * rows, which left other users' rows stuck on the prior key version
+ * (silently broken decrypt for the cron once the previous key was
+ * dropped from `VAULT_AES_KEY_PREVIOUS`). Caller in
+ * `keyRotationJobs/actions.ts` updated to stop passing the arg.
+ *
  * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §5.
  */
 export const listSubsForRotation = internalQuery({
-  args: { userId: v.id('users'), targetVersion: v.string() },
+  args: { targetVersion: v.string() },
   returns: v.array(subscriptionRawValidator),
-  handler: async (ctx, { userId, targetVersion }) => {
-    const rows = await ctx.db
-      .query('subscriptions')
-      .withIndex('byUserAndSlot', (q) => q.eq('userId', userId))
-      .collect()
+  handler: async (ctx, { targetVersion }) => {
+    const rows = await ctx.db.query('subscriptions').collect()
     return rows.filter((r) => r.removedAt === undefined && (r.keyVersion ?? 'v1') !== targetVersion)
   },
 })
 
 /**
- * Internal query returning every active sub for a user. Used by the
- * backup export action.
+ * Internal query returning every active sub in the vault. Used by the
+ * backup export action and the import-time collision check.
+ *
+ * Vault-wide: per the shared-vault model (`convex/utils/users.ts:3-7`),
+ * the backup bundle holds the entire vault. Pre-fix this query was named
+ * `listSubsForUserId` and scoped to the caller's `users._id`, so an
+ * `cvault export` from one co-tenant left the other co-tenants' rows
+ * outside the disaster-recovery archive — defeating the point of a
+ * shared vault. Renamed to make the new contract explicit.
  *
  * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §6.
  */
-export const listSubsForUserId = internalQuery({
-  args: { userId: v.id('users') },
+export const listAllActiveSubsRaw = internalQuery({
+  args: {},
   returns: v.array(subscriptionRawValidator),
-  handler: async (ctx, { userId }) => {
-    const rows = await ctx.db
-      .query('subscriptions')
-      .withIndex('byUserAndSlot', (q) => q.eq('userId', userId))
-      .collect()
+  handler: async (ctx) => {
+    const rows = await ctx.db.query('subscriptions').collect()
     return rows.filter((r) => r.removedAt === undefined)
   },
 })
