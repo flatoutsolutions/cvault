@@ -130,7 +130,15 @@ export function DomainsPage() {
         </div>
       )}
 
-      <Dialog open={pendingRemoveId !== null} onOpenChange={(o) => !o && setPendingRemoveId(null)}>
+      <Dialog
+        open={pendingRemoveId !== null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setPendingRemoveId(null)
+            setPendingRemoveDomain('')
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Remove allowed domain?</DialogTitle>

@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TEST_IDENTITY, vault } from '../__tests__/helpers'
 import { api, internal } from '../_generated/api'
+import type { Id } from '../_generated/dataModel'
 import { __setClerkFetch } from '../cli/clerk'
 
 const verifyTokenMock = vi.hoisted(() => vi.fn())
@@ -180,7 +181,7 @@ describe('scenario — runtime allowlist', () => {
 
   it('self-removal blocked when row matches caller domain', async () => {
     const t = vault()
-    let flatoutId: never
+    let flatoutId: Id<'allowedEmailDomains'> | undefined
     await t.run(async (ctx) => {
       await ctx.db.insert('users', {
         externalId: TEST_IDENTITY.subject,
@@ -188,11 +189,12 @@ describe('scenario — runtime allowlist', () => {
         primaryEmail: TEST_IDENTITY.email,
         otherEmails: [],
       })
-      flatoutId = (await ctx.db.insert('allowedEmailDomains', {
+      flatoutId = await ctx.db.insert('allowedEmailDomains', {
         domain: 'flatout.solutions',
         addedAtMs: 1,
-      })) as never
+      })
     })
+    expect(flatoutId).toBeDefined()
     await expect(
       t.withIdentity(TEST_IDENTITY).mutation(api.allowedDomains.mutations.remove, { id: flatoutId! })
     ).rejects.toThrow(/CANNOT_REMOVE_OWN_DOMAIN/i)

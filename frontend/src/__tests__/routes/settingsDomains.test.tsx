@@ -114,4 +114,26 @@ describe('DomainsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
     expect(await screen.findByText(/INVALID_DOMAIN/i)).not.toBeNull()
   })
+
+  it('surfaces server CANNOT_REMOVE_OWN_DOMAIN error inline when remove throws', async () => {
+    removeMock = vi.fn(() => {
+      throw new Error('CANNOT_REMOVE_OWN_DOMAIN: You cannot remove the domain that your own email belongs to.')
+    })
+    mockedUseMutation.mockImplementation((ref) => {
+      const name = refToName(ref)
+      if (name.includes('add')) return addMock as never
+      if (name.includes('remove')) return removeMock as never
+      return vi.fn() as never
+    })
+    // Render a non-self-domain row so the Remove button is enabled. The
+    // mocked remove still throws CANNOT_REMOVE_OWN_DOMAIN to exercise
+    // the inline error-display path the user would see if a server-side
+    // race made the row become a self-removal between query+click.
+    mockedUseQuery.mockReturnValue([{ _id: '1', domain: 'someotherdomain.com', addedAtMs: 1 }] as never)
+    render(<DomainsPage />)
+    fireEvent.click(screen.getByRole('button', { name: /remove someotherdomain\.com/i }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /confirm/i }))
+    expect(await screen.findByText(/CANNOT_REMOVE_OWN_DOMAIN/i)).not.toBeNull()
+  })
 })

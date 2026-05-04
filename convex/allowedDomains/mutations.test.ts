@@ -128,5 +128,19 @@ describe('allowedDomains.mutations', () => {
         t.withIdentity(multiAtIdentity).mutation(api.allowedDomains.mutations.remove, { id: flatoutRow!._id })
       ).rejects.toThrow(/CANNOT_REMOVE_OWN_DOMAIN/i)
     })
+
+    it('returns null (no-op) when id no longer exists — idempotent', async () => {
+      const t = vault()
+      await seedAlice(t)
+      const id = await t.run(
+        async (ctx) => await ctx.db.insert('allowedEmailDomains', { domain: 'gone.com', addedAtMs: 1 })
+      )
+      // Delete the row directly so the mutation hits the not-found branch.
+      await t.run(async (ctx) => {
+        await ctx.db.delete('allowedEmailDomains', id)
+      })
+      const result = await t.withIdentity(TEST_IDENTITY).mutation(api.allowedDomains.mutations.remove, { id })
+      expect(result).toBeNull()
+    })
   })
 })

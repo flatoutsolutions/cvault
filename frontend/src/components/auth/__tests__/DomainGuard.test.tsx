@@ -124,7 +124,7 @@ describe('DomainGuard', () => {
     expect(signOut).toHaveBeenCalledTimes(1)
   })
 
-  it('user with no primary email → blocked', () => {
+  it('user with no primary email → blocked page (not just empty render)', () => {
     mockedUseUser.mockReturnValue({
       isLoaded: true,
       isSignedIn: true,
@@ -138,5 +138,8 @@ describe('DomainGuard', () => {
       </DomainGuard>
     )
     expect(screen.queryByText('protected')).toBeNull()
+    // Confirm the blocked page is rendered, not just absence of protected
+    // child (catch a regression that returns null instead of the error UI).
+    expect(screen.getByText(/cvault is restricted/i)).not.toBeNull()
   })
 })
