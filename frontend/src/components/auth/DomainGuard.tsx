@@ -19,7 +19,7 @@ export function DomainGuard({ children }: { children: ReactNode }) {
 
   if (!isSignedIn) return <>{children}</>
 
-  const email = user?.primaryEmailAddress?.emailAddress ?? null
+  const email = user.primaryEmailAddress?.emailAddress ?? null
   if (isAllowedEmail(email, domains)) return <>{children}</>
 
   return <DomainBlocked onSignOut={() => void signOut()} email={email} domains={domains} />

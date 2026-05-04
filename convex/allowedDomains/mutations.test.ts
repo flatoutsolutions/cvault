@@ -31,7 +31,7 @@ describe('allowedDomains.mutations', () => {
         .withIdentity(TEST_IDENTITY)
         .mutation(api.allowedDomains.mutations.add, { domain: '  ACME.COM ' })
       expect(id).toBeDefined()
-      const row = await t.run(async (ctx) => await ctx.db.get(id))
+      const row = await t.run(async (ctx) => await ctx.db.get('allowedEmailDomains', id))
       expect(row?.domain).toBe('acme.com')
       expect(row?.addedByUserId).toBeDefined()
     })
