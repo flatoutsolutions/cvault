@@ -69,6 +69,24 @@ export function MachineRow({
     ? undefined
     : 'No live Clerk session — this row was written by a cron job or a CLI version that pre-dates the explicit session-id arg. Re-login from the affected machine to register a revocable session.'
 
+  // Primary label rules (in priority order):
+  //  - non-revocable + no label → "Server-side activity" so users can
+  //    distinguish "real machine that pre-dates the label feature" from
+  //    "non-revocable server-side row" (cron, server context, pre-fix CLI).
+  //    Regular weight + foreground color; "server-side" hint moves to the
+  //    secondary line.
+  //  - revocable + label → user-visible label, prominent.
+  //  - revocable + no label → italic "(no label)" placeholder so we never
+  //    expose the opaque sessionId as the primary identifier.
+  let primary: { text: string; className: string }
+  if (!revocable && machineLabel === undefined) {
+    primary = { text: 'Server-side activity', className: 'text-foreground truncate' }
+  } else if (machineLabel !== undefined) {
+    primary = { text: machineLabel, className: 'text-foreground truncate font-medium' }
+  } else {
+    primary = { text: '(no label)', className: 'text-muted-foreground italic' }
+  }
+
   return (
     <div
       data-slot="machine-row"
@@ -76,11 +94,7 @@ export function MachineRow({
       title={clerkSessionId}
     >
       <div className="flex min-w-0 flex-col">
-        {machineLabel !== undefined ? (
-          <span className="text-foreground truncate font-medium">{machineLabel}</span>
-        ) : (
-          <span className="text-muted-foreground italic">(no label)</span>
-        )}
+        <span className={primary.className}>{primary.text}</span>
         <span className="text-muted-foreground text-xs tabular-nums">
           {lastSeenText}
           {ipText !== undefined ? (

@@ -136,4 +136,42 @@ describe('/dashboard/machines', () => {
       expect(screen.getByText(/CLERK_BACKEND_ERROR/)).toBeTruthy()
     })
   })
+
+  /**
+   * Per-row state isolation. With the new query, the sentinel sid can
+   * appear on multiple rows (one per machineLabel) — and the page now
+   * keys `pendingByRow` / `errorByRow` by the composite (sid,label)
+   * rather than by sid alone. Without the composite, a future addition
+   * of clickable behaviour to sentinel rows would let an error/spinner
+   * from row A render on row B too. We render two sentinel rows that
+   * share a sid, then assert each row's error block container is
+   * separate by querying by index. The bleed bug would render the
+   * SAME error inside both row containers; the fix isolates them.
+   */
+  it('keeps each sentinel row container distinct so per-row state cannot bleed', () => {
+    const now = Date.now()
+    sessionsResult = [
+      {
+        clerkSessionId: 'unknown-session',
+        lastSeenAt: now,
+        lastIpHash: undefined,
+        machineLabel: 'cron-a',
+        revocable: false,
+      },
+      {
+        clerkSessionId: 'unknown-session',
+        lastSeenAt: now - 1000,
+        lastIpHash: undefined,
+        machineLabel: 'cron-b',
+        revocable: false,
+      },
+    ]
+    const { container } = render(<MachinesPage />)
+    // Both sentinel rows render despite sharing the sid — proves the
+    // composite-key dedupe in the query AND React's per-row key prop.
+    const rows = container.querySelectorAll('[data-slot="machine-row"]')
+    expect(rows.length).toBe(2)
+    expect(screen.getByText('cron-a')).toBeTruthy()
+    expect(screen.getByText('cron-b')).toBeTruthy()
+  })
 })

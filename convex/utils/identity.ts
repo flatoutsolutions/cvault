@@ -25,17 +25,42 @@
 import type { UserIdentity } from 'convex/server'
 
 /**
+ * Sentinel value written to `machineActivity.clerkSessionId` when no
+ * real Clerk session is available (cron, server-context, or callers
+ * that pre-date the explicit-arg convention).
+ *
+ * Use the constant rather than a literal so refactors (renames, casing
+ * changes) only touch one place; use {@link isUnknownSession} for any
+ * comparison so case/whitespace variants of the literal are normalized.
+ */
+export const UNKNOWN_SESSION_SENTINEL = 'unknown-session'
+
+/**
+ * Whether a string represents the "no real session" sentinel. Treats
+ * non-string inputs as unknown (the same fall-through `resolveCallerSession`
+ * uses) and trims + lowercases the input so accidental case/whitespace
+ * drift in older audit rows or mistyped CLI args doesn't bypass the
+ * sentinel checks downstream.
+ */
+export function isUnknownSession(s: string | undefined | null): boolean {
+  if (typeof s !== 'string') return true
+  return s.trim().toLowerCase() === UNKNOWN_SESSION_SENTINEL
+}
+
+/**
  * Resolve the canonical Clerk session id for an audit row. Order:
  *
  *   1. `identity.sid` (FAPI-origin tokens — dashboard).
  *   2. `argSid` (CLI-origin: passed explicitly by the client).
- *   3. `'unknown-session'` sentinel (cron, server-context, or callers
- *      that pre-date the explicit-arg convention). Filtered out of the
- *      Machines view by `machineActivity/queries.ts:distinctSessionsForUser`.
+ *   3. {@link UNKNOWN_SESSION_SENTINEL} (cron, server-context, or callers
+ *      that pre-date the explicit-arg convention). Surfaced in the
+ *      Machines view with `revocable: false` so the row is visible but
+ *      the Revoke button is disabled with a tooltip. See
+ *      `convex/machineActivity/queries.ts:distinctSessionsForUser`.
  */
 export function resolveCallerSession(identity: UserIdentity, argSid?: string): string {
   const idSid = (identity as { sid?: unknown }).sid
   if (typeof idSid === 'string' && idSid.length > 0) return idSid
   if (typeof argSid === 'string' && argSid.length > 0) return argSid
-  return 'unknown-session'
+  return UNKNOWN_SESSION_SENTINEL
 }

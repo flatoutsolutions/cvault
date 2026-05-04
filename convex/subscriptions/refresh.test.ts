@@ -492,6 +492,50 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     expect(pullRow?.machineLabel).toBe('air-13-stefan')
   })
 
+  /**
+   * Caller-session attribution: the CLI's BAPI-minted JWT lacks a `sid`
+   * claim (Clerk reservation; see `convex/utils/identity.ts`). Without
+   * the explicit `clerkSessionId` arg every CLI-origin pull would write
+   * the `unknown-session` sentinel and the dashboard's Machines view
+   * would lose per-machine attribution. Locking this here so a future
+   * refactor can't silently break the contract.
+   */
+  it('pullForSwitch writes the explicit clerkSessionId arg into the machineActivity row', async () => {
+    const t = vault()
+    await seedUser(t)
+    const { encrypt } = await import('./crypto')
+    // Fresh token so the proactive refresh path is a no-op.
+    const futureExpiry = Date.now() + 60 * 60 * 1000
+    const plaintext = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-SID-AAAAAAAAAAAAAAAAAAAA',
+        refreshToken: 'sk-ant-ort01-SID-BBBBBBBBBBBBBBBBBBBB',
+        expiresAt: futureExpiry,
+        scopes: ['user:inference'],
+      },
+    })
+    const { ciphertext, nonce } = encrypt(plaintext)
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'sid-pull@example.com',
+      ciphertext,
+      nonce,
+      expiresAt: futureExpiry,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // TEST_IDENTITY has no `sid` claim (mirrors a CLI-origin BAPI JWT),
+    // so resolveCallerSession will fall through to the explicit arg.
+    await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.pullForSwitch, {
+      slotOrEmail: 'sid-pull@example.com',
+      clerkSessionId: 'sess_x',
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const pullRow = rows.find((r) => r.action === 'pull')
+    expect(pullRow?.clerkSessionId).toBe('sess_x')
+  })
+
   it('redacts OAuth-token-shaped substrings from the error log', async () => {
     const t = vault()
     const inserted = await seedSubscription(t)

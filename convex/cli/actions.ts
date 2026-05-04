@@ -21,7 +21,7 @@ import { ConvexError, v } from 'convex/values'
 
 import { internal } from '../_generated/api'
 import { authenticatedAction, getIdentity } from '../utils/auth'
-import { resolveCallerSession } from '../utils/identity'
+import { isUnknownSession, resolveCallerSession } from '../utils/identity'
 import { getClerkSession, mintSignInToken, revokeClerkSession } from './clerk'
 
 export const startLink = authenticatedAction({
@@ -54,18 +54,26 @@ export const revokeSession = authenticatedAction({
   },
   returns: v.object({ revoked: v.boolean() }),
   handler: async (ctx, { clerkSessionId, machineLabel }): Promise<{ revoked: boolean }> => {
-    const identity = getIdentity(ctx)
-
-    // Reject the sentinel string up front. 'unknown-session' is a backend
+    // Reject the sentinel string up front. The sentinel is a backend
     // marker for cron-driven writes that lack a real Clerk session; the
     // Clerk Backend API would 4xx on it and the user would see a confusing
-    // "Server Error" toast.
-    if (clerkSessionId === 'unknown-session') {
+    // "Server Error" toast. Use the helper so accidental case/whitespace
+    // drift in stored rows is normalized.
+    //
+    // No-audit-row carve-out: we deliberately do NOT write a
+    // `machineActivity` row here. The throw rolls back any pending state;
+    // there was no revoke, no Clerk Backend call, no observable change to
+    // the user's account. A redundant audit row would imply a state
+    // change occurred — violating spec §4 ("one row per state-changing
+    // action") and §12 ("audit reflects what actually happened").
+    if (isUnknownSession(clerkSessionId)) {
       throw new ConvexError({
         code: 'NOT_REVOCABLE',
         message: 'This row represents server-side activity, not a real machine session.',
       })
     }
+
+    const identity = getIdentity(ctx)
 
     // SECURITY: verify the caller actually owns the target session BEFORE
     // sending the revoke. Without this check, the deployment's

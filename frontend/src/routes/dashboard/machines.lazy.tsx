@@ -21,35 +21,58 @@ export const Route = createLazyFileRoute('/dashboard/machines')({
 })
 
 /**
+ * Composite-key delimiter for per-row state (pendingByRow, errorByRow)
+ * AND for React's `key` prop. MUST match
+ * `convex/machineActivity/queries.ts:SENTINEL_GROUP_DELIMITER` —
+ * the query splits sentinel rows by `(sid, machineLabel)`, so the same
+ * sid can appear on multiple rows. Keying state on sid alone would let a
+ * spinner or inline error block bleed across rows. ASCII Unit Separator
+ * (U+001F) cannot occur in a Clerk session id or in a user-supplied
+ * `--label`, so the composite is collision-proof.
+ *
+ * Constructed via `String.fromCharCode` so this source file stays pure
+ * ASCII — see the same docstring in `queries.ts` for the rationale.
+ */
+const ROW_KEY_DELIMITER = String.fromCharCode(0x1f)
+
+function buildRowKey(args: { clerkSessionId: string; machineLabel: string | undefined }): string {
+  return `${args.clerkSessionId}${ROW_KEY_DELIMITER}${args.machineLabel ?? ''}`
+}
+
+/**
  * Exported for tests.
  */
 export function MachinesPage() {
   const sessions = useQuery(api.machineActivity.queries.distinctSessionsForUser, {})
   const revokeSession = useAction(api.cli.actions.revokeSession)
 
-  const [pendingByEmail, setPendingByEmail] = useState<Record<string, boolean>>({})
+  // Per-row spinner / error state keyed by the composite rowKey, not by
+  // sid alone — the new query splits sentinel rows by (sid, label) so the
+  // same sid can appear on multiple rows. Keying by sid would let a
+  // spinner/error block bleed across all sentinel rows.
+  const [pendingByRow, setPendingByRow] = useState<Record<string, boolean>>({})
   // Index signature returns `string | undefined` so the `!== undefined` check
   // below is meaningful and not a tautology per noUncheckedIndexedAccess.
-  const [errorByEmail, setErrorByEmail] = useState<Partial<Record<string, string>>>({})
+  const [errorByRow, setErrorByRow] = useState<Partial<Record<string, string>>>({})
 
-  const handleRevoke = async ({ sessionId }: { sessionId: string }) => {
-    setPendingByEmail((prev) => ({ ...prev, [sessionId]: true }))
-    setErrorByEmail((prev) => {
+  const handleRevoke = async ({ rowKey, sessionId }: { rowKey: string; sessionId: string }) => {
+    setPendingByRow((prev) => ({ ...prev, [rowKey]: true }))
+    setErrorByRow((prev) => {
       const next = { ...prev }
-      delete next[sessionId]
+      delete next[rowKey]
       return next
     })
     try {
       await revokeSession({ clerkSessionId: sessionId })
     } catch (e) {
-      setErrorByEmail((prev) => ({
+      setErrorByRow((prev) => ({
         ...prev,
-        [sessionId]: e instanceof Error ? e.message : String(e),
+        [rowKey]: e instanceof Error ? e.message : String(e),
       }))
     } finally {
-      setPendingByEmail((prev) => {
+      setPendingByRow((prev) => {
         const next = { ...prev }
-        delete next[sessionId]
+        delete next[rowKey]
         return next
       })
     }
@@ -89,7 +112,7 @@ export function MachinesPage() {
             <div className="text-right">action</div>
           </div>
           {sessions.map((s) => {
-            const rowKey = `${s.clerkSessionId}|${s.machineLabel ?? ''}`
+            const rowKey = buildRowKey({ clerkSessionId: s.clerkSessionId, machineLabel: s.machineLabel })
             return (
               <div key={rowKey} className="flex flex-col">
                 <MachineRow
@@ -99,13 +122,13 @@ export function MachinesPage() {
                   machineLabel={s.machineLabel}
                   revocable={s.revocable}
                   onRevoke={(args) => {
-                    void handleRevoke(args)
+                    void handleRevoke({ rowKey, sessionId: args.sessionId })
                   }}
-                  pending={pendingByEmail[s.clerkSessionId] === true}
+                  pending={pendingByRow[rowKey] === true}
                 />
-                {errorByEmail[s.clerkSessionId] !== undefined ? (
+                {errorByRow[rowKey] !== undefined ? (
                   <div className="bg-destructive/10 text-destructive border-border border-b px-4 py-2 text-xs">
-                    {errorByEmail[s.clerkSessionId]}
+                    {errorByRow[rowKey]}
                   </div>
                 ) : null}
               </div>

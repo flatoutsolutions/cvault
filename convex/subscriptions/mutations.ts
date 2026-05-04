@@ -44,7 +44,7 @@ async function recordActivity(
      * Caller's Clerk session id, supplied by the CLI as an action arg
      * (BAPI-minted JWTs lack the `sid` claim — see `utils/identity.ts`).
      * Optional; falls back to `identity.sid` (FAPI/dashboard origin)
-     * then to the `unknown-session` sentinel.
+     * then to the `UNKNOWN_SESSION_SENTINEL`.
      */
     clerkSessionId?: string
   }
