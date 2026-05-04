@@ -10,7 +10,7 @@
  */
 import { type Mock, vi } from 'vitest'
 
-import { type TEST_IDENTITY, vault } from '../__tests__/helpers'
+import { vault } from '../__tests__/helpers'
 import { api } from '../_generated/api'
 import { type Id } from '../_generated/dataModel'
 
@@ -45,9 +45,25 @@ export function buildOauthBlob(opts: { accessSuffix?: string; refreshSuffix?: st
  * Returns the subId/userId tuple plus the original blob string for tests
  * that want to assert on the pre-refresh content.
  */
+/**
+ * Identity shape used by `seedSubscription`. Widened from
+ * `typeof TEST_IDENTITY` so callers can pass alternate identities
+ * (e.g. SECOND_IDENTITY or a hand-rolled `user_other`) — the original
+ * `as const` literal type was too narrow once tests started using
+ * multiple identities for cross-user scenarios (e.g. backup A->B
+ * round-trip).
+ */
+type SeedIdentity = {
+  subject: string
+  issuer: string
+  tokenIdentifier: string
+  name: string
+  email: string
+}
+
 export async function seedSubscription(opts: {
   t: ReturnType<typeof vault>
-  identity: typeof TEST_IDENTITY
+  identity: SeedIdentity
   email: string
   expiresAt: number
   refreshExpiresAt?: number

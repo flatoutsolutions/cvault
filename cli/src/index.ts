@@ -25,6 +25,7 @@ import pkg from '../package.json' with { type: 'json' }
 import { addCommand } from './commands/add'
 import { cleanCommand } from './commands/clean'
 import { exportCommand } from './commands/exportBackup'
+import { importCommand } from './commands/importBackup'
 import { listCommand } from './commands/list'
 import { loginCommand } from './commands/login'
 import { refreshCommand } from './commands/refresh'
@@ -53,6 +54,7 @@ const main = defineCommand({
     clean: cleanCommand,
     'rotate-key': rotateKeyCommand,
     export: exportCommand,
+    import: importCommand,
   },
 })
 
