@@ -27,6 +27,25 @@ export function isAllowedEmail(email: string | null | undefined, domains: Readon
   return false
 }
 
+/**
+ * Extract the domain portion of an email address. Returns null if the
+ * input has no `@`. Uses lastIndexOf so emails with multiple `@` (rare
+ * but technically valid in quoted local-parts) resolve to the LAST
+ * `@` — which matches the suffix-match boundary `isAllowedEmail` uses.
+ *
+ * Example: extractEmailDomain('multi@chunk@flatout.solutions')
+ *          → 'flatout.solutions'   (matches isAllowedEmail's boundary)
+ *
+ * Example: extractEmailDomain('alice@flatout.solutions')
+ *          → 'flatout.solutions'
+ */
+export function extractEmailDomain(email: string | null | undefined): string | null {
+  if (typeof email !== 'string') return null
+  const at = email.lastIndexOf('@')
+  if (at < 0) return null
+  return email.slice(at + 1).toLowerCase()
+}
+
 /** Lowercase, trim, strip a single leading `@`. */
 export function normalizeDomain(input: string): string {
   return input.trim().toLowerCase().replace(/^@/, '')

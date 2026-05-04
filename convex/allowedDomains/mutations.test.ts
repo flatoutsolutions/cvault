@@ -95,5 +95,38 @@ describe('allowedDomains.mutations', () => {
         t.withIdentity(TEST_IDENTITY).mutation(api.allowedDomains.mutations.remove, { id: flatoutRow!._id })
       ).rejects.toThrow(/CANNOT_REMOVE_OWN_DOMAIN/i)
     })
+
+    it('blocks self-removal even when caller email contains multiple @ (uses lastIndexOf boundary)', async () => {
+      const t = vault()
+      // Seed an allowedDomains row for 'flatout.solutions' AND a users row
+      // whose externalId we will sign in as.
+      await t.run(async (ctx) => {
+        await ctx.db.insert('users', {
+          externalId: 'user_multi_at',
+          name: 'Multi',
+          primaryEmail: 'multi@chunk@flatout.solutions',
+          otherEmails: [],
+        })
+        await ctx.db.insert('allowedEmailDomains', { domain: 'flatout.solutions', addedAtMs: 1 })
+      })
+      const flatoutRow = await t.run(
+        async (ctx) =>
+          await ctx.db
+            .query('allowedEmailDomains')
+            .withIndex('byDomain', (q) => q.eq('domain', 'flatout.solutions'))
+            .unique()
+      )
+      expect(flatoutRow).not.toBeNull()
+      const multiAtIdentity = {
+        subject: 'user_multi_at',
+        issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+        tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_multi_at',
+        name: 'Multi',
+        email: 'multi@chunk@flatout.solutions',
+      } as const
+      await expect(
+        t.withIdentity(multiAtIdentity).mutation(api.allowedDomains.mutations.remove, { id: flatoutRow!._id })
+      ).rejects.toThrow(/CANNOT_REMOVE_OWN_DOMAIN/i)
+    })
   })
 })

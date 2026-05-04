@@ -4,6 +4,7 @@ import {
   BOOTSTRAP_ALLOWED_DOMAINS,
   DOMAIN_REJECTION_ERROR_CODE,
   DOMAIN_REJECTION_MESSAGE,
+  extractEmailDomain,
   isAllowedEmail,
   isValidDomain,
   normalizeDomain,
@@ -91,6 +92,30 @@ describe('domainGate', () => {
     })
     it('combo', () => {
       expect(normalizeDomain('  @ACME.com  ')).toBe('acme.com')
+    })
+  })
+
+  describe('extractEmailDomain', () => {
+    it('extracts the canonical domain', () => {
+      expect(extractEmailDomain('alice@flatout.solutions')).toBe('flatout.solutions')
+    })
+    it('lowercases the domain', () => {
+      expect(extractEmailDomain('Alice@FlatOut.Solutions')).toBe('flatout.solutions')
+    })
+    it('uses lastIndexOf for multi-@ emails (regression for self-removal bug)', () => {
+      // If we had used `split('@')[1]`, this would resolve to 'chunk' and
+      // the self-removal guard would slip past — letting the caller delete
+      // the domain that owns their email. lastIndexOf binds to the same
+      // boundary `isAllowedEmail` uses (the SUFFIX match).
+      expect(extractEmailDomain('multi@chunk@flatout.solutions')).toBe('flatout.solutions')
+    })
+    it('returns null when there is no @', () => {
+      expect(extractEmailDomain('no-at-sign')).toBeNull()
+    })
+    it('returns null for empty/null/undefined input', () => {
+      expect(extractEmailDomain('')).toBeNull()
+      expect(extractEmailDomain(null)).toBeNull()
+      expect(extractEmailDomain(undefined)).toBeNull()
     })
   })
 

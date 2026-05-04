@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label'
 
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
+import { extractEmailDomain } from '../../../../../convex/utils/domainGate'
 
 export const Route = createLazyFileRoute('/dashboard/settings/domains')({
   component: DomainsPage,
@@ -26,7 +27,7 @@ export const Route = createLazyFileRoute('/dashboard/settings/domains')({
 export function DomainsPage() {
   const { user } = useUser()
   const callerEmail = user?.primaryEmailAddress?.emailAddress ?? ''
-  const callerDomain = callerEmail.split('@')[1]?.toLowerCase()
+  const callerDomain = extractEmailDomain(callerEmail)
 
   const rows = useQuery(api.allowedDomains.queries.list, {})
   const add = useMutation(api.allowedDomains.mutations.add)

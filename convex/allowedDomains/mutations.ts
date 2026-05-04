@@ -1,7 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 
 import { authenticatedMutation, getIdentity } from '../utils/auth'
-import { isValidDomain, normalizeDomain } from '../utils/domainGate'
+import { extractEmailDomain, isValidDomain, normalizeDomain } from '../utils/domainGate'
 
 export const add = authenticatedMutation({
   args: { domain: v.string() },
@@ -43,7 +43,7 @@ export const remove = authenticatedMutation({
 
     const identity = getIdentity(ctx)
     const callerEmail = typeof identity.email === 'string' ? identity.email : ''
-    const callerDomain = callerEmail.split('@')[1]?.toLowerCase()
+    const callerDomain = extractEmailDomain(callerEmail)
     if (callerDomain && row.domain.toLowerCase() === callerDomain) {
       throw new ConvexError({
         code: 'CANNOT_REMOVE_OWN_DOMAIN',
