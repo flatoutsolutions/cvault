@@ -66,6 +66,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     clerkSessionId: 'sess_111aaa222bbb',
     lastSeenAt: now - 60_000,
     lastIpHash: 'a1b2c3d4',
+    revocable: true,
     ...overrides,
   }
 }

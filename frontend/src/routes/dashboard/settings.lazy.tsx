@@ -11,7 +11,6 @@
  * disabled controls so the affordance is honest.
  */
 import { createLazyFileRoute } from '@tanstack/react-router'
-import { ExternalLink } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -83,33 +82,7 @@ function SettingsPage() {
             </Button>
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Documentation</CardTitle>
-            <CardDescription>Reference material for the cvault CLI and Convex backend.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <HelpLink href="https://docs.anthropic.com/">Anthropic docs</HelpLink>
-            <HelpLink href="https://docs.convex.dev/">Convex docs</HelpLink>
-            <HelpLink href="https://clerk.com/docs">Clerk docs</HelpLink>
-          </CardContent>
-        </Card>
       </div>
     </div>
-  )
-}
-
-function HelpLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm underline-offset-4 hover:underline"
-    >
-      <ExternalLink className="size-3" aria-hidden />
-      {children}
-    </a>
   )
 }

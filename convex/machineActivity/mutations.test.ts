@@ -132,17 +132,27 @@ describe('machineActivity.queries.recentForUser', () => {
 
 describe('machineActivity.queries.distinctSessionsForUser', () => {
   /**
-   * The dashboard's "Machines" section reads from this query. Each row
-   * is one Clerk session; the user-visible identifier is `machineLabel`.
-   * The mapping from sessionId → label is captured on every audit row,
-   * and we surface the most-recent label per session — so renaming a
-   * machine via `cvault login --label` is reflected on the next refresh.
+   * The dashboard's "Machines" section reads from this query. Two
+   * grouping behaviors:
+   *
+   *  - Real Clerk session ids: collapse on sid alone — one row per sid.
+   *    The most-recent label wins (rows are `.order('desc')` by `at`).
+   *    A relabel-in-place via `cvault login --label new` should not
+   *    leave a ghost row for the old label.
+   *
+   *  - The 'unknown-session' sentinel: split per (sentinel, label).
+   *    Cron, server-context writes, and pre-fix CLIs all write the
+   *    sentinel; collapsing them into one row would lump every machine's
+   *    server-side activity into a single misleading entry. Splitting
+   *    by label preserves at least the per-machine identity even though
+   *    the sid is missing.
    */
-  it('returns the most-recent machineLabel per session', async () => {
+  it('collapses real sids to one row using the most-recent label', async () => {
     const t = vault()
     const aliceId = await seedUser(t)
 
-    // Session A: two rows, the most-recent one carries a renamed label.
+    // Session A: two rows under the same sid with different labels.
+    // The most-recent (at=2000) wins.
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
       clerkSessionId: 'sess_a',
@@ -168,9 +178,47 @@ describe('machineActivity.queries.distinctSessionsForUser', () => {
     })
 
     const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
-    const bySession = new Map(result.map((r) => [r.clerkSessionId, r]))
-    expect(bySession.get('sess_a')?.machineLabel).toBe('new-name')
-    expect(bySession.get('sess_b')?.machineLabel).toBe('sole-row')
+    // One row per real sid (sess_a + sess_b = 2 rows).
+    expect(result).toHaveLength(2)
+    const sessA = result.find((r) => r.clerkSessionId === 'sess_a')
+    expect(sessA?.machineLabel).toBe('new-name') // most-recent wins
+    const sessB = result.find((r) => r.clerkSessionId === 'sess_b')
+    expect(sessB?.machineLabel).toBe('sole-row')
+    // Real sids are always revocable.
+    expect(result.every((r) => r.revocable)).toBe(true)
+  })
+
+  it('splits the sentinel into one row per machineLabel', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    // Two cron / server-context writes from notional different machines —
+    // both wrote the sentinel because no real Clerk session was available
+    // at the call site. Splitting by label keeps them distinguishable on
+    // the dashboard rather than collapsing into a single row.
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'unknown-session',
+      action: 'pull',
+      at: 3000,
+      machineLabel: 'cron-server-a',
+    })
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'unknown-session',
+      action: 'pull',
+      at: 4000,
+      machineLabel: 'cron-server-b',
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
+    const sentinelRows = result.filter((r) => r.clerkSessionId === 'unknown-session')
+    expect(sentinelRows).toHaveLength(2)
+    // None of the sentinel rows are revocable — there's no live Clerk
+    // session to call BAPI against.
+    expect(sentinelRows.every((r) => !r.revocable)).toBe(true)
+    const labels = sentinelRows.map((r) => r.machineLabel).sort()
+    expect(labels).toEqual(['cron-server-a', 'cron-server-b'])
   })
 
   it('returns machineLabel undefined when the session has no labeled rows', async () => {
@@ -188,5 +236,53 @@ describe('machineActivity.queries.distinctSessionsForUser', () => {
     const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
     expect(result).toHaveLength(1)
     expect(result[0]?.machineLabel).toBeUndefined()
+  })
+
+  it('skips rows whose clerkSessionId is the empty string', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    // Empty sid is structurally identical to "no session" and shouldn't
+    // render as a clickable machine. Defense-in-depth: today no caller
+    // writes empty strings, but a future bug shouldn't leak a phantom
+    // row to the dashboard.
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: '',
+      action: 'pull',
+      at: 1000,
+      machineLabel: 'should-be-hidden',
+    })
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_real',
+      action: 'add',
+      at: 2000,
+      machineLabel: 'should-show',
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
+    expect(result).toHaveLength(1)
+    expect(result[0]?.clerkSessionId).toBe('sess_real')
+  })
+
+  it('rejects the sentinel argument on recentForSession (returns empty page)', async () => {
+    // Otherwise a deeplink to /dashboard/machines/unknown-session would
+    // show every cron-driven row mixed across machines.
+    const t = vault()
+    const aliceId = await seedUser(t)
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'unknown-session',
+      action: 'pull',
+      at: 1000,
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForSession, {
+      clerkSessionId: 'unknown-session',
+      paginationOpts: { numItems: 10, cursor: null },
+    })
+    expect(result.page).toEqual([])
+    expect(result.isDone).toBe(true)
   })
 })

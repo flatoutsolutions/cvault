@@ -10,6 +10,7 @@ import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 
 import { authenticatedQuery, getIdentity } from '../utils/auth'
+import { isUnknownSession } from '../utils/identity'
 
 const machineActivityRowValidator = v.object({
   _id: v.id('machineActivity'),
@@ -85,6 +86,12 @@ export const recentForUser = authenticatedQuery({
  * SECURITY: uses the `byUserAndSessionAndAt` composite index so a
  * malicious caller can't read another user's audit rows by guessing a
  * session id.
+ *
+ * Sentinel guard: a deeplink to `/dashboard/machines/unknown-session`
+ * would otherwise mix every cron-driven write across every machine into
+ * one page. The dashboard never produces that link (the Machines view
+ * disables drilldown for non-revocable rows) but defending here keeps
+ * the contract explicit for direct API callers.
  */
 export const recentForSession = authenticatedQuery({
   args: {
@@ -99,6 +106,9 @@ export const recentForSession = authenticatedQuery({
     pageStatus: v.optional(v.union(v.literal('SplitRecommended'), v.literal('SplitRequired'), v.null())),
   }),
   handler: async (ctx, { clerkSessionId, paginationOpts }) => {
+    if (isUnknownSession(clerkSessionId)) {
+      return { page: [], isDone: true, continueCursor: '' }
+    }
     const userId = await callerUserId(ctx)
     if (userId === null) {
       return { page: [], isDone: true, continueCursor: '' }
@@ -112,16 +122,52 @@ export const recentForSession = authenticatedQuery({
 })
 
 /**
- * Distinct Clerk session ids the current user has touched the vault from
- * — drives `/dashboard/machines`.
+ * Composite key delimiter for the `(sentinel, machineLabel)` group in
+ * {@link distinctSessionsForUser}. ASCII Unit Separator (U+001F) — the
+ * exact glyph the standard reserved for this purpose. Cannot occur in a
+ * Clerk session id (alphanumeric + underscore) or in a user-supplied
+ * `--label` (no shell would let a literal U+001F land in argv without
+ * deliberate encoding effort), so collisions like `("sess_a", "b c")`
+ * vs `("sess_a b", "c")` that a space delimiter would produce cannot
+ * happen. The dashboard's `rowKey` in `machines.lazy.tsx` MUST use the
+ * same delimiter — otherwise React's per-row state (pending/error)
+ * would key off a different row identity than the query exposes,
+ * causing spinners and inline errors to bleed across rows.
+ *
+ * Constructed via `String.fromCharCode` so the source file stays pure
+ * ASCII — a literal U+001F embedded in the string would flip git's
+ * binary-detection heuristic and force `git diff` into binary mode.
+ */
+export const SENTINEL_GROUP_DELIMITER = String.fromCharCode(0x1f)
+
+/**
+ * Distinct machines the current user has touched the vault from — drives
+ * `/dashboard/machines`.
  *
  * SECURITY: scopes to the caller (was reading the global table).
  *
+ * Grouping rules:
+ *
+ *  - Real Clerk session ids: collapse on sid alone — one row per sid.
+ *    Rows are read `.order('desc')` by `at`, so the FIRST row per sid
+ *    is the most-recent one and its `machineLabel` is what surfaces.
+ *    A relabel-in-place via `cvault login --label new` therefore
+ *    replaces the prior label rather than leaving a ghost row.
+ *
+ *  - The unknown-session sentinel (see `utils/identity.ts`): split per
+ *    `(sentinel, machineLabel)`. Cron, server-context writes, and
+ *    pre-fix CLIs all write the sentinel; collapsing them into one row
+ *    would lump every machine's server-side activity into a single
+ *    misleading entry. Splitting by label preserves at least the
+ *    per-machine identity even though the sid is missing.
+ *
+ * Revocability: rows whose `clerkSessionId` matches the sentinel cannot
+ * be revoked (no live Clerk session to call BAPI against). The query
+ * surfaces a `revocable` flag so the UI can render Revoke disabled with
+ * an explanatory tooltip rather than hiding the row outright.
+ *
  * Bound: caps at 1000 most-recent rows for *this user*. The dashboard
  * lists machines, not raw events, so dedupe-then-truncate is sufficient.
- * If a power user ever exceeds 1000 rows on a single machine before
- * their next sync, the second machine will be missing — that's the
- * tradeoff for a non-paginated query.
  */
 export const distinctSessionsForUser = authenticatedQuery({
   args: {},
@@ -131,13 +177,17 @@ export const distinctSessionsForUser = authenticatedQuery({
       lastSeenAt: v.number(),
       lastIpHash: v.optional(v.string()),
       /**
-       * Most-recent `machineLabel` for this session. The dashboard's
-       * "Machines" section renders this as the primary identifier;
-       * `clerkSessionId` is kept internal for the revoke flow. Optional
-       * because legacy rows pre-feature don't carry one — the UI shows
-       * "(no label)" when this is undefined.
+       * Most-recent `machineLabel` for this group. Optional because
+       * legacy rows pre-label-feature don't carry one — the UI shows
+       * "(no label)" / "Server-side activity" when this is undefined.
        */
       machineLabel: v.optional(v.string()),
+      /**
+       * Whether the row maps to a revocable Clerk session. False for
+       * the sentinel (cron / server context / pre-fix CLI). UI disables
+       * Revoke and explains why.
+       */
+      revocable: v.boolean(),
     })
   ),
   handler: async (ctx) => {
@@ -151,21 +201,46 @@ export const distinctSessionsForUser = authenticatedQuery({
 
     const map = new Map<
       string,
-      { clerkSessionId: string; lastSeenAt: number; lastIpHash?: string; machineLabel?: string }
+      {
+        clerkSessionId: string
+        lastSeenAt: number
+        lastIpHash?: string
+        machineLabel?: string
+        revocable: boolean
+      }
     >()
     for (const r of rows) {
-      if (map.has(r.clerkSessionId)) continue
-      // Rows are .order('desc'), so the FIRST row we see for each
-      // sessionId is its most-recent — that's where the freshest label
-      // lives. Renames via `cvault login --label` flow through here on
-      // the next refresh because the new login row outranks the old.
-      const entry: { clerkSessionId: string; lastSeenAt: number; lastIpHash?: string; machineLabel?: string } = {
+      // Empty sid is structurally identical to "no session" and
+      // shouldn't render as a clickable machine. Defense-in-depth: no
+      // caller writes empty strings today, but a future bug shouldn't
+      // leak a phantom row.
+      if (!r.clerkSessionId) continue
+
+      // Real sids: one row per sid (most-recent label wins because rows
+      // are .order('desc') by at). Sentinel sids: one row per label, so
+      // N machines with no real Clerk session each get a distinguishable
+      // entry instead of collapsing into one misleading row.
+      const isSentinel = isUnknownSession(r.clerkSessionId)
+      const key = isSentinel
+        ? `${r.clerkSessionId}${SENTINEL_GROUP_DELIMITER}${r.machineLabel ?? ''}`
+        : r.clerkSessionId
+      if (map.has(key)) continue
+
+      // Rows are .order('desc'), so the FIRST row per key is most-recent.
+      const entry: {
+        clerkSessionId: string
+        lastSeenAt: number
+        lastIpHash?: string
+        machineLabel?: string
+        revocable: boolean
+      } = {
         clerkSessionId: r.clerkSessionId,
         lastSeenAt: r.at,
+        revocable: !isSentinel,
       }
       if (r.ipHash !== undefined) entry.lastIpHash = r.ipHash
       if (r.machineLabel !== undefined) entry.machineLabel = r.machineLabel
-      map.set(r.clerkSessionId, entry)
+      map.set(key, entry)
     }
     return Array.from(map.values())
   },

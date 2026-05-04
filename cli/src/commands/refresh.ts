@@ -214,7 +214,7 @@ async function refreshOneSlotUnlocked(
 ): Promise<RefreshSubResult> {
   const result = (await client.action(
     api.subscriptions.actions.refreshSub,
-    client.withMachineLabel({
+    client.withMeta({
       slot: opts.slot,
       ...(opts.localState !== undefined ? { localState: opts.localState } : {}),
       ...(opts.force === true ? { force: true } : {}),

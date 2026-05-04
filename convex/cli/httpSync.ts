@@ -15,9 +15,25 @@
  * to mass-extract.
  *
  * The route is V8-runtime; decryption happens in the delegated Node action.
+ *
+ * Caller-session attribution: this route writes a `machineActivity`
+ * row tagged with the {@link UNKNOWN_SESSION_SENTINEL} (see
+ * `utils/identity.ts`). Today no CLI caller exercises this endpoint —
+ * `cvault sync --all` uses the `pullForSwitch` action over WebSocket,
+ * which receives the explicit `clerkSessionId` arg from
+ * `VaultClient.withMeta()`. The HTTP route is kept available for
+ * documented future use (e.g. a one-shot migration tool) but is
+ * inherently sentinel-tagged because:
+ *  - BAPI-minted JWTs lack a `sid` claim (Clerk reservation), and
+ *  - this route has no action arg surface to receive an explicit sid.
+ * If a future CLI version starts using this endpoint and needs proper
+ * machine attribution, switch the caller to the `pullForSwitch` action
+ * path rather than re-introducing a header-reading branch here — the
+ * action path already enforces explicit-arg precedence.
  */
 import { internal } from '../_generated/api'
 import { httpAction } from '../_generated/server'
+import { UNKNOWN_SESSION_SENTINEL } from '../utils/identity'
 
 const SYNC_RATE_LIMIT_KEY = 'cliSync'
 const SYNC_RATE_LIMIT_CAPACITY = 10
@@ -72,8 +88,15 @@ export const cliSyncHandler = httpAction(async (ctx, request) => {
   // Audit row. We have a real `Request` here so we can pass `rawIp` for
   // hashing — the only public surface that does (the WebSocket-driven
   // mutations don't have access to the underlying TCP peer).
+  //
+  // Caller-session attribution: see the file-level docstring. This route
+  // is inherently sentinel-tagged. We still prefer `identity.sid` when
+  // present (a future browser-side caller would have it from FAPI) but
+  // fall back to the sentinel rather than reading a CLI-provided header,
+  // because the action-path is the canonical CLI surface for explicit
+  // session-id passing.
   const sidClaim = (identity as { sid?: unknown }).sid
-  const clerkSessionId = typeof sidClaim === 'string' ? sidClaim : 'unknown-session'
+  const clerkSessionId = typeof sidClaim === 'string' && sidClaim.length > 0 ? sidClaim : UNKNOWN_SESSION_SENTINEL
   // Standard reverse-proxy header for the originating client IP. We
   // take only the first hop (the rest are intermediaries we don't trust).
   const xff = request.headers.get('x-forwarded-for')

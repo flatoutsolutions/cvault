@@ -31,6 +31,13 @@ export type MachineRowProps = {
    * to the end user.
    */
   machineLabel: string | undefined
+  /**
+   * Whether the row maps to a real Clerk session. False for the
+   * `unknown-session` sentinel — Revoke is disabled because there's no
+   * BAPI-revocable session, but the row still renders so the user
+   * sees the activity (cron, server-context writes, pre-fix CLI).
+   */
+  revocable: boolean
   onRevoke: (args: { sessionId: string }) => void
   pending: boolean
 }
@@ -52,11 +59,33 @@ export function MachineRow({
   lastIpHash,
   lastSeenAt,
   machineLabel,
+  revocable,
   onRevoke,
   pending,
 }: MachineRowProps) {
   const lastSeenText = `Last seen ${relativeTime(lastSeenAt)}`
   const ipText = lastIpHash !== undefined ? `IP: ${lastIpHash}` : undefined
+  const revokeDisabledTitle = revocable
+    ? undefined
+    : 'No live Clerk session — this row was written by a cron job or a CLI version that pre-dates the explicit session-id arg. Re-login from the affected machine to register a revocable session.'
+
+  // Primary label rules (in priority order):
+  //  - non-revocable + no label → "Server-side activity" so users can
+  //    distinguish "real machine that pre-dates the label feature" from
+  //    "non-revocable server-side row" (cron, server context, pre-fix CLI).
+  //    Regular weight + foreground color; "server-side" hint moves to the
+  //    secondary line.
+  //  - revocable + label → user-visible label, prominent.
+  //  - revocable + no label → italic "(no label)" placeholder so we never
+  //    expose the opaque sessionId as the primary identifier.
+  let primary: { text: string; className: string }
+  if (!revocable && machineLabel === undefined) {
+    primary = { text: 'Server-side activity', className: 'text-foreground truncate' }
+  } else if (machineLabel !== undefined) {
+    primary = { text: machineLabel, className: 'text-foreground truncate font-medium' }
+  } else {
+    primary = { text: '(no label)', className: 'text-muted-foreground italic' }
+  }
 
   return (
     <div
@@ -65,17 +94,19 @@ export function MachineRow({
       title={clerkSessionId}
     >
       <div className="flex min-w-0 flex-col">
-        {machineLabel !== undefined ? (
-          <span className="text-foreground truncate font-medium">{machineLabel}</span>
-        ) : (
-          <span className="text-muted-foreground italic">(no label)</span>
-        )}
+        <span className={primary.className}>{primary.text}</span>
         <span className="text-muted-foreground text-xs tabular-nums">
           {lastSeenText}
           {ipText !== undefined ? (
             <>
               {' · '}
               <span className="font-mono">{ipText}</span>
+            </>
+          ) : null}
+          {!revocable ? (
+            <>
+              {' · '}
+              <span className="italic">server-side</span>
             </>
           ) : null}
         </span>
@@ -85,7 +116,8 @@ export function MachineRow({
           type="button"
           variant="destructive"
           size="sm"
-          disabled={pending}
+          disabled={pending || !revocable}
+          title={revokeDisabledTitle}
           onClick={() => {
             onRevoke({ sessionId: clerkSessionId })
           }}
