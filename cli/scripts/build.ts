@@ -122,7 +122,7 @@ async function runBunBuild({ target, outfile, cwd }: RunBunBuildArgs): Promise<n
     '--outfile',
     outfile,
   ]
-  // eslint-disable-next-line no-console
+
   console.log(`[build] bun ${args.join(' ')}`)
   const proc = Bun.spawn(['bun', ...args], { cwd, stdout: 'inherit', stderr: 'inherit' })
   return await proc.exited

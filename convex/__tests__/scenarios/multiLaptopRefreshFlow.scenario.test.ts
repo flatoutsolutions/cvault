@@ -78,11 +78,12 @@ function makePlaintextBlob(opts: { expiresAt: number; versionSuffix: string }): 
 async function seedSubV0(t: ReturnType<typeof vault>, expiresAt: number) {
   await seedUser(t)
   const plaintext = makePlaintextBlob({ expiresAt, versionSuffix: 'V0' })
-  const { ciphertext, nonce } = encrypt(plaintext)
+  const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
   return await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
     email: 'multi@example.com',
     ciphertext,
     nonce,
+    keyVersion,
     expiresAt,
     subscriptionType: 'max',
     rateLimitTier: 'tier1',
@@ -102,7 +103,13 @@ describe('Scenario — multi-laptop refresh flow converges on freshest state', (
     // Sanity: the seeded row holds V0 plaintext.
     const phase1Row = await t.run(async (ctx) => await ctx.db.get('subscriptions', subId))
     expect(phase1Row?.expiresAt).toBe(v0Expires)
-    expect(decrypt(phase1Row?.ciphertext ?? new ArrayBuffer(0), phase1Row?.nonce ?? new ArrayBuffer(0))).toContain('V0')
+    expect(
+      decrypt(
+        phase1Row?.ciphertext ?? new ArrayBuffer(0),
+        phase1Row?.nonce ?? new ArrayBuffer(0),
+        phase1Row?.keyVersion
+      )
+    ).toContain('V0')
 
     // ---------- Phase 2 — Machine A pushes V1 to vault ----------
     // Machine A's local Claude Code rotated tokens locally. Its Keychain
@@ -119,7 +126,11 @@ describe('Scenario — multi-laptop refresh flow converges on freshest state', (
     // Vault now holds V1.
     const phase2Row = await t.run(async (ctx) => await ctx.db.get('subscriptions', subId))
     expect(phase2Row?.expiresAt).toBe(v1Expires)
-    const phase2Plaintext = decrypt(phase2Row?.ciphertext ?? new ArrayBuffer(0), phase2Row?.nonce ?? new ArrayBuffer(0))
+    const phase2Plaintext = decrypt(
+      phase2Row?.ciphertext ?? new ArrayBuffer(0),
+      phase2Row?.nonce ?? new ArrayBuffer(0),
+      phase2Row?.keyVersion
+    )
     expect(phase2Plaintext).toContain('V1')
     expect(phase2Plaintext).not.toContain('V0')
 
@@ -146,7 +157,11 @@ describe('Scenario — multi-laptop refresh flow converges on freshest state', (
     // still V1's value.
     const phase4Row = await t.run(async (ctx) => await ctx.db.get('subscriptions', subId))
     expect(phase4Row?.expiresAt).toBe(v1Expires)
-    const phase4Plaintext = decrypt(phase4Row?.ciphertext ?? new ArrayBuffer(0), phase4Row?.nonce ?? new ArrayBuffer(0))
+    const phase4Plaintext = decrypt(
+      phase4Row?.ciphertext ?? new ArrayBuffer(0),
+      phase4Row?.nonce ?? new ArrayBuffer(0),
+      phase4Row?.keyVersion
+    )
     expect(phase4Plaintext).toContain('V1')
 
     // The plaintext returned to machine B is the vault's V1 — what B
@@ -199,7 +214,9 @@ describe('Scenario — multi-laptop refresh flow converges on freshest state', (
     // Vault is at V2.
     const afterB = await t.run(async (ctx) => await ctx.db.get('subscriptions', subId))
     expect(afterB?.expiresAt).toBe(v2Expires)
-    expect(decrypt(afterB?.ciphertext ?? new ArrayBuffer(0), afterB?.nonce ?? new ArrayBuffer(0))).toContain('V2')
+    expect(
+      decrypt(afterB?.ciphertext ?? new ArrayBuffer(0), afterB?.nonce ?? new ArrayBuffer(0), afterB?.keyVersion)
+    ).toContain('V2')
 
     // Machine A returns later still holding V1 (never saw V2). It must
     // NOT regress the vault.
@@ -212,7 +229,9 @@ describe('Scenario — multi-laptop refresh flow converges on freshest state', (
     // Vault still V2.
     const final = await t.run(async (ctx) => await ctx.db.get('subscriptions', subId))
     expect(final?.expiresAt).toBe(v2Expires)
-    expect(decrypt(final?.ciphertext ?? new ArrayBuffer(0), final?.nonce ?? new ArrayBuffer(0))).toContain('V2')
+    expect(
+      decrypt(final?.ciphertext ?? new ArrayBuffer(0), final?.nonce ?? new ArrayBuffer(0), final?.keyVersion)
+    ).toContain('V2')
 
     // The plaintext returned to A is V2 — A's CLI converges its Keychain there.
     expect(aResult2.plaintextBlob).toContain('V2')

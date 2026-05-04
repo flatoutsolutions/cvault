@@ -106,7 +106,11 @@ describe('scenario #7 — refresh race', () => {
     const finalSub = await t.run(async (ctx) => await ctx.db.get('subscriptions', seeded.subId))
     expect(finalSub).not.toBeNull()
     const { decrypt } = await import('../subscriptions/crypto')
-    const finalPlain = decrypt(finalSub?.ciphertext ?? new ArrayBuffer(0), finalSub?.nonce ?? new ArrayBuffer(0))
+    const finalPlain = decrypt(
+      finalSub?.ciphertext ?? new ArrayBuffer(0),
+      finalSub?.nonce ?? new ArrayBuffer(0),
+      finalSub?.keyVersion
+    )
     expect(finalPlain).toContain('RACE-WINNER-CCCCCCCCCCCC')
     expect(finalPlain).not.toContain('RACE-LOSER')
 

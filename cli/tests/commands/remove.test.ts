@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { runRemove } from '../../src/commands/remove'
 import { makeVaultClient } from '../../src/convex/vaultClient'
-import { noopWithMachineLabel } from '../scenarios/_helpers'
+import { noopWithMachineLabel, noopWithMeta, noopWithSessionId } from '../scenarios/_helpers'
 
 vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
@@ -33,7 +33,12 @@ describe('runRemove', () => {
     const client = {
       mutation: vi.fn().mockResolvedValueOnce(null),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
 
     await runRemove({ slotOrEmail: 'user@example.com' })
 
@@ -50,7 +55,12 @@ describe('runRemove', () => {
       ]),
       mutation: vi.fn().mockResolvedValueOnce(null),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
 
     await runRemove({ slotOrEmail: '2' })
 
@@ -64,7 +74,12 @@ describe('runRemove', () => {
       query: vi.fn().mockResolvedValueOnce([{ slot: 1, email: 'a@b.com' }]),
       mutation: vi.fn(),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
 
     await expect(runRemove({ slotOrEmail: '99' })).rejects.toThrow(/slot 99/i)
     expect(client.mutation).not.toHaveBeenCalled()
@@ -74,7 +89,12 @@ describe('runRemove', () => {
     const client = {
       mutation: vi.fn().mockRejectedValueOnce(new Error('NOT_FOUND')),
     }
-    vi.mocked(makeVaultClient).mockResolvedValueOnce({ ...client, withMachineLabel: noopWithMachineLabel } as never)
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withSessionId: noopWithSessionId,
+      withMeta: noopWithMeta,
+    } as never)
 
     await expect(runRemove({ slotOrEmail: 'foo@x.com' })).rejects.toThrow(/NOT_FOUND/)
   })

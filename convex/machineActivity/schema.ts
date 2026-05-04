@@ -19,7 +19,18 @@ export const machineActivitySchema = defineTable({
     v.literal('remove'),
     v.literal('refresh'),
     v.literal('rename'),
-    v.literal('login')
+    v.literal('login'),
+    /**
+     * Bulk-credential operations (no `subscriptionId` — they affect
+     * every sub the caller owns). Spec:
+     * docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §6.
+     * A6 from the 2026-05-04 review: backup export / import is the
+     * highest-impact action in the system; it MUST leave an audit row.
+     * `rotate` covers `triggerKeyRotation` (re-wraps every sub).
+     */
+    v.literal('export'),
+    v.literal('import'),
+    v.literal('rotate')
   ),
   subscriptionId: v.optional(v.id('subscriptions')),
   at: v.number(),

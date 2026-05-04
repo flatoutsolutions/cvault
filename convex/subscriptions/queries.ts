@@ -140,7 +140,10 @@ const lastMachineActivityValidator = v.object({
     v.literal('remove'),
     v.literal('refresh'),
     v.literal('rename'),
-    v.literal('login')
+    v.literal('login'),
+    v.literal('export'),
+    v.literal('import'),
+    v.literal('rotate')
   ),
   clerkSessionId: v.string(),
   at: v.number(),

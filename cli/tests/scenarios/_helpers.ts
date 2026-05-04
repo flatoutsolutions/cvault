@@ -124,6 +124,26 @@ export function noopWithMachineLabel<T extends Record<string, unknown>>(args: T)
 }
 
 /**
+ * Identity passthrough for `VaultClient.withSessionId` — see
+ * `noopWithMachineLabel` for the rationale. Returns the args with a
+ * synthetic session id so the action-arg shape passes server validators
+ * that require `clerkSessionId`.
+ */
+export function noopWithSessionId<T extends Record<string, unknown>>(args: T): T & { clerkSessionId: string } {
+  return { ...args, clerkSessionId: 'fake-session' }
+}
+
+/**
+ * Identity passthrough for `VaultClient.withMeta`. Spreads the same
+ * passthroughs as `noopWithMachineLabel` + `noopWithSessionId`.
+ */
+export function noopWithMeta<T extends Record<string, unknown>>(
+  args: T
+): T & { machineLabel?: string; clerkSessionId: string } {
+  return noopWithSessionId(noopWithMachineLabel(args))
+}
+
+/**
  * Fake VaultClient — implements the same dispatch surface
  * (`query`/`mutation`/`action` + `withMachineLabel`) as the real
  * `VaultClient`, but routes to in-memory handlers keyed by Convex
@@ -144,6 +164,10 @@ export interface FakeVaultClient {
    * label via `InstallBackendOptions.machineLabel`.
    */
   withMachineLabel: <T extends Record<string, unknown>>(args: T) => T & { machineLabel?: string }
+  /** Mirrors the real `VaultClient.withSessionId`. */
+  withSessionId: <T extends Record<string, unknown>>(args: T) => T & { clerkSessionId: string }
+  /** Mirrors the real `VaultClient.withMeta`. */
+  withMeta: <T extends Record<string, unknown>>(args: T) => T & { machineLabel?: string; clerkSessionId: string }
   /** The label this fake client returns from `withMachineLabel`. Read-only. */
   readonly machineLabel: string | undefined
   /** Underlying state — tests can mutate to simulate cron-driven changes. */
@@ -475,6 +499,12 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
     if (machineLabel === undefined) return args
     return { ...args, machineLabel }
   }
+  function withSessionId<T extends Record<string, unknown>>(args: T): T & { clerkSessionId: string } {
+    return { ...args, clerkSessionId: state.clerkSessionId }
+  }
+  function withMeta<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string; clerkSessionId: string } {
+    return withSessionId(withMachineLabel(args))
+  }
 
-  return { query, mutation, action, state, withMachineLabel, machineLabel }
+  return { query, mutation, action, state, withMachineLabel, withSessionId, withMeta, machineLabel }
 }

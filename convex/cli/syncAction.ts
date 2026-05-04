@@ -44,7 +44,7 @@ export const buildBundleForUser = internalAction({
 
     const out: Array<BundleEntry> = await Promise.all(
       subs.map(async (s): Promise<BundleEntry> => {
-        const plaintextBlob = decrypt(s.ciphertext, s.nonce)
+        const plaintextBlob = decrypt(s.ciphertext, s.nonce, s.keyVersion)
         const contentHash = await sha256Hex(plaintextBlob)
         return {
           subId: s._id,

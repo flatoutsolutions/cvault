@@ -46,11 +46,12 @@ async function seedSub(t: ReturnType<typeof vault>) {
       scopes: ['user:inference'],
     },
   })
-  const { ciphertext, nonce } = encrypt(plaintext)
+  const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
   return await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
     email: 'status@example.com',
     ciphertext,
     nonce,
+    keyVersion,
     expiresAt: Date.now() + 60 * 60 * 1000,
     subscriptionType: 'max',
     rateLimitTier: 'tier1',
@@ -185,11 +186,12 @@ describe('subscriptions.queries.getStatus', () => {
         scopes: ['user:inference'],
       },
     })
-    const { ciphertext: ctB, nonce: nonceB } = encrypt(plaintextB)
+    const { ciphertext: ctB, nonce: nonceB, keyVersion: ctBKV } = encrypt(plaintextB)
     const subB = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
       email: 'subB@example.com',
       ciphertext: ctB,
       nonce: nonceB,
+      keyVersion: ctBKV,
       expiresAt: Date.now() + 60 * 60 * 1000,
       subscriptionType: 'max',
       rateLimitTier: 'tier1',

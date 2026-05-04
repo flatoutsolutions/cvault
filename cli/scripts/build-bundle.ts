@@ -112,7 +112,6 @@ interface RunBunBuildArgs {
 }
 
 async function runBunBuild({ argv, cwd }: RunBunBuildArgs): Promise<number> {
-  // eslint-disable-next-line no-console
   console.log(`[build-bundle] bun ${argv.join(' ')}`)
   const proc = Bun.spawn(['bun', ...argv], { cwd, stdout: 'inherit', stderr: 'inherit' })
   return await proc.exited

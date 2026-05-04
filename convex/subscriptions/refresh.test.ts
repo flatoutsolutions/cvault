@@ -63,12 +63,13 @@ async function seedSubscription(t: ReturnType<typeof vault>) {
       scopes: ['user:inference'],
     },
   })
-  const { ciphertext, nonce } = encrypt(plaintext)
+  const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
 
   return await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
     email: 'rotate@example.com',
     ciphertext,
     nonce,
+    keyVersion,
     expiresAt: Date.now() + 60_000,
     subscriptionType: 'max',
     rateLimitTier: 'tier1',
@@ -290,11 +291,12 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
         scopes: ['user:inference'],
       },
     })
-    const { ciphertext, nonce } = encrypt(plaintext)
+    const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
     const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
       email: 'stale@example.com',
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: expiredAt,
       subscriptionType: 'max',
       rateLimitTier: 'tier1',
@@ -472,11 +474,12 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
         scopes: ['user:inference'],
       },
     })
-    const { ciphertext, nonce } = encrypt(plaintext)
+    const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
     await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
       email: 'label-pull@example.com',
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: futureExpiry,
       subscriptionType: 'max',
       rateLimitTier: 'tier1',
@@ -514,11 +517,12 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
         scopes: ['user:inference'],
       },
     })
-    const { ciphertext, nonce } = encrypt(plaintext)
+    const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
     await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
       email: 'sid-pull@example.com',
       ciphertext,
       nonce,
+      keyVersion,
       expiresAt: futureExpiry,
       subscriptionType: 'max',
       rateLimitTier: 'tier1',

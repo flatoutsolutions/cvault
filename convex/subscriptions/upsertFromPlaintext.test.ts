@@ -92,7 +92,7 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
     expect(ciphertextHex).not.toContain(Buffer.from(SAMPLE_BLOB).toString('hex'))
 
     // Decrypting with the same VAULT_AES_KEY recovers the plaintext.
-    const recovered = decrypt(row?.ciphertext ?? new ArrayBuffer(0), row?.nonce ?? new ArrayBuffer(0))
+    const recovered = decrypt(row?.ciphertext ?? new ArrayBuffer(0), row?.nonce ?? new ArrayBuffer(0), row?.keyVersion)
     expect(recovered).toBe(SAMPLE_BLOB)
   })
 
@@ -204,7 +204,29 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
 
     // Decrypt the latest row -> should be the second blob, not the first.
     const row = await t.run(async (ctx) => await ctx.db.get('subscriptions', second.subId))
-    const recovered = decrypt(row?.ciphertext ?? new ArrayBuffer(0), row?.nonce ?? new ArrayBuffer(0))
+    const recovered = decrypt(row?.ciphertext ?? new ArrayBuffer(0), row?.nonce ?? new ArrayBuffer(0), row?.keyVersion)
     expect(recovered).toBe(newer)
+  })
+
+  it('upsertFromPlaintext stores the current keyVersion on the row', async () => {
+    const ORIGINAL_VERSION = process.env.VAULT_KEY_VERSION
+    process.env.VAULT_KEY_VERSION = 'v7'
+    try {
+      const t = vault()
+      await seedUser(t)
+      const result = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+        email: 'kv@example.com',
+        plaintextBlob: SAMPLE_BLOB,
+        expiresAt: 1,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+      })
+      await t.finishAllScheduledFunctions(vi.runAllTimers)
+      const row = await t.run(async (ctx) => await ctx.db.get('subscriptions', result.subId))
+      expect(row?.keyVersion).toBe('v7')
+    } finally {
+      if (ORIGINAL_VERSION === undefined) delete process.env.VAULT_KEY_VERSION
+      else process.env.VAULT_KEY_VERSION = ORIGINAL_VERSION
+    }
   })
 })

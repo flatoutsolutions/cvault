@@ -36,11 +36,12 @@ async function seedExpiringSub(t: ReturnType<typeof vault>, expiresAt: number) {
       scopes: ['user:inference'],
     },
   })
-  const { ciphertext, nonce } = encrypt(plaintext)
+  const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
   return await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
     email: 'expiring@example.com',
     ciphertext,
     nonce,
+    keyVersion,
     expiresAt,
     subscriptionType: 'max',
     rateLimitTier: 'tier1',
@@ -130,11 +131,12 @@ describe('subscriptions.crons.refreshExpiringTokens — fanout resilience', () =
           scopes: ['user:inference'],
         },
       })
-      const { ciphertext, nonce } = encrypt(plaintext)
+      const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
       const r = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
         email,
         ciphertext,
         nonce,
+        keyVersion,
         expiresAt,
         subscriptionType: 'max',
         rateLimitTier: 'tier1',
