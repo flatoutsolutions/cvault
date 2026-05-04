@@ -200,10 +200,31 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     )
   })
 
-  it('rejects requestRefresh when the caller does not own the sub', async () => {
+  /**
+   * Shared-vault contract (`convex/utils/users.ts:3-7`): every authenticated
+   * allowed-domain identity reads/writes any row. So when bob (allowed domain)
+   * calls `requestRefresh` for a sub seeded by alice, the action MUST succeed
+   * — the previous "ownership" guard was a leftover from the per-user model
+   * and broke `cvault sync --all` cross-machine.
+   *
+   * The audit row records the ACTING identity (bob), not the sub's nominal
+   * owner — that's the trail the dashboard's "Machines" view needs.
+   *
+   * machineActivity.userId semantics: pinned to the ACTING user's `users._id`,
+   * not the sub's owner. Pre-fix the row recorded `sub.userId` (alice) which
+   * produced a false trail ("alice did this" when bob actually did). The
+   * audit page key for "who acted" is `clerkSessionId` (rendered in
+   * `frontend/src/routes/dashboard/audit.lazy.tsx` via
+   * `clerkSessionId.slice(0, 12)`); `userId` is metadata, not display, but
+   * its semantics MUST be consistent with the rest of the audit signal.
+   * "Actor" is the only sane choice: future filters like "rows acted on
+   * by user X" can build on it; "rows affecting which sub" is already
+   * covered by `subscriptionId`.
+   */
+  it('requestRefresh succeeds across users (shared vault) and audits the acting identity', async () => {
     const t = vault()
     const inserted = await seedSubscription(t)
-    // Bob (a different identity) tries to refresh Alice's sub.
+    // Bob (a different allowed-domain identity) refreshes alice's sub.
     const bob = {
       subject: 'user_test_bob',
       issuer: 'https://clear-redbird-6.clerk.accounts.dev',
@@ -211,19 +232,160 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
       name: 'Bob',
       email: 'bob@flatout.solutions',
     }
-    await t.run(async (ctx) => {
-      await ctx.db.insert('users', {
+    const bobId = await t.run(async (ctx) => {
+      return await ctx.db.insert('users', {
         externalId: bob.subject,
         name: bob.name,
         primaryEmail: bob.email,
         otherEmails: [],
       })
     })
-    await expect(
-      t.withIdentity(bob).action(api.subscriptions.actions.requestRefresh, {
-        subId: inserted.subId,
+    __setAnthropicFetch(
+      makeFetchStub({
+        status: 200,
+        body: {
+          access_token: 'sk-ant-oat01-CROSS-AAAAAAAAAAAAAAAAAAAA',
+          refresh_token: 'sk-ant-ort01-CROSS-BBBBBBBBBBBBBBBBBBBB',
+          expires_in: 28_800,
+        },
       })
-    ).rejects.toThrow(/not found|not owned/i)
+    )
+
+    await t.withIdentity(bob).action(api.subscriptions.actions.requestRefresh, {
+      subId: inserted.subId,
+    })
+
+    // Audit row records bob as actor (clerkSessionId resolved from his
+    // identity) and alice's subscriptionId as target. The userId column
+    // is bob's _id (the actor), not alice's (the sub owner) — pre-fix
+    // bug attributed cross-user pulls to the row's nominal owner.
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const refreshRow = rows.find((r) => r.action === 'refresh')
+    expect(refreshRow).toBeDefined()
+    expect(refreshRow?.subscriptionId).toEqual(inserted.subId)
+    expect(refreshRow?.userId).toEqual(bobId)
+  })
+
+  /**
+   * pullForSwitch's machineActivity row attributes the ACTING user, not
+   * the sub owner. Same audit-truth rule as `requestRefresh` above.
+   * Pre-fix `pullForSwitch` wrote `userId: fresh.userId` which made every
+   * `cvault sync --all` invocation against another user's sub look like
+   * the sub owner did it.
+   */
+  it('pullForSwitch audits the acting user, not the sub owner', async () => {
+    const t = vault()
+    // Seed alice's sub fresh enough that the proactive-refresh path is a no-op.
+    await seedUser(t)
+    const { encrypt } = await import('./crypto')
+    const futureExpiry = Date.now() + 60 * 60 * 1000
+    const plaintext = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-ACTOR-AAAAAAAAAAAAAAAAAAAA',
+        refreshToken: 'sk-ant-ort01-ACTOR-BBBBBBBBBBBBBBBBBBBB',
+        expiresAt: futureExpiry,
+        scopes: ['user:inference'],
+      },
+    })
+    const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'actor-pull@example.com',
+      ciphertext,
+      nonce,
+      keyVersion,
+      expiresAt: futureExpiry,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    const bob = {
+      subject: 'user_test_bob',
+      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
+      name: 'Bob',
+      email: 'bob@flatout.solutions',
+    }
+    const bobId = await t.run(async (ctx) => {
+      return await ctx.db.insert('users', {
+        externalId: bob.subject,
+        name: bob.name,
+        primaryEmail: bob.email,
+        otherEmails: [],
+      })
+    })
+
+    await t.withIdentity(bob).action(api.subscriptions.actions.pullForSwitch, {
+      slotOrEmail: 'actor-pull@example.com',
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const pullRow = rows.find((r) => r.action === 'pull' && r.subscriptionId === inserted.subId)
+    expect(pullRow).toBeDefined()
+    expect(pullRow?.userId).toEqual(bobId)
+    expect(pullRow?.userId).not.toEqual(inserted.userId)
+  })
+
+  /**
+   * refreshSub's machineActivity row attributes the ACTING user, not the
+   * sub owner. Mirrors the actor-truth rule in pullForSwitch /
+   * requestRefresh.
+   */
+  it('refreshSub audits the acting user, not the sub owner', async () => {
+    const t = vault()
+    await seedUser(t)
+    const { encrypt } = await import('./crypto')
+    const futureExpiry = Date.now() + 60 * 60 * 1000
+    const plaintext = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-RFACTOR-AAAAAAAAAAAAAAAAA',
+        refreshToken: 'sk-ant-ort01-RFACTOR-BBBBBBBBBBBBBBBBB',
+        expiresAt: futureExpiry,
+        scopes: ['user:inference'],
+      },
+    })
+    const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'actor-refresh@example.com',
+      ciphertext,
+      nonce,
+      keyVersion,
+      expiresAt: futureExpiry,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    const bob = {
+      subject: 'user_test_bob',
+      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
+      name: 'Bob',
+      email: 'bob@flatout.solutions',
+    }
+    const bobId = await t.run(async (ctx) => {
+      return await ctx.db.insert('users', {
+        externalId: bob.subject,
+        name: bob.name,
+        primaryEmail: bob.email,
+        otherEmails: [],
+      })
+    })
+
+    // localState matches alice's seeded plaintext, so the action takes
+    // the inSync branch (no Anthropic refresh required).
+    const localState = plaintext
+
+    // Slot 1 resolves to alice's row via FCFS rank-ordinal — see
+    // internalReadsUnscoped.test.ts.
+    await t.withIdentity(bob).action(api.subscriptions.actions.refreshSub, {
+      slot: 1,
+      localState,
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const refreshRow = rows.find((r) => r.action === 'refresh' && r.subscriptionId === inserted.subId)
+    expect(refreshRow).toBeDefined()
+    expect(refreshRow?.userId).toEqual(bobId)
+    expect(refreshRow?.userId).not.toEqual(inserted.userId)
   })
 
   it("requestRefresh inserts a machineActivity row with action='refresh' on success", async () => {
@@ -538,6 +700,93 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     const pullRow = rows.find((r) => r.action === 'pull')
     expect(pullRow?.clerkSessionId).toBe('sess_x')
+  })
+
+  /**
+   * Production regression (the trigger for this hotfix): `cvault sync --all`
+   * iterates every dashboard-visible sub and calls `pullForSwitch` for
+   * each. The acting machine's owner is the Clerk identity at the time of
+   * the call — NOT the nominal owner of the sub being pulled. The pre-fix
+   * `getSubscriptionForActor` query scoped reads to the caller's user,
+   * which produced NOT_FOUND for any sub owned by another co-tenant in
+   * the shared vault. This test pins the post-fix behavior:
+   *   1. Alice's sub is seeded, bob is authenticated.
+   *   2. bob calls `pullForSwitch(alice's-email)` → succeeds, returns
+   *      alice's plaintext.
+   *   3. The machineActivity audit row records alice's subscriptionId as
+   *      the target — preserving accountability.
+   *
+   * The seed uses a far-future expiresAt so the proactive-refresh path
+   * is a no-op; this test asserts the lookup contract, not the refresh
+   * cycle (which is covered by the surrounding tests in this describe).
+   */
+  it('pullForSwitch resolves any sub by email regardless of caller (shared vault)', async () => {
+    const t = vault()
+    // Alice owns a fresh-token sub. We can't reuse `seedSubscription()`
+    // because its 1-minute expiry triggers proactive refresh and would
+    // muddy the cross-user assertion with an Anthropic round-trip.
+    await seedUser(t)
+    const { encrypt } = await import('./crypto')
+    const futureExpiry = Date.now() + 60 * 60 * 1000
+    const plaintext = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-CROSS-AAAAAAAAAAAAAAAAAAAA',
+        refreshToken: 'sk-ant-ort01-CROSS-BBBBBBBBBBBBBBBBBBBB',
+        expiresAt: futureExpiry,
+        scopes: ['user:inference'],
+      },
+    })
+    const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
+    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'cross-user-pull@example.com',
+      ciphertext,
+      nonce,
+      keyVersion,
+      expiresAt: futureExpiry,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // Bob (a different allowed-domain identity) pulls alice's sub.
+    const bob = {
+      subject: 'user_test_bob',
+      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
+      name: 'Bob',
+      email: 'bob@flatout.solutions',
+    }
+    await t.run(async (ctx) => {
+      await ctx.db.insert('users', {
+        externalId: bob.subject,
+        name: bob.name,
+        primaryEmail: bob.email,
+        otherEmails: [],
+      })
+    })
+
+    const fetchStub = makeFetchStub({ status: 200, body: { access_token: 'X' } })
+    __setAnthropicFetch(fetchStub)
+
+    const result = await t.withIdentity(bob).action(api.subscriptions.actions.pullForSwitch, {
+      slotOrEmail: 'cross-user-pull@example.com',
+    })
+
+    // Proactive refresh window is 5 minutes; futureExpiry is 1 hour — so
+    // Anthropic must NOT be touched. If this stub fires, the test caught
+    // a regression where the seed's expiry slipped into the window.
+    expect(fetchStub).not.toHaveBeenCalled()
+    expect(result.email).toBe('cross-user-pull@example.com')
+    expect(result.plaintextBlob.length).toBeGreaterThan(0)
+
+    // Audit: machineActivity row records alice's sub as target. The
+    // `userId` column on the audit row is the sub's owner (alice) since
+    // the action passes `fresh.userId`. The acting identity is captured
+    // via clerkSessionId, which `resolveCallerSession` resolves from
+    // bob's identity claim (or `unknown-session` fallback for BAPI JWTs).
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const pullRow = rows.find((r) => r.action === 'pull')
+    expect(pullRow).toBeDefined()
+    expect(pullRow?.subscriptionId).toEqual(inserted.subId)
   })
 
   it('redacts OAuth-token-shaped substrings from the error log', async () => {

@@ -135,12 +135,14 @@ describe('subscriptions.queries.getStatus', () => {
     )
   })
 
-  it('slot mode: returns the lowest-_creationTime row when multiple users have rows at the same slot (FCFS)', async () => {
+  it('slot mode: rank=1 returns the oldest live sub regardless of stored slot field (FCFS rank ordinal)', async () => {
     const t = vault()
     const aliceId = await seedUser(t, TEST_IDENTITY)
     const bobId = await seedUser(t, SECOND_IDENTITY)
 
-    // Insert order = creation order. Both at slot 1 — FCFS picks alice.
+    // Insert order = creation order. Both rows have stored slot=1 because
+    // each user's first sub gets slot=1 from the per-user allocator.
+    // FCFS rank=1 = alice (oldest).
     const aliceSubId = await t.run(async (ctx) => {
       return await ctx.db.insert('subscriptions', {
         userId: aliceId,
@@ -171,6 +173,69 @@ describe('subscriptions.queries.getStatus', () => {
     const status = await t.withIdentity(SECOND_IDENTITY).query(api.subscriptions.queries.getStatus, { slot: 1 })
     expect(status.sub._id).toBe(aliceSubId)
     expect(status.sub.email).toBe('alice@example.com')
+  })
+
+  it('slot mode: rank=2 returns the second-oldest live sub even when no row has stored slot=2', async () => {
+    // Regression for the prod `cvault switch 2` 404. Both users' first
+    // subs have stored slot=1 (per-user allocator). FCFS rank=2 must
+    // resolve to the SECOND row globally, ignoring the stored slot field.
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'alice@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+    const bobSubId = await t.run(async (ctx) => {
+      return await ctx.db.insert('subscriptions', {
+        userId: bobId,
+        email: 'bob@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    const status = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getStatus, { slot: 2 })
+    expect(status.sub._id).toBe(bobSubId)
+    expect(status.sub.email).toBe('bob@example.com')
+  })
+
+  it('slot mode: rank beyond live count throws NOT_FOUND', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId: aliceId,
+        email: 'alice@example.com',
+        slot: 1,
+        ciphertext: new ArrayBuffer(8),
+        nonce: new ArrayBuffer(12),
+        expiresAt: Date.now() + 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+        lastRefreshedAt: Date.now(),
+      })
+    })
+
+    await expect(t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.getStatus, { slot: 5 })).rejects.toThrow(
+      /not.*found|no subscription/i
+    )
   })
 
   it('returns sub meta with no refreshLog when none exists', async () => {

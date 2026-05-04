@@ -249,14 +249,23 @@ async function resolveSubFromArgs(
     return sub
   }
 
-  // Legacy slot path: ambiguous in shared mode, so disambiguate via
-  // first-come-first-serve (lowest `_creationTime`). A full-table scan is
-  // acceptable for the deployment size; see `list`'s comment.
+  // Legacy slot path. In shared-vault world the stored `slot` field on a
+  // row is per-user and ambiguous globally (every user's first sub has
+  // stored slot=1), so we ignore it for lookups. Instead the input is
+  // interpreted as a FCFS rank ordinal over the active table:
+  //
+  //   slot=1 → oldest live sub
+  //   slot=2 → second-oldest
+  //   slot=N → Nth-oldest
+  //
+  // Matches `internalReads.getSubscriptionBySlotOrEmail`'s slot branch
+  // so `cvault status N` and `cvault switch N` resolve to the same row
+  // for any given N. A full-table scan is acceptable for the deployment
+  // size; see `list`'s comment.
   const slot = args.slot ?? 0
-  const all = await ctx.db.query('subscriptions').collect()
-  const live = all.filter((s) => s.removedAt === undefined && s.slot === slot)
-  live.sort((a, b) => a._creationTime - b._creationTime)
-  const sub = live[0]
+  const all = await ctx.db.query('subscriptions').order('asc').collect()
+  const live = all.filter((s) => s.removedAt === undefined)
+  const sub = live[slot - 1]
   if (!sub) {
     throw new ConvexError({ code: 'NOT_FOUND', message: `No subscription at slot ${slot.toString()}` })
   }

@@ -67,8 +67,9 @@ export const pullForSwitch = authenticatedAction({
   }> => {
     const identity = getIdentity(ctx)
     // Read the sub via an internal query so we can see ciphertext + nonce.
-    const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionForActor, {
-      externalId: identity.subject,
+    // Shared-vault: the lookup is global; the `authenticatedAction` wrapper
+    // already enforced Clerk + allowedEmailDomains.
+    const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionBySlotOrEmail, {
       slotOrEmail,
     })
     if (!sub) {
@@ -86,8 +87,7 @@ export const pullForSwitch = authenticatedAction({
     }
 
     // Re-read after potential refresh to get the fresh ciphertext.
-    const fresh = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, {
-      externalId: identity.subject,
+    const fresh = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionById, {
       subId: sub._id,
     })
     if (!fresh) {
@@ -115,8 +115,30 @@ export const pullForSwitch = authenticatedAction({
     // Audit: record this pull. CLI BAPI-minted JWTs do not carry a `sid`
     // claim so we accept it as an explicit arg, preferring the verified
     // identity claim when present (FAPI/dashboard origin).
+    //
+    // userId is the ACTING user's `users._id`, NOT `fresh.userId` (the
+    // sub owner). Pre-fix the row recorded the sub owner, so under
+    // shared-vault `cvault sync --all` from saad's machine pulling
+    // samuel's row would falsely attribute the pull to samuel. Resolve
+    // the caller's user via the same internal helper used by
+    // backup/keyRotation (see `internal.users.actions.getIdByExternalId`).
+    const actorUserId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
+      externalId: identity.subject,
+    })
+    if (!actorUserId) {
+      // The Clerk webhook hasn't yet inserted a row for the caller. We
+      // could silently skip the audit, but skipping a pull's audit row
+      // is a worse failure mode than throwing — pulls hand plaintext
+      // tokens to the CLI; an audit gap on that path makes incident
+      // forensics impossible. Throw with the same shape the
+      // backup/keyRotation actions already use.
+      throw new ConvexError({
+        code: 'USER_NOT_FOUND',
+        message: 'No user row for caller. Sign in once to trigger the Clerk webhook, then retry.',
+      })
+    }
     await ctx.runMutation(internal.machineActivity.mutations.record, {
-      userId: fresh.userId,
+      userId: actorUserId,
       clerkSessionId: resolveCallerSession(identity, callerArgSid),
       action: 'pull',
       subscriptionId: fresh._id,
@@ -316,8 +338,8 @@ export const refreshSub = authenticatedAction({
     action: 'inSync' | 'pulledFresh' | 'adoptedLocal' | 'refreshedFromAnthropic'
   }> => {
     const identity = getIdentity(ctx)
-    const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionForActor, {
-      externalId: identity.subject,
+    // Shared-vault lookup; access policy enforced by `authenticatedAction`.
+    const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionBySlotOrEmail, {
       slotOrEmail: slot.toString(),
     })
     if (!sub) {
@@ -348,8 +370,7 @@ export const refreshSub = authenticatedAction({
 
     // Step 2: refresh against Anthropic when required.
     const now = Date.now()
-    const post = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, {
-      externalId: identity.subject,
+    const post = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionById, {
       subId: sub._id,
     })
     if (!post) {
@@ -378,8 +399,7 @@ export const refreshSub = authenticatedAction({
     }
 
     // Step 3: re-read after any mutations, then decide what to return.
-    const fresh = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, {
-      externalId: identity.subject,
+    const fresh = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionById, {
       subId: sub._id,
     })
     if (!fresh) {
@@ -420,9 +440,20 @@ export const refreshSub = authenticatedAction({
     }
 
     // Audit: every successful refreshSub leaves a machineActivity row,
-    // matching `requestRefresh` and `pullForSwitch` behavior.
+    // matching `requestRefresh` and `pullForSwitch` behavior. userId is
+    // the ACTING user, not the sub owner — see pullForSwitch for the
+    // rationale.
+    const actorUserId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
+      externalId: identity.subject,
+    })
+    if (!actorUserId) {
+      throw new ConvexError({
+        code: 'USER_NOT_FOUND',
+        message: 'No user row for caller. Sign in once to trigger the Clerk webhook, then retry.',
+      })
+    }
     await ctx.runMutation(internal.machineActivity.mutations.record, {
-      userId: fresh.userId,
+      userId: actorUserId,
       clerkSessionId: resolveCallerSession(identity, callerArgSid),
       action: 'refresh',
       subscriptionId: fresh._id,
@@ -475,15 +506,15 @@ export const requestRefresh = authenticatedAction({
   returns: v.null(),
   handler: async (ctx, { subId, machineLabel, clerkSessionId: callerArgSid }): Promise<null> => {
     const identity = getIdentity(ctx)
-    // Confirm the sub belongs to the caller.
-    const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionByIdForActor, {
-      externalId: identity.subject,
+    // Shared-vault: any authed allowed-domain caller resolves any sub.
+    // The `authenticatedAction` wrapper is the only access gate.
+    const sub = await ctx.runQuery(internal.subscriptions.internalReads.getSubscriptionById, {
       subId,
     })
     if (!sub) {
       throw new ConvexError({
         code: 'NOT_FOUND',
-        message: 'Subscription not found or not owned by current user',
+        message: 'Subscription not found',
       })
     }
 
@@ -493,8 +524,21 @@ export const requestRefresh = authenticatedAction({
     })
 
     // Audit: record the user-initiated refresh. Per spec §4 + §12.
+    // userId is the ACTING user's _id (resolved from identity.subject),
+    // NOT `sub.userId` (the sub owner). Pre-fix this attributed
+    // dashboard "Force Refresh" clicks to whoever originally added the
+    // sub; corrected to attribute the actual click. See pullForSwitch.
+    const actorUserId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
+      externalId: identity.subject,
+    })
+    if (!actorUserId) {
+      throw new ConvexError({
+        code: 'USER_NOT_FOUND',
+        message: 'No user row for caller. Sign in once to trigger the Clerk webhook, then retry.',
+      })
+    }
     await ctx.runMutation(internal.machineActivity.mutations.record, {
-      userId: sub.userId,
+      userId: actorUserId,
       clerkSessionId: resolveCallerSession(identity, callerArgSid),
       action: 'refresh',
       subscriptionId: subId,
