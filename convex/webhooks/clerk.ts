@@ -1,5 +1,3 @@
-'use node'
-
 import type { UserJSON } from '@clerk/backend'
 
 import { internal } from '../_generated/api'

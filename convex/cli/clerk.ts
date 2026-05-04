@@ -1,5 +1,3 @@
-'use node'
-
 /**
  * Thin wrapper around the few Clerk Backend API endpoints the cvault
  * server side touches:
