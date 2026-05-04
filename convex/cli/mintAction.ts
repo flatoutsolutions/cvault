@@ -25,17 +25,23 @@
  *   - Without verification, a user holding any Clerk JWT could pass a
  *     stolen `sid` and mint a convex JWT for someone else. The secret key
  *     would be a confused deputy.
+ *   - The verified payload's `email` claim is checked against the runtime
+ *     allowlist (allowedEmailDomains table, with bootstrap fallback to
+ *     `flatout.solutions`). Disallowed emails get an `EMAIL_DOMAIN_NOT_ALLOWED`
+ *     ConvexError, which the HTTP route maps to 403.
  */
 import { verifyToken } from '@clerk/backend'
 import { ConvexError, v } from 'convex/values'
 
 import { internalAction } from '../_generated/server'
+import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from '../utils/domainGate'
+import { loadAllowedDomainsFromAction } from '../utils/domainGateAction'
 import { createSessionTokenFromTemplate } from './clerk'
 
 export const mintConvexJwt = internalAction({
   args: { clerkSessionToken: v.string() },
   returns: v.object({ jwt: v.string() }),
-  handler: async (_ctx, { clerkSessionToken }): Promise<{ jwt: string }> => {
+  handler: async (ctx, { clerkSessionToken }): Promise<{ jwt: string }> => {
     const secretKey = process.env.CLERK_SECRET_KEY
     if (!secretKey) {
       throw new ConvexError({
@@ -44,11 +50,12 @@ export const mintConvexJwt = internalAction({
       })
     }
 
-    let payload: { sid?: unknown; sub?: unknown }
+    let payload: { sid?: unknown; sub?: unknown; email?: unknown }
     try {
       payload = (await verifyToken(clerkSessionToken, { secretKey })) as {
         sid?: unknown
         sub?: unknown
+        email?: unknown
       }
     } catch (err) {
       throw new ConvexError({
@@ -61,6 +68,15 @@ export const mintConvexJwt = internalAction({
       throw new ConvexError({
         code: 'SESSION_TOKEN_INVALID',
         message: 'Clerk session token is missing `sid` or `sub` claims',
+      })
+    }
+
+    const email = typeof payload.email === 'string' ? payload.email : null
+    const domains = await loadAllowedDomainsFromAction(ctx)
+    if (!isAllowedEmail(email, domains)) {
+      throw new ConvexError({
+        code: DOMAIN_REJECTION_ERROR_CODE,
+        message: DOMAIN_REJECTION_MESSAGE,
       })
     }
 

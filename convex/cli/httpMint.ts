@@ -15,6 +15,7 @@
  * Errors:
  *   - 400 — body missing / malformed
  *   - 401 — `SESSION_TOKEN_INVALID` (signature, expiry, revocation)
+ *   - 403 — `EMAIL_DOMAIN_NOT_ALLOWED` (caller's email is not on the allowlist)
  *   - 404 — `JWT_TEMPLATE_NOT_FOUND` (no `convex` template in Clerk)
  *   - 500 — `CONFIGURATION_ERROR` / `CLERK_BACKEND_ERROR`
  */
@@ -58,11 +59,13 @@ export const cliMintHandler = httpAction(async (ctx, request) => {
       const status =
         code === 'SESSION_TOKEN_INVALID'
           ? 401
-          : code === 'JWT_TEMPLATE_NOT_FOUND'
-            ? 404
-            : code === 'CONFIGURATION_ERROR'
-              ? 500
-              : 500
+          : code === 'EMAIL_DOMAIN_NOT_ALLOWED'
+            ? 403
+            : code === 'JWT_TEMPLATE_NOT_FOUND'
+              ? 404
+              : code === 'CONFIGURATION_ERROR'
+                ? 500
+                : 500
       return jsonResponse(status, { error: code, message })
     }
     return jsonResponse(500, {

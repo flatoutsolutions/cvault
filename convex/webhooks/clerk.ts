@@ -21,29 +21,21 @@ export const clerkUsersWebhook = httpAction(async (ctx, request) => {
 
   switch (event.type) {
     case 'user.created':
-    // intentional fallthrough
     case 'user.updated': {
       const data = event.data
       const email = primaryEmailFromUserJSON(data)
-      if (!isAllowedEmail(email)) {
-        // Disallowed domain. Nuke via BAPI + remove any orphan users row.
+      const domains = await ctx.runQuery(internal.allowedDomains.queries.loadInternal, {})
+      if (!isAllowedEmail(email, domains)) {
         const userId = data.id
         const result = await deleteClerkUser(userId)
         if (!result.ok) {
-          // 5xx from Clerk — return 500 so Clerk retries the webhook later.
-          // (404 was treated as success inside deleteClerkUser.)
           console.error(
-            `domainGate: BAPI delete failed for ${userId} (${data.email_addresses
-              .map((e) => e.email_address)
-              .join(',')}) — status=${String(result.status)}, body=${result.body.slice(0, 200)}`
+            `domainGate: BAPI delete failed for ${userId} (${email ?? '<missing>'}) — status=${String(result.status)}, body=${result.body.slice(0, 200)}`
           )
           return new Response('clerk delete failed', { status: 500 })
         }
-        // Belt-and-braces: clear any orphan users row that may exist from a
-        // prior allowed state (rare — only happens if the user changed their
-        // primary email after signup).
         await ctx.runMutation(internal.users.actions.remove, { clerkUserId: userId })
-        console.warn(`domainGate: rejected ${userId} primary email ${email ?? '<missing>'} — deleted via BAPI`)
+        console.warn(`domainGate: rejected ${userId} (${email ?? '<missing>'}) — deleted via BAPI`)
         return new Response(null, { status: 200 })
       }
       await ctx.runMutation(internal.users.actions.upsert, { data })
