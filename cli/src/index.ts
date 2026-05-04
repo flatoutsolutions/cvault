@@ -24,6 +24,7 @@ import { defineCommand, runCommand, showUsage } from 'citty'
 import pkg from '../package.json' with { type: 'json' }
 import { addCommand } from './commands/add'
 import { cleanCommand } from './commands/clean'
+import { exportCommand } from './commands/exportBackup'
 import { listCommand } from './commands/list'
 import { loginCommand } from './commands/login'
 import { refreshCommand } from './commands/refresh'
@@ -51,6 +52,7 @@ const main = defineCommand({
     sync: syncCommand,
     clean: cleanCommand,
     'rotate-key': rotateKeyCommand,
+    export: exportCommand,
   },
 })
 
