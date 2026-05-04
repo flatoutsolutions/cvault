@@ -1,27 +1,12 @@
 /**
  * Authenticated Convex function wrappers.
  *
- * These wrap `query` / `mutation` / `action` and:
- *  1. Verify `ctx.auth.getUserIdentity()` is non-null (else throw).
- *  2. Pass the verified `UserIdentity` as `ctx.identity`.
+ *  1. Verify ctx.auth.getUserIdentity() is non-null.
+ *  2. Load runtime allowlist (allowedEmailDomains table or BOOTSTRAP).
+ *  3. Verify identity.email is on the allowlist.
+ *  4. Pass UserIdentity through as ctx.identity.
  *
- * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §5 + §8 + §12.
- *
- * USAGE
- * -----
- * Inside an authenticated handler, read the identity via `getIdentity(ctx)`
- * (NOT `ctx.identity` — the runtime augmentation is invisible to TS through
- * the registered-function cast, but `getIdentity` re-asserts it safely):
- *
- * ```ts
- * export const myQuery = authenticatedQuery({
- *   args: {},
- *   handler: async (ctx) => {
- *     const identity = getIdentity(ctx)
- *     return identity.subject
- *   },
- * })
- * ```
+ * Spec: docs/superpowers/specs/2026-05-04-flatout-domain-only-design.md §3.4
  */
 import {
   type ActionBuilder,
@@ -37,6 +22,9 @@ import { ConvexError, type PropertyValidators } from 'convex/values'
 
 import type { DataModel } from '../_generated/dataModel'
 import { action, mutation, query } from '../_generated/server'
+import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from './domainGate'
+import { loadAllowedDomainsFromAction } from './domainGateAction'
+import { loadAllowedDomains } from './domainGateServer'
 
 /**
  * Throwing a plain `Error` from a public function surfaces on the client
@@ -69,9 +57,6 @@ export function getIdentity(
   if (!id || typeof id !== 'object') {
     throw new Error('getIdentity called on a non-authenticated ctx. Use authenticatedQuery/Mutation/Action.')
   }
-  // We trust the wrapper attached the same shape Convex returned from
-  // ctx.auth.getUserIdentity(). The `subject`/`issuer`/`tokenIdentifier`
-  // tests are belt-and-braces.
   const candidate = id as Record<string, unknown>
   if (
     typeof candidate.subject !== 'string' ||
@@ -83,9 +68,33 @@ export function getIdentity(
   return id as UserIdentity
 }
 
-/**
- * Like `query`, but ensures the caller is authenticated.
- */
+function rejectDomain(): never {
+  throw new ConvexError({
+    code: DOMAIN_REJECTION_ERROR_CODE,
+    message: DOMAIN_REJECTION_MESSAGE,
+  })
+}
+
+async function resolveServer(ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>): Promise<UserIdentity> {
+  const identity = await ctx.auth.getUserIdentity()
+  if (!identity) throw notAuthenticatedError()
+  const domains = await loadAllowedDomains(ctx)
+  if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains)) {
+    rejectDomain()
+  }
+  return identity
+}
+
+async function resolveAction(ctx: GenericActionCtx<DataModel>): Promise<UserIdentity> {
+  const identity = await ctx.auth.getUserIdentity()
+  if (!identity) throw notAuthenticatedError()
+  const domains = await loadAllowedDomainsFromAction(ctx)
+  if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains)) {
+    rejectDomain()
+  }
+  return identity
+}
+
 export const authenticatedQuery = (<Args extends DefaultFunctionArgs>(fn: {
   args?: PropertyValidators
   returns?: import('convex/values').Validator<unknown>
@@ -95,18 +104,12 @@ export const authenticatedQuery = (<Args extends DefaultFunctionArgs>(fn: {
     args: fn.args ?? {},
     ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
     handler: async (ctx, args) => {
-      const identity = await ctx.auth.getUserIdentity()
-      if (!identity) {
-        throw notAuthenticatedError()
-      }
+      const identity = await resolveServer(ctx)
       return await fn.handler(Object.assign(ctx, { identity }), args as Args)
     },
   })
 }) as QueryBuilder<DataModel, 'public'>
 
-/**
- * Like `mutation`, but ensures the caller is authenticated.
- */
 export const authenticatedMutation = (<Args extends DefaultFunctionArgs>(fn: {
   args?: PropertyValidators
   returns?: import('convex/values').Validator<unknown>
@@ -116,18 +119,12 @@ export const authenticatedMutation = (<Args extends DefaultFunctionArgs>(fn: {
     args: fn.args ?? {},
     ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
     handler: async (ctx, args) => {
-      const identity = await ctx.auth.getUserIdentity()
-      if (!identity) {
-        throw notAuthenticatedError()
-      }
+      const identity = await resolveServer(ctx)
       return await fn.handler(Object.assign(ctx, { identity }), args as Args)
     },
   })
 }) as MutationBuilder<DataModel, 'public'>
 
-/**
- * Like `action`, but ensures the caller is authenticated.
- */
 export const authenticatedAction = (<Args extends DefaultFunctionArgs>(fn: {
   args?: PropertyValidators
   returns?: import('convex/values').Validator<unknown>
@@ -137,10 +134,7 @@ export const authenticatedAction = (<Args extends DefaultFunctionArgs>(fn: {
     args: fn.args ?? {},
     ...(fn.returns !== undefined ? { returns: fn.returns } : {}),
     handler: async (ctx, args) => {
-      const identity = await ctx.auth.getUserIdentity()
-      if (!identity) {
-        throw notAuthenticatedError()
-      }
+      const identity = await resolveAction(ctx)
       return await fn.handler(Object.assign(ctx, { identity }), args as Args)
     },
   })

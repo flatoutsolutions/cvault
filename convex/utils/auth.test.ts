@@ -52,3 +52,70 @@ describe('authenticated wrappers', () => {
     })
   })
 })
+
+describe('authenticated wrappers — runtime allowlist', () => {
+  const evilIdentity = {
+    subject: 'user_test_evil',
+    issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+    tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_evil',
+    name: 'Evil',
+    email: 'evil@gmail.com',
+  } as const
+
+  const noEmailIdentity = {
+    subject: 'user_test_no_email',
+    issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+    tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_no_email',
+    name: 'NoEmail',
+  } as const
+
+  it('rejects wrong-domain identity on query (bootstrap fallback)', async () => {
+    const t = vault()
+    await expect(t.withIdentity(evilIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
+    )
+  })
+
+  it('rejects wrong-domain on mutation', async () => {
+    const t = vault()
+    await expect(
+      t.withIdentity(evilIdentity).mutation(api.subscriptions.mutations.softRemove, { email: 'x@example.com' })
+    ).rejects.toThrow(/EMAIL_DOMAIN_NOT_ALLOWED|domain/i)
+  })
+
+  it('rejects wrong-domain on action', async () => {
+    const t = vault()
+    await expect(
+      t.withIdentity(evilIdentity).action(api.subscriptions.actions.pullForSwitch, { slotOrEmail: 'x@example.com' })
+    ).rejects.toThrow(/EMAIL_DOMAIN_NOT_ALLOWED|domain/i)
+  })
+
+  it('rejects no-email identity', async () => {
+    const t = vault()
+    await expect(t.withIdentity(noEmailIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
+      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
+    )
+  })
+
+  it('accepts identity matching a domain that was added to the table', async () => {
+    const t = vault()
+    await t.run(async (ctx) => {
+      await ctx.db.insert('allowedEmailDomains', { domain: 'acme.com', addedAtMs: 1 })
+      await ctx.db.insert('users', {
+        externalId: 'user_test_acme',
+        name: 'Acme',
+        primaryEmail: 'bob@acme.com',
+        otherEmails: [],
+      })
+    })
+    const acmeIdentity = {
+      subject: 'user_test_acme',
+      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
+      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_acme',
+      name: 'Acme',
+      email: 'bob@acme.com',
+    } as const
+    const result = await t.withIdentity(acmeIdentity).query(api.subscriptions.queries.listForUser, {})
+    expect(Array.isArray(result)).toBe(true)
+  })
+})

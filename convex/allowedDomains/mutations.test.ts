@@ -60,8 +60,10 @@ describe('allowedDomains.mutations', () => {
   describe('remove', () => {
     it('throws when caller is not authenticated', async () => {
       const t = vault()
-      const fakeId = 'jd7000000000000000000000000' as never
-      await expect(t.mutation(api.allowedDomains.mutations.remove, { id: fakeId })).rejects.toThrow(
+      const id = await t.run(
+        async (ctx) => await ctx.db.insert('allowedEmailDomains', { domain: 'acme.com', addedAtMs: 1 })
+      )
+      await expect(t.mutation(api.allowedDomains.mutations.remove, { id })).rejects.toThrow(
         /authenticated|EMAIL_DOMAIN_NOT_ALLOWED/i
       )
     })

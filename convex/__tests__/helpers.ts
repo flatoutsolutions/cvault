@@ -32,7 +32,7 @@ export const TEST_IDENTITY = {
   issuer: 'https://clear-redbird-6.clerk.accounts.dev',
   tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_alice',
   name: 'Alice Tester',
-  email: 'alice@example.com',
+  email: 'alice@flatout.solutions',
 } as const
 
 export const SECOND_IDENTITY = {
@@ -40,7 +40,7 @@ export const SECOND_IDENTITY = {
   issuer: 'https://clear-redbird-6.clerk.accounts.dev',
   tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
   name: 'Bob Tester',
-  email: 'bob@example.com',
+  email: 'bob@flatout.solutions',
 } as const
 
 /**
