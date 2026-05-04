@@ -45,16 +45,19 @@ export const subscriptionsSchema = defineTable({
 })
   .index('byUserAndSlot', ['userId', 'slot'])
   .index('byUserAndEmail', ['userId', 'email'])
-  // Cross-user email lookup for the shared-vault read path. See
-  // `convex/utils/users.ts:3-7` — any authenticated identity reads any
-  // row, so `getMetaByEmail` (queries.ts) and the internal
-  // `getSubscriptionBySlotOrEmail` (internalReads.ts) both resolve by
-  // email globally. The legacy `byUserAndEmail` index is retained
-  // because per-user paths still use it: `softRemove` / `rename` in
-  // mutations.ts (write-side ownership stamp). Key rotation
+  // Cross-user email lookup for the shared-vault read AND public-mutation
+  // paths. See `convex/utils/users.ts:3-7` — any authenticated identity
+  // reads/writes any row. Used by:
+  //  - `getMetaByEmail` (queries.ts) — read path
+  //  - `getSubscriptionBySlotOrEmail` (internalReads.ts) — read path
+  //  - `softRemove` / `rename` (mutations.ts) — public mutation path,
+  //    unscoped here so cross-user `cvault remove` / `cvault rename`
+  //    succeed under shared vault.
+  // The legacy `byUserAndEmail` index is retained because `upsertSub`
+  // (mutations.ts) still uses it for per-user write dedupe — that's a
+  // deliberate scope decision, not parity drift. Key rotation
   // (`listSubsForRotation`) and backup export (`listAllActiveSubsRaw`)
-  // are NOW vault-wide — they iterate all rows and don't use this
-  // index. Index additions are zero-downtime; removals would need a
-  // migration commit.
+  // are vault-wide and don't use either index. Index additions are
+  // zero-downtime; removals would need a migration commit.
   .index('byEmail', ['email'])
   .index('byExpiry', ['expiresAt'])
