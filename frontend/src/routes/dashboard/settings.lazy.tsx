@@ -7,7 +7,7 @@
  *
  * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §8.
  */
-import { createLazyFileRoute } from '@tanstack/react-router'
+import { Link, createLazyFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 
 import { ExportBackupDialog } from '@/components/dashboard/ExportBackupDialog'
@@ -81,6 +81,21 @@ function SettingsPage() {
             <Button type="button" variant="outline" disabled>
               Configure notifications
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Allowed email domains</CardTitle>
+            <CardDescription>
+              Manage the list of email domains permitted to sign in to cvault. Empty list falls back to{' '}
+              <code className="bg-muted rounded px-1">flatout.solutions</code>.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link to="/dashboard/settings/domains" className="text-primary text-sm hover:underline">
+              Manage allowed email domains →
+            </Link>
           </CardContent>
         </Card>
       </div>

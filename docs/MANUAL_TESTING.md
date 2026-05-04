@@ -562,3 +562,42 @@ When something fails, capture **all** of the following before filing the report 
 - [ ] Convex deployment slug (visible in `.env.local` or `npx convex env list`)
 
 Bundle the above into a bug report (Slack DM, ticket, GitHub issue — whatever your workflow is). Avoid pasting any token-shaped string. If you accidentally paste one, rotate `VAULT_AES_KEY` is **not** sufficient — you must re-add every affected sub (key rotation isn't supported in v1 per spec §6).
+
+## Email-domain allowlist (UI-configurable)
+
+cvault restricts account creation and access to email domains on the runtime allowlist (Convex `allowedEmailDomains` table). Five layers enforce:
+
+1. **Clerk dashboard** — set "Allowed email domains" to match cvault's allowlist (manual; one-time per env).
+2. **Convex webhook** — deletes wrong-domain users via Clerk BAPI.
+3. **Convex auth wrappers** — every authenticated query/mutation/action consults the runtime list.
+4. **CLI JWT mint** — refuses mint for non-allowlisted emails (HTTP 403).
+5. **Frontend `DomainGuard`** — UX layer that signs out wrong-domain users.
+
+### JWT template requirement
+
+The `convex` JWT template on Clerk must include the `email` claim. Verify under **JWT templates → convex → Claims** that `email` is present (it is by default).
+
+### Bootstrap fallback
+
+When `allowedEmailDomains` is empty, the system falls back to `['flatout.solutions']`. So a fresh deployment Just Works for FlatOut accounts.
+
+### Managing the allowlist (UI)
+
+1. Sign in with an allowlisted email.
+2. Visit `/dashboard/settings/domains`.
+3. Click "Add" with a domain (e.g. `acme.com`); the form normalizes (lowercase, strip `@`).
+4. Click "Remove" on any row except your own (the row containing your domain is disabled).
+5. Confirm in the dialog.
+
+### Verification steps
+
+1. **Allowed signup:** sign up with `@flatout.solutions` (or any added domain) → dashboard renders.
+2. **Wrong-domain blocked at Clerk:** if Clerk dashboard "Allowed domains" set, signup is blocked there.
+3. **Wrong-domain (Clerk allowlist disabled):** signup succeeds at Clerk; cvault webhook deletes the user; reload → signed-out CTA.
+4. **CLI:** `cvault login` with FlatOut session → success. With non-allowlisted session → "Your email domain is not allowed to use cvault." printed; exit 1.
+5. **Settings UI:** Add `acme.com`. Sign up `bob@acme.com` → dashboard works. Remove `acme.com` → bob blocked on next page load.
+6. **Self-removal block:** as alice@flatout.solutions, try to remove `flatout.solutions` from the UI when it's the only row → server rejects with `CANNOT_REMOVE_OWN_DOMAIN`.
+
+### Migration of pre-existing wrong-domain users
+
+If any non-allowlisted users existed before the gate landed, manually delete them in the Clerk dashboard.

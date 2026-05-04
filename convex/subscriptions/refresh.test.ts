@@ -209,7 +209,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
       issuer: 'https://clear-redbird-6.clerk.accounts.dev',
       tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
       name: 'Bob',
-      email: 'bob@example.com',
+      email: 'bob@flatout.solutions',
     }
     await t.run(async (ctx) => {
       await ctx.db.insert('users', {

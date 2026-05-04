@@ -65,7 +65,13 @@ describe('exportEncryptedBackup', () => {
     await seedSubscription({ t, identity: TEST_IDENTITY, email: 'mine@example.com', expiresAt: 1 })
     // Seed a sub for a different identity. The export under TEST_IDENTITY
     // must NOT include it.
-    const other = { subject: 'user_other', issuer: 'i', tokenIdentifier: 'i|user_other', name: 'O', email: 'o@e.com' }
+    const other = {
+      subject: 'user_other',
+      issuer: 'i',
+      tokenIdentifier: 'i|user_other',
+      name: 'O',
+      email: 'o@flatout.solutions',
+    }
     await seedSubscription({ t, identity: other, email: 'theirs@example.com', expiresAt: 1 })
 
     const result = await t.withIdentity(TEST_IDENTITY).action(api.backup.actions.exportEncryptedBackup, {

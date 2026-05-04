@@ -35,9 +35,23 @@ vi.mock('../../src/auth/openBrowser', () => ({
   openBrowser: vi.fn().mockResolvedValue(undefined),
 }))
 
+// Real class so `instanceof` works inside login.ts's catch branch. Defined
+// via vi.hoisted so vi.mock's hoisted factory can capture the reference.
+const { FakeClerkEmailDomainNotAllowedError } = vi.hoisted(() => ({
+  FakeClerkEmailDomainNotAllowedError: class FakeClerkEmailDomainNotAllowedError extends Error {
+    override readonly name = 'ClerkEmailDomainNotAllowedError'
+    readonly serverMessage: string
+    constructor(serverMessage: string) {
+      super(serverMessage)
+      this.serverMessage = serverMessage
+    }
+  },
+}))
+
 vi.mock('../../src/auth/clerkFapi', () => ({
   exchangeTicketForSession: vi.fn(),
   ClerkSessionExpiredError: class extends Error {},
+  ClerkEmailDomainNotAllowedError: FakeClerkEmailDomainNotAllowedError,
   // Read from cli/package.json so the mocked UA tracks every release bump
   // automatically (matches the production CLI_VERSION source-of-truth fix).
   cliUserAgent: () => `cvault-cli/${pkg.version} (test)`,
@@ -126,6 +140,46 @@ describe('runLogin', () => {
     ).rejects.toThrow(/bad ticket/)
 
     expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('prints a friendly error and exits 1 on EMAIL_DOMAIN_NOT_ALLOWED', async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(startCallbackServer).mockReturnValue({
+      port: 12345,
+      result: Promise.resolve({ signInToken: 'sit_x' }),
+      cancel,
+    })
+
+    vi.mocked(exchangeTicketForSession).mockRejectedValueOnce(
+      new FakeClerkEmailDomainNotAllowedError('Your email domain is not allowed to use cvault.')
+    )
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // process.exit(1) must throw so the test can assert the call instead of
+    // actually exiting the test runner.
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${String(code)})`)
+    }) as never)
+
+    try {
+      await expect(
+        runLogin({
+          dashboardUrl: 'https://app.cvault.dev',
+          convexUrl: 'https://x.convex.cloud',
+          frontendApiUrl: 'https://x.clerk.accounts.dev',
+        })
+      ).rejects.toThrow(/process\.exit\(1\)/)
+
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      // First console.error: server message; second: "Sign out... try again with allowlisted email."
+      const calls = errorSpy.mock.calls.map((c) => String(c[0]))
+      expect(calls.some((m) => /domain/i.test(m))).toBe(true)
+      expect(calls.some((m) => /sign out|allowlisted/i.test(m))).toBe(true)
+    } finally {
+      errorSpy.mockRestore()
+      exitSpy.mockRestore()
+    }
   })
 
   it('cancels the callback server if the user closes the tab (timeout)', async () => {
