@@ -127,7 +127,7 @@ describe('scenario: encrypted backup round-trip', () => {
       issuer: 'https://clear-redbird-6.clerk.accounts.dev',
       tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_charlie',
       name: 'Charlie',
-      email: 'charlie@example.com',
+      email: 'charlie@flatout.solutions',
     }
     await t.run(async (ctx) => {
       await ctx.db.insert('users', {
