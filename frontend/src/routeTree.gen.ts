@@ -8,6 +8,8 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
+import { createFileRoute } from '@tanstack/react-router'
+
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
@@ -16,6 +18,10 @@ import { Route as DashboardSettingsRouteImport } from './routes/dashboard/settin
 import { Route as DashboardMachinesRouteImport } from './routes/dashboard/machines'
 import { Route as DashboardAuditRouteImport } from './routes/dashboard/audit'
 import { Route as CliLinkRouteImport } from './routes/cli/link'
+
+const DashboardSettingsDomainsLazyRouteImport = createFileRoute(
+  '/dashboard/settings/domains',
+)()
 
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
@@ -60,6 +66,14 @@ const CliLinkRoute = CliLinkRouteImport.update({
   path: '/cli/link',
   getParentRoute: () => rootRouteImport,
 } as any).lazy(() => import('./routes/cli/link.lazy').then((d) => d.Route))
+const DashboardSettingsDomainsLazyRoute =
+  DashboardSettingsDomainsLazyRouteImport.update({
+    id: '/domains',
+    path: '/domains',
+    getParentRoute: () => DashboardSettingsRoute,
+  } as any).lazy(() =>
+    import('./routes/dashboard/settings/domains.lazy').then((d) => d.Route),
+  )
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -67,16 +81,18 @@ export interface FileRoutesByFullPath {
   '/cli/link': typeof CliLinkRoute
   '/dashboard/audit': typeof DashboardAuditRoute
   '/dashboard/machines': typeof DashboardMachinesRoute
-  '/dashboard/settings': typeof DashboardSettingsRoute
+  '/dashboard/settings': typeof DashboardSettingsRouteWithChildren
   '/dashboard/': typeof DashboardIndexRoute
+  '/dashboard/settings/domains': typeof DashboardSettingsDomainsLazyRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cli/link': typeof CliLinkRoute
   '/dashboard/audit': typeof DashboardAuditRoute
   '/dashboard/machines': typeof DashboardMachinesRoute
-  '/dashboard/settings': typeof DashboardSettingsRoute
+  '/dashboard/settings': typeof DashboardSettingsRouteWithChildren
   '/dashboard': typeof DashboardIndexRoute
+  '/dashboard/settings/domains': typeof DashboardSettingsDomainsLazyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -85,8 +101,9 @@ export interface FileRoutesById {
   '/cli/link': typeof CliLinkRoute
   '/dashboard/audit': typeof DashboardAuditRoute
   '/dashboard/machines': typeof DashboardMachinesRoute
-  '/dashboard/settings': typeof DashboardSettingsRoute
+  '/dashboard/settings': typeof DashboardSettingsRouteWithChildren
   '/dashboard/': typeof DashboardIndexRoute
+  '/dashboard/settings/domains': typeof DashboardSettingsDomainsLazyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -98,6 +115,7 @@ export interface FileRouteTypes {
     | '/dashboard/machines'
     | '/dashboard/settings'
     | '/dashboard/'
+    | '/dashboard/settings/domains'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -106,6 +124,7 @@ export interface FileRouteTypes {
     | '/dashboard/machines'
     | '/dashboard/settings'
     | '/dashboard'
+    | '/dashboard/settings/domains'
   id:
     | '__root__'
     | '/'
@@ -115,6 +134,7 @@ export interface FileRouteTypes {
     | '/dashboard/machines'
     | '/dashboard/settings'
     | '/dashboard/'
+    | '/dashboard/settings/domains'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -174,20 +194,38 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CliLinkRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/settings/domains': {
+      id: '/dashboard/settings/domains'
+      path: '/domains'
+      fullPath: '/dashboard/settings/domains'
+      preLoaderRoute: typeof DashboardSettingsDomainsLazyRouteImport
+      parentRoute: typeof DashboardSettingsRoute
+    }
   }
 }
+
+interface DashboardSettingsRouteChildren {
+  DashboardSettingsDomainsLazyRoute: typeof DashboardSettingsDomainsLazyRoute
+}
+
+const DashboardSettingsRouteChildren: DashboardSettingsRouteChildren = {
+  DashboardSettingsDomainsLazyRoute: DashboardSettingsDomainsLazyRoute,
+}
+
+const DashboardSettingsRouteWithChildren =
+  DashboardSettingsRoute._addFileChildren(DashboardSettingsRouteChildren)
 
 interface DashboardRouteChildren {
   DashboardAuditRoute: typeof DashboardAuditRoute
   DashboardMachinesRoute: typeof DashboardMachinesRoute
-  DashboardSettingsRoute: typeof DashboardSettingsRoute
+  DashboardSettingsRoute: typeof DashboardSettingsRouteWithChildren
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardAuditRoute: DashboardAuditRoute,
   DashboardMachinesRoute: DashboardMachinesRoute,
-  DashboardSettingsRoute: DashboardSettingsRoute,
+  DashboardSettingsRoute: DashboardSettingsRouteWithChildren,
   DashboardIndexRoute: DashboardIndexRoute,
 }
 
