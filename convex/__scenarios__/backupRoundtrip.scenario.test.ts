@@ -107,10 +107,18 @@ describe('scenario: encrypted backup round-trip', () => {
     expect(after).toHaveLength(0)
   })
 
-  it("A3 cross-user import: user B importing A's bundle restores into B's account (no leak across users)", async () => {
+  it("A3 cross-user import: user B importing A's bundle creates a row owned by B, separate from A's", async () => {
+    // Original intent (from when reads were per-user-scoped): "B sees
+    // only B's row; no leak across users." With the shared-vault read
+    // model (`convex/utils/users.ts:3-7`), `list` returns every row
+    // regardless of caller. The structural property still under test —
+    // and what backup's separation guarantee actually enforces — is
+    // that the restored row's `userId` belongs to B, not A. Both rows
+    // coexist in the shared vault (`list` shows both); ownership is
+    // tracked on the row.
     const t = vault()
     // Seed user A with the original sub.
-    await seedSubscription({
+    const seeded = await seedSubscription({
       t,
       identity: TEST_IDENTITY,
       email: 'shared@example.com',
@@ -129,8 +137,8 @@ describe('scenario: encrypted backup round-trip', () => {
       name: 'Charlie',
       email: 'charlie@flatout.solutions',
     }
-    await t.run(async (ctx) => {
-      await ctx.db.insert('users', {
+    const bUserId = await t.run(async (ctx) => {
+      return await ctx.db.insert('users', {
         externalId: bIdentity.subject,
         name: bIdentity.name,
         primaryEmail: bIdentity.email,
@@ -144,12 +152,16 @@ describe('scenario: encrypted backup round-trip', () => {
     })
     expect(restored.restoredCount).toBe(1)
 
-    // B's account now has the sub.
-    const bSubs = await t.withIdentity(bIdentity).query(api.subscriptions.queries.listForUser, {})
-    expect(bSubs.map((s) => s.email)).toEqual(['shared@example.com'])
+    // Shared vault: every authed reader sees both rows. The two rows
+    // share an email but differ in `userId` — that's the ownership
+    // separation backup enforces.
+    const allSubs = await t.withIdentity(bIdentity).query(api.subscriptions.queries.list, {})
+    expect(allSubs.map((s) => s.email).sort()).toEqual(['shared@example.com', 'shared@example.com'])
+    const owners = new Set(allSubs.map((s) => s.userId))
+    expect(owners).toEqual(new Set([seeded.userId, bUserId]))
 
-    // A's account still has the original sub (unchanged).
-    const aSubs = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
-    expect(aSubs.map((s) => s.email)).toEqual(['shared@example.com'])
+    // Sanity: A's view matches B's view (shared vault).
+    const fromA = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.list, {})
+    expect(fromA.map((s) => s._id).sort()).toEqual(allSubs.map((s) => s._id).sort())
   })
 })

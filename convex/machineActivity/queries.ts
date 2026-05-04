@@ -1,15 +1,20 @@
 /**
- * Audit feed queries for the dashboard `/dashboard/audit` route.
+ * Audit feed queries for the dashboard `/dashboard/audit` and
+ * `/dashboard/machines` routes.
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §8.
  *
- * Per spec §4 only `byUserAndAt` is indexed; we read newest-first and
- * cap at the requested limit.
+ * Architectural intent — shared vault. Per `convex/utils/users.ts:3-7`,
+ * any authenticated identity reads any audit row. The previous per-user
+ * scoping was the same root failure mode as the subscriptions queries:
+ * the comment in `users.ts` advertised shared semantics but the read
+ * paths still filtered by `userId`. Reads now iterate the global indexes
+ * `byAt` / `bySessionAndAt`.
  */
 import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 
-import { authenticatedQuery, getIdentity } from '../utils/auth'
+import { authenticatedQuery } from '../utils/auth'
 import { isUnknownSession } from '../utils/identity'
 
 const machineActivityRowValidator = v.object({
@@ -36,29 +41,17 @@ const machineActivityRowValidator = v.object({
 })
 
 /**
- * Resolve the caller's `users._id`. Returns `null` if the Clerk webhook
- * hasn't fired yet — callers treat that as "no rows" to avoid leaking
- * the anomaly.
- */
-async function callerUserId(
-  ctx: import('convex/server').GenericQueryCtx<import('../_generated/dataModel').DataModel>
-): Promise<import('../_generated/dataModel').Id<'users'> | null> {
-  const identity = getIdentity(ctx)
-  const user = await ctx.db
-    .query('users')
-    .withIndex('byExternalId', (q) => q.eq('externalId', identity.subject))
-    .unique()
-  return user?._id ?? null
-}
-
-/**
  * Audit feed for `/dashboard/audit`. Cursor-paginated so the page can
  * scroll the full history without paying a `.collect()` over an
  * append-only table that grows on every action (one row per add /
  * switch / refresh / pull / remove / login).
  *
- * SECURITY: scopes to the caller. Pre-fix, every signed-in user
- * received everyone's audit history.
+ * No userId scoping — shared vault (see file-level docstring +
+ * `convex/utils/users.ts`). The query iterates the global `byAt` index
+ * so the feed shows every machine's activity to every authed reader.
+ * The legacy name (`recentForUser`) is preserved for frontend / shipped
+ * client compatibility but the contract is now "recent across the
+ * vault".
  */
 export const recentForUser = authenticatedQuery({
   args: { paginationOpts: paginationOptsValidator },
@@ -70,15 +63,7 @@ export const recentForUser = authenticatedQuery({
     pageStatus: v.optional(v.union(v.literal('SplitRecommended'), v.literal('SplitRequired'), v.null())),
   }),
   handler: async (ctx, { paginationOpts }) => {
-    const userId = await callerUserId(ctx)
-    if (userId === null) {
-      return { page: [], isDone: true, continueCursor: '' }
-    }
-    return await ctx.db
-      .query('machineActivity')
-      .withIndex('byUserAndAt', (q) => q.eq('userId', userId))
-      .order('desc')
-      .paginate(paginationOpts)
+    return await ctx.db.query('machineActivity').withIndex('byAt').order('desc').paginate(paginationOpts)
   },
 })
 
@@ -86,9 +71,9 @@ export const recentForUser = authenticatedQuery({
  * Per-machine drilldown for `/dashboard/machines/<sessionId>`. Cursor
  * paginated for the same reason.
  *
- * SECURITY: uses the `byUserAndSessionAndAt` composite index so a
- * malicious caller can't read another user's audit rows by guessing a
- * session id.
+ * No userId scoping — shared vault. The `bySessionAndAt` composite index
+ * bounds the read to one sid (so an unrelated machine's churn doesn't
+ * cost us bandwidth) without re-introducing the per-user filter.
  *
  * Sentinel guard: a deeplink to `/dashboard/machines/unknown-session`
  * would otherwise mix every cron-driven write across every machine into
@@ -112,13 +97,9 @@ export const recentForSession = authenticatedQuery({
     if (isUnknownSession(clerkSessionId)) {
       return { page: [], isDone: true, continueCursor: '' }
     }
-    const userId = await callerUserId(ctx)
-    if (userId === null) {
-      return { page: [], isDone: true, continueCursor: '' }
-    }
     return await ctx.db
       .query('machineActivity')
-      .withIndex('byUserAndSessionAndAt', (q) => q.eq('userId', userId).eq('clerkSessionId', clerkSessionId))
+      .withIndex('bySessionAndAt', (q) => q.eq('clerkSessionId', clerkSessionId))
       .order('desc')
       .paginate(paginationOpts)
   },
@@ -144,12 +125,13 @@ export const recentForSession = authenticatedQuery({
 export const SENTINEL_GROUP_DELIMITER = String.fromCharCode(0x1f)
 
 /**
- * Distinct machines the current user has touched the vault from — drives
+ * Distinct machines that have touched the vault — drives
  * `/dashboard/machines`.
  *
- * SECURITY: scopes to the caller (was reading the global table).
+ * No userId scoping — shared vault. Reads the most-recent 1000 rows from
+ * the global `byAt` index, dedupes, and returns one entry per machine.
  *
- * Grouping rules:
+ * Grouping rules (unchanged):
  *
  *  - Real Clerk session ids: collapse on sid alone — one row per sid.
  *    Rows are read `.order('desc')` by `at`, so the FIRST row per sid
@@ -169,8 +151,9 @@ export const SENTINEL_GROUP_DELIMITER = String.fromCharCode(0x1f)
  * surfaces a `revocable` flag so the UI can render Revoke disabled with
  * an explanatory tooltip rather than hiding the row outright.
  *
- * Bound: caps at 1000 most-recent rows for *this user*. The dashboard
- * lists machines, not raw events, so dedupe-then-truncate is sufficient.
+ * Bound: caps at 1000 most-recent rows globally. The dashboard lists
+ * machines, not raw events, so dedupe-then-truncate is sufficient even
+ * across users.
  */
 export const distinctSessionsForUser = authenticatedQuery({
   args: {},
@@ -194,13 +177,7 @@ export const distinctSessionsForUser = authenticatedQuery({
     })
   ),
   handler: async (ctx) => {
-    const userId = await callerUserId(ctx)
-    if (userId === null) return []
-    const rows = await ctx.db
-      .query('machineActivity')
-      .withIndex('byUserAndAt', (q) => q.eq('userId', userId))
-      .order('desc')
-      .take(1000)
+    const rows = await ctx.db.query('machineActivity').withIndex('byAt').order('desc').take(1000)
 
     const map = new Map<
       string,

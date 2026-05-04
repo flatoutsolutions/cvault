@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { SECOND_IDENTITY, TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api, internal } from '../_generated/api'
 
 describe('machineActivity.mutations.record', () => {
@@ -106,7 +106,11 @@ describe('machineActivity.mutations.record', () => {
 })
 
 describe('machineActivity.queries.recentForUser', () => {
-  it('returns rows for the authenticated user newest first, scoped to their userId', async () => {
+  // Architectural intent — shared vault. Per `convex/utils/users.ts:3-7`,
+  // any authenticated identity reads any audit row. The legacy "scoped to
+  // their userId" assertion was the bug.
+
+  it('returns rows for the authenticated user newest first', async () => {
     const t = vault()
     const aliceId = await seedUser(t)
 
@@ -126,7 +130,109 @@ describe('machineActivity.queries.recentForUser', () => {
     const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForUser, {
       paginationOpts: { numItems: 10, cursor: null },
     })
-    expect(result.page.map((r: { action: string }) => r.action)).toEqual(['switch', 'add']) // newest first
+    expect(result.page.map((r: { action: string }) => r.action)).toEqual(['switch', 'add'])
+  })
+
+  it('returns rows from every user — shared vault visibility, sorted by at desc', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    // Interleaved timestamps across users so a per-user filter would
+    // return only half the rows AND in the wrong order.
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_alice',
+      action: 'add',
+      at: 1000,
+    })
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: bobId,
+      clerkSessionId: 'sess_bob',
+      action: 'pull',
+      at: 2000,
+    })
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_alice',
+      action: 'switch',
+      at: 3000,
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForUser, {
+      paginationOpts: { numItems: 10, cursor: null },
+    })
+    expect(result.page.map((r) => r.at)).toEqual([3000, 2000, 1000])
+    expect(result.page.map((r) => r.clerkSessionId)).toEqual(['sess_alice', 'sess_bob', 'sess_alice'])
+  })
+
+  it('returns the same set regardless of which user calls it', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_a',
+      action: 'add',
+      at: 1000,
+    })
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: bobId,
+      clerkSessionId: 'sess_b',
+      action: 'pull',
+      at: 2000,
+    })
+
+    const fromAlice = await t
+      .withIdentity(TEST_IDENTITY)
+      .query(api.machineActivity.queries.recentForUser, { paginationOpts: { numItems: 10, cursor: null } })
+    const fromBob = await t
+      .withIdentity(SECOND_IDENTITY)
+      .query(api.machineActivity.queries.recentForUser, { paginationOpts: { numItems: 10, cursor: null } })
+
+    expect(fromAlice.page.map((r) => r.clerkSessionId)).toEqual(['sess_b', 'sess_a'])
+    expect(fromAlice.page).toEqual(fromBob.page)
+  })
+})
+
+describe('machineActivity.queries.recentForSession', () => {
+  // Shared-vault: the audit drilldown for a sid must surface rows from
+  // any user that touched that sid. (Sids are unique per Clerk session,
+  // but the table is shared.)
+  it('returns rows for a session even when the caller is a different user', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    // Bob's session writes two rows.
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: bobId,
+      clerkSessionId: 'sess_bob',
+      action: 'add',
+      at: 1000,
+    })
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: bobId,
+      clerkSessionId: 'sess_bob',
+      action: 'pull',
+      at: 2000,
+    })
+    // Alice has unrelated rows under a different sid.
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_alice',
+      action: 'add',
+      at: 1500,
+    })
+
+    // Auth as Alice, drill into bob's session.
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForSession, {
+      clerkSessionId: 'sess_bob',
+      paginationOpts: { numItems: 10, cursor: null },
+    })
+    expect(result.page.map((r) => r.at)).toEqual([2000, 1000])
+    expect(result.page.every((r) => r.clerkSessionId === 'sess_bob')).toBe(true)
   })
 })
 
@@ -264,6 +370,35 @@ describe('machineActivity.queries.distinctSessionsForUser', () => {
     const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
     expect(result).toHaveLength(1)
     expect(result[0]?.clerkSessionId).toBe('sess_real')
+  })
+
+  it('returns sessions from every user — shared vault visibility', async () => {
+    // Architectural intent — `distinctSessionsForUser` powers the
+    // dashboard's Machines view. In shared mode any allowlisted user
+    // sees every machine that has touched the vault.
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: aliceId,
+      clerkSessionId: 'sess_alice',
+      action: 'add',
+      at: 1000,
+      machineLabel: 'alice-laptop',
+    })
+    await t.mutation(internal.machineActivity.mutations.record, {
+      userId: bobId,
+      clerkSessionId: 'sess_bob',
+      action: 'add',
+      at: 2000,
+      machineLabel: 'bob-desktop',
+    })
+
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
+    expect(result).toHaveLength(2)
+    const sids = result.map((r) => r.clerkSessionId).sort()
+    expect(sids).toEqual(['sess_alice', 'sess_bob'])
   })
 
   it('rejects the sentinel argument on recentForSession (returns empty page)', async () => {

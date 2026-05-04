@@ -56,3 +56,12 @@ export const machineActivitySchema = defineTable({
   // activity when sub A was high-churn. Mirrors `refreshLog`'s
   // `bySubscriptionAndAt` pattern.
   .index('bySubscriptionAndAt', ['subscriptionId', 'at'])
+  // Shared-vault read paths. `byAt` powers `recentForUser` /
+  // `distinctSessionsForUser`; `bySessionAndAt` powers `recentForSession`.
+  // Per `convex/utils/users.ts:3-7` audit reads are NOT scoped by user;
+  // these indexes let the queries iterate the table efficiently without
+  // a per-user prefix. The legacy `byUserAndAt` / `byUserAndSessionAndAt`
+  // indexes are retained because they may be used by other paths and
+  // index removal would require a migration commit.
+  .index('byAt', ['at'])
+  .index('bySessionAndAt', ['clerkSessionId', 'at'])
