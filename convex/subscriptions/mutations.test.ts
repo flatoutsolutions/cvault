@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { SECOND_IDENTITY, TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api, internal } from '../_generated/api'
 
 /**
@@ -283,11 +283,15 @@ describe('subscriptions.mutations.softRemove', () => {
     const t = vault()
     await seedUser(t)
 
+    // Error message format aligned with `pullForSwitch` ("No subscription
+    // matching: …") so callers grepping logs see one consistent shape
+    // across the action + mutation layers. The error CODE remains
+    // NOT_FOUND, which is what programmatic callers pattern-match on.
     await expect(
       t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
         email: 'nobody@example.com',
       })
-    ).rejects.toThrow(/not found/i)
+    ).rejects.toThrow(/no subscription matching/i)
   })
 
   it('matches case-insensitively (insert lowercase, remove uppercase)', async () => {
@@ -407,6 +411,52 @@ describe('subscriptions.mutations.softRemove', () => {
     const removeRow = rows.find((r) => r.action === 'remove')
     expect(removeRow?.machineLabel).toBeUndefined()
   })
+
+  /**
+   * Shared-vault: any authenticated allowed-domain caller can soft-remove
+   * any row regardless of nominal owner. See `convex/utils/users.ts:3-7`.
+   * Pre-fix the lookup keyed on `(callerUserId, email)` so cross-user
+   * removal returned NOT_FOUND. Reads + actions were already unscoped in
+   * PRs #15-#18; this is the parity fix for the public mutation layer.
+   *
+   * The audit row's `userId` records the ACTOR (alice), not the row owner
+   * (bob) — same decision as PR #18 for actions: attributing the action
+   * to the row owner under shared vault would falsely log who did what.
+   */
+  it('cross-user: alice can soft-remove a sub created by bob (shared vault)', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    await seedUser(t, SECOND_IDENTITY)
+
+    // Bob inserts the sub.
+    const inserted = await t.withIdentity(SECOND_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'bob-owns@flatout.solutions',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      keyVersion: 'v1',
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    // Alice (different Clerk identity) soft-removes bob's sub.
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.softRemove, {
+      email: 'bob-owns@flatout.solutions',
+    })
+
+    // The row's `removedAt` is now set — successful cross-user soft-remove.
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.removedAt).toBeTypeOf('number')
+
+    // The audit row attributes the action to alice (actor), not bob (row owner).
+    const audit = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const removeRow = audit.find((r) => r.action === 'remove')
+    expect(removeRow).toBeDefined()
+    expect(removeRow?.subscriptionId).toEqual(inserted.subId)
+    expect(removeRow?.userId).toEqual(aliceId)
+    // Sanity: the actor MUST NOT be the sub owner under shared vault.
+    expect(removeRow?.userId).not.toEqual(inserted.userId)
+  })
 })
 
 describe('subscriptions.mutations.rename', () => {
@@ -509,6 +559,44 @@ describe('subscriptions.mutations.rename', () => {
     const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     const renameRow = rows.find((r) => r.action === 'rename')
     expect(renameRow?.machineLabel).toBe('kitchen-mac')
+  })
+
+  /**
+   * Shared-vault parity fix — see `softRemove` cross-user test for the
+   * full rationale. `rename` had the same `(callerUserId, email)` lookup
+   * bug; this test pins the cross-user fix.
+   */
+  it('cross-user: alice can rename a sub created by bob (shared vault)', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    await seedUser(t, SECOND_IDENTITY)
+
+    const inserted = await t.withIdentity(SECOND_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
+      email: 'bob-rename@flatout.solutions',
+      ciphertext: FAKE_CIPHERTEXT,
+      nonce: FAKE_NONCE,
+      keyVersion: 'v1',
+      expiresAt: Date.now() + 60_000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+
+    await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.rename, {
+      email: 'bob-rename@flatout.solutions',
+      label: 'Renamed by Alice',
+    })
+
+    // Label was patched on bob's row by alice.
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.label).toBe('Renamed by Alice')
+
+    // Audit attributes to alice (actor), not bob (owner).
+    const audit = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    const renameRow = audit.find((r) => r.action === 'rename')
+    expect(renameRow).toBeDefined()
+    expect(renameRow?.subscriptionId).toEqual(inserted.subId)
+    expect(renameRow?.userId).toEqual(aliceId)
+    expect(renameRow?.userId).not.toEqual(inserted.userId)
   })
 })
 

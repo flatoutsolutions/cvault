@@ -18,6 +18,33 @@ import { authenticatedMutation, getIdentity } from '../utils/auth'
 import { resolveCallerSession } from '../utils/identity'
 import { getCurrentUserOrThrowFromIdentity } from '../utils/users'
 
+/**
+ * Strict actor lookup for shared-vault audit attribution. Returns the
+ * caller's `users._id` (resolved from the verified Clerk identity), or
+ * throws if the Clerk webhook hasn't yet inserted a row for the caller.
+ *
+ * Mirrors PR #18's actions-side pattern (`internal.users.actions.getIdByExternalId`
+ * + explicit throw) so `softRemove` / `rename` audit rows attribute the
+ * action to the ACTOR rather than the row owner. `getCurrentUserOrThrowFromIdentity`
+ * is unfit here because its "any user row" fallback (see
+ * `convex/utils/users.ts:3-7`) would silently stamp the audit row with
+ * the WRONG user when the caller's webhook is still in flight — which
+ * is exactly the failure mode shared-vault auditing is meant to catch.
+ */
+async function resolveActorIdOrThrow(ctx: MutationCtx, externalId: string): Promise<Id<'users'>> {
+  const own = await ctx.db
+    .query('users')
+    .withIndex('byExternalId', (q) => q.eq('externalId', externalId))
+    .unique()
+  if (!own) {
+    throw new ConvexError({
+      code: 'USER_NOT_FOUND',
+      message: 'No user row for caller. Sign in once to trigger the Clerk webhook, then retry.',
+    })
+  }
+  return own._id
+}
+
 type ActivityAction = 'switch' | 'add' | 'pull' | 'remove' | 'refresh' | 'rename'
 
 /**
@@ -288,28 +315,42 @@ export const softRemove = authenticatedMutation({
   },
   returns: v.null(),
   handler: async (ctx, { email, machineLabel, clerkSessionId }) => {
-    const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
-
-    // SECURITY+PERF: scope to (userId, email). Pre-fix used `.filter()` on
-    // a global table and would accept the first row matching the email
-    // regardless of owner — would let any signed-in user soft-remove any
-    // other user's sub (NOT_FOUND-by-luck, not by-policy).
+    // SHARED-VAULT (`convex/utils/users.ts:3-7`): any authenticated
+    // allowed-domain caller resolves any row regardless of nominal owner.
+    // Reads + actions were unscoped in PRs #15-#18; this is the parity
+    // fix for the public mutation layer. Lookup is by email only via the
+    // global `byEmail` index. The legacy `byUserAndEmail` index still
+    // exists for write-dedupe in `upsertSub` (deliberately left scoped
+    // — see PR #18 note on `upsertSub`).
     //
     // Email is canonicalized to lowercase to match the storage convention
     // set in `upsertSub`. Without this, `cvault remove Stefan@x.com`
     // when the row was stored as `stefan@x.com` would NOT_FOUND.
-    const sub = await ctx.db
+    //
+    // FCFS by `_creationTime` if there were multiple rows for one email
+    // — but there shouldn't be: writes canonicalize + lowercase, and
+    // `upsertSub` dedupes on `(userId, email)` so at worst there is one
+    // row per user per email.
+    const matches = await ctx.db
       .query('subscriptions')
-      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', canonicalEmail(email)))
-      .unique()
-
-    if (!sub || sub.removedAt !== undefined) {
-      throw new ConvexError({ code: 'NOT_FOUND', message: `Subscription not found for email: ${email}` })
+      .withIndex('byEmail', (q) => q.eq('email', canonicalEmail(email)))
+      .collect()
+    const sub = matches.find((s) => s.removedAt === undefined)
+    if (!sub) {
+      throw new ConvexError({ code: 'NOT_FOUND', message: `No subscription matching: ${email}` })
     }
+
+    // Audit `userId` records the ACTOR (caller's `users._id`), NOT
+    // `sub.userId` (row owner). Same decision as PR #18 in actions.ts:
+    // attributing a cross-user remove to the row owner would falsely log
+    // who did what under shared vault. Strict resolution — no fallback
+    // to "any user row" — so the audit is correct or we throw with a
+    // clear "sign in once" message.
+    const actorUserId = await resolveActorIdOrThrow(ctx, getIdentity(ctx).subject)
 
     await ctx.db.patch('subscriptions', sub._id, { removedAt: Date.now() })
     await recordActivity(ctx, {
-      userId: user._id,
+      userId: actorUserId,
       action: 'remove',
       subscriptionId: sub._id,
       ...(machineLabel !== undefined ? { machineLabel } : {}),
@@ -330,21 +371,22 @@ export const rename = authenticatedMutation({
   },
   returns: v.null(),
   handler: async (ctx, { email, label, machineLabel, clerkSessionId }) => {
-    const user = await getCurrentUserOrThrowFromIdentity(ctx, getIdentity(ctx).subject)
-
-    // Same scoping + canonicalization rule as `softRemove` above.
-    const sub = await ctx.db
+    // Shared-vault lookup + actor attribution rules mirror `softRemove`.
+    // See its docstring for the full rationale.
+    const matches = await ctx.db
       .query('subscriptions')
-      .withIndex('byUserAndEmail', (q) => q.eq('userId', user._id).eq('email', canonicalEmail(email)))
-      .unique()
-
-    if (!sub || sub.removedAt !== undefined) {
-      throw new ConvexError({ code: 'NOT_FOUND', message: `Subscription not found for email: ${email}` })
+      .withIndex('byEmail', (q) => q.eq('email', canonicalEmail(email)))
+      .collect()
+    const sub = matches.find((s) => s.removedAt === undefined)
+    if (!sub) {
+      throw new ConvexError({ code: 'NOT_FOUND', message: `No subscription matching: ${email}` })
     }
+
+    const actorUserId = await resolveActorIdOrThrow(ctx, getIdentity(ctx).subject)
 
     await ctx.db.patch('subscriptions', sub._id, { label })
     await recordActivity(ctx, {
-      userId: user._id,
+      userId: actorUserId,
       action: 'rename',
       subscriptionId: sub._id,
       ...(machineLabel !== undefined ? { machineLabel } : {}),
