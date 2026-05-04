@@ -25,10 +25,14 @@
  *   - Without verification, a user holding any Clerk JWT could pass a
  *     stolen `sid` and mint a convex JWT for someone else. The secret key
  *     would be a confused deputy.
- *   - The verified payload's `email` claim is checked against the runtime
- *     allowlist (allowedEmailDomains table, with bootstrap fallback to
- *     `flatout.solutions`). Disallowed emails get an `EMAIL_DOMAIN_NOT_ALLOWED`
- *     ConvexError, which the HTTP route maps to 403.
+ *   - The email address is checked against the runtime allowlist
+ *     (allowedEmailDomains table, with bootstrap fallback to
+ *     `flatout.solutions`). The default Clerk session token does NOT
+ *     carry an `email` claim — it only has azp/exp/iat/iss/jti/nbf/sub
+ *     plus our `sid`. So when `payload.email` is missing we fall back
+ *     to BAPI `users.getUser(sub)` and read `primaryEmailAddress`.
+ *     Disallowed emails get an `EMAIL_DOMAIN_NOT_ALLOWED` ConvexError,
+ *     which the HTTP route maps to 403.
  */
 import { verifyToken } from '@clerk/backend'
 import { ConvexError, v } from 'convex/values'
@@ -36,7 +40,7 @@ import { ConvexError, v } from 'convex/values'
 import { internalAction } from '../_generated/server'
 import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from '../utils/domainGate'
 import { loadAllowedDomainsFromAction } from '../utils/domainGateAction'
-import { createSessionTokenFromTemplate } from './clerk'
+import { createSessionTokenFromTemplate, getClerkBackendClient } from './clerk'
 
 export const mintConvexJwt = internalAction({
   args: { clerkSessionToken: v.string() },
@@ -71,7 +75,28 @@ export const mintConvexJwt = internalAction({
       })
     }
 
-    const email = typeof payload.email === 'string' ? payload.email : null
+    let email: string | null = null
+    if (typeof payload.email === 'string' && payload.email.length > 0) {
+      // `convex` JWT template path (browser/SSR clients): email is in the
+      // payload and we trust the JWKS-verified claim.
+      email = payload.email
+    } else {
+      // Default Clerk session-token path (CLI): no `email` claim. Read
+      // the user's primary email via BAPI using the verified `sub`.
+      // `sub` is JWKS-verified above so we are not trusting attacker
+      // input here — this is just an authenticated lookup of the user
+      // the caller already proved they are.
+      const clerk = getClerkBackendClient({ secretKey })
+      try {
+        const user = await clerk.users.getUser(payload.sub)
+        email = user.primaryEmailAddress?.emailAddress ?? null
+      } catch (err) {
+        throw new ConvexError({
+          code: 'CLERK_BACKEND_ERROR',
+          message: `BAPI getUser failed while resolving session email: ${err instanceof Error ? err.message : String(err)}`,
+        })
+      }
+    }
     const domains = await loadAllowedDomainsFromAction(ctx)
     if (!isAllowedEmail(email, domains)) {
       throw new ConvexError({

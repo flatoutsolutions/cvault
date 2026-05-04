@@ -1,8 +1,9 @@
+import type { ClerkClient } from '@clerk/backend'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { vault } from '../__tests__/helpers'
 import { internal } from '../_generated/api'
-import { __setClerkFetch } from './clerk'
+import { __setClerkBackendClientFactory, __setClerkFetch } from './clerk'
 
 // Hoisted mock for @clerk/backend so verifyToken can be controlled per-test.
 // vi.spyOn() doesn't work with ESM module namespaces in edge-runtime, so we
@@ -27,11 +28,23 @@ afterEach(() => {
   if (ORIG === undefined) delete process.env.CLERK_SECRET_KEY
   else process.env.CLERK_SECRET_KEY = ORIG
   __setClerkFetch(undefined)
+  __setClerkBackendClientFactory(undefined)
   vi.restoreAllMocks()
 })
 
 function mockVerify(payload: object) {
   verifyTokenMock.mockResolvedValue(payload as never)
+}
+
+/**
+ * Build a stub ClerkClient whose `users.getUser` is the supplied mock.
+ * The cast is intentional and narrow: the test only ever exercises
+ * `users.getUser`, so we don't need a faithful full-surface fake.
+ */
+function stubClerkBackendClient(getUser: ReturnType<typeof vi.fn>): ClerkClient {
+  return {
+    users: { getUser },
+  } as unknown as ClerkClient
 }
 
 describe('cli.mintAction.mintConvexJwt — domain gate', () => {
@@ -66,9 +79,53 @@ describe('cli.mintAction.mintConvexJwt — domain gate', () => {
     const t = vault()
     mockVerify({ sid: 'sess', sub: 'user_x' })
     __setClerkFetch(vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))) as unknown as typeof fetch)
+    // Real Clerk session JWTs have no `email` claim, so the gate must
+    // fall back to BAPI. Stub a wrong-domain primary email so the gate
+    // still rejects — proving the fallback is wired AND still enforces.
+    const getUser = vi.fn(() => Promise.resolve({ primaryEmailAddress: { emailAddress: 'bob@gmail.com' } } as never))
+    __setClerkBackendClientFactory(() => stubClerkBackendClient(getUser))
     await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })).rejects.toThrow(
       /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
     )
+    expect(getUser).toHaveBeenCalledWith('user_x')
+  })
+
+  it('falls back to BAPI when JWT lacks email claim and mints when allowed', async () => {
+    const t = vault()
+    // Realistic Clerk session-token payload: `azp/exp/iat/iss/jti/nbf/sub`
+    // and `sid` for our verifyToken consumers — but NO `email` claim.
+    // (See Clerk session-token reference; the `convex` template adds
+    // `email`, the default session token does not.)
+    mockVerify({ sid: 'sess', sub: 'user_real' })
+    const getUser = vi.fn(() =>
+      Promise.resolve({
+        primaryEmailAddress: { emailAddress: 'saad@flatout.solutions' },
+      } as never)
+    )
+    __setClerkBackendClientFactory(() => stubClerkBackendClient(getUser))
+    __setClerkFetch(
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ jwt: 'fake-jwt-after-bapi' }), { status: 200 }))
+      ) as unknown as typeof fetch
+    )
+    const result = await t.action(internal.cli.mintAction.mintConvexJwt, {
+      clerkSessionToken: 'tok',
+    })
+    expect(result.jwt).toBe('fake-jwt-after-bapi')
+    expect(getUser).toHaveBeenCalledTimes(1)
+    expect(getUser).toHaveBeenCalledWith('user_real')
+  })
+
+  it('wraps BAPI getUser failure as CLERK_BACKEND_ERROR', async () => {
+    const t = vault()
+    mockVerify({ sid: 'sess', sub: 'user_boom' })
+    const getUser = vi.fn(() => Promise.reject(new Error('BAPI 500: upstream unavailable')))
+    __setClerkBackendClientFactory(() => stubClerkBackendClient(getUser))
+    __setClerkFetch(vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))) as unknown as typeof fetch)
+    await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })).rejects.toThrow(
+      /CLERK_BACKEND_ERROR|BAPI/i
+    )
+    expect(getUser).toHaveBeenCalledWith('user_boom')
   })
 
   it('accepts an added (non-bootstrap) domain', async () => {
