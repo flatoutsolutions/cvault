@@ -6,12 +6,14 @@
  * SECURITY: `error` text is run through redactTokens() before insert
  * to ensure plaintext OAuth tokens are never persisted here.
  *
- * NOTE on `triggeredBy`: the `'cron'` literal was dropped along with the
- * `refreshExpiringTokens` cron (audit fix #5). No production caller emits
- * `'cron'` anymore. Historical rows in long-lived deployments would now
- * fail validation under the narrowed union, but cvault is fresh
- * deployment-only so we accept that breakage in exchange for a correct
- * type surface.
+ * NOTE on `triggeredBy`: the `'cron'` literal is retained ONLY for
+ * historical rows from before the `refreshExpiringTokens` cron was
+ * dropped (audit fix #5 / cron-drop in PR #22). No production caller
+ * emits `'cron'` anymore — this is a read-only legacy value. Removing
+ * it from the union breaks `convex deploy` schema validation against
+ * any deployment with pre-existing rows. A future migration that
+ * back-fills `'cron'` rows to `'manual'` (or deletes them) would let
+ * us narrow the union; until then, keep the literal.
  */
 import { defineTable } from 'convex/server'
 import { v } from 'convex/values'
@@ -19,7 +21,7 @@ import { v } from 'convex/values'
 export const refreshLogSchema = defineTable({
   userId: v.id('users'),
   subscriptionId: v.id('subscriptions'),
-  triggeredBy: v.union(v.literal('manual'), v.literal('onUse')),
+  triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
   outcome: v.union(v.literal('success'), v.literal('failure'), v.literal('reloginRequired')),
   error: v.optional(v.string()),
   at: v.number(),

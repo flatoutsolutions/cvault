@@ -23,7 +23,10 @@ const refreshLogRowValidator = v.object({
   _creationTime: v.number(),
   userId: v.id('users'),
   subscriptionId: v.id('subscriptions'),
-  triggeredBy: v.union(v.literal('manual'), v.literal('onUse')),
+  // 'cron' retained for historical rows from before the cron drop; see
+  // convex/refreshLog/schema.ts for the full rationale. Read path must
+  // accept this value or queries throw on legacy rows.
+  triggeredBy: v.union(v.literal('cron'), v.literal('manual'), v.literal('onUse')),
   outcome: v.union(v.literal('success'), v.literal('failure'), v.literal('reloginRequired')),
   error: v.optional(v.string()),
   at: v.number(),

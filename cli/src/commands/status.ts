@@ -47,7 +47,7 @@ interface VaultSubMeta {
 
 interface RefreshLogEntry {
   outcome: 'success' | 'failure' | 'reloginRequired'
-  triggeredBy: 'manual' | 'onUse'
+  triggeredBy: 'cron' | 'manual' | 'onUse'
   at: number
   error?: string
 }
