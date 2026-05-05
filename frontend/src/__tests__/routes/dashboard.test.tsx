@@ -116,20 +116,10 @@ describe('/dashboard sub list', () => {
     expect(screen.getByText('b@x.com')).toBeTruthy()
   })
 
-  it('calls softRemove when the Remove button is clicked', async () => {
+  it('does not render a Remove button on subscription cards (hidden until admin/owner gating lands)', () => {
     useQueryMock.mockReturnValue([makeSub({ email: 'alice@example.com' })])
     render(<SubsPage />)
-
-    fireEvent.click(screen.getByRole('button', { name: /remove/i }))
-    // Both rename and softRemove are tracked in mutationsByName. We
-    // can't predict the keys (depend on Convex internals), so assert
-    // that *some* mock got the expected payload.
-    await waitFor(() => {
-      const calls = Array.from(mutationsByName.values()).flatMap((m) => m.mock.calls)
-      expect(
-        calls.some((args) => args[0] !== undefined && (args[0] as { email?: string }).email === 'alice@example.com')
-      ).toBe(true)
-    })
+    expect(screen.queryByRole('button', { name: /remove/i })).toBeNull()
   })
 
   it('renders the active count in the header', () => {
