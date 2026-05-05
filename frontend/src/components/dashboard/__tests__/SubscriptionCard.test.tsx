@@ -179,7 +179,7 @@ describe('SubscriptionCard', () => {
     expect((btn as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('calls onRemove with the sub email when Remove is clicked', () => {
+  it('does not render a Remove button (hidden until admin/owner gating lands)', () => {
     const onRemove = vi.fn()
     render(
       <SubscriptionCard
@@ -191,8 +191,8 @@ describe('SubscriptionCard', () => {
         removing={false}
       />
     )
-    fireEvent.click(screen.getByRole('button', { name: /remove/i }))
-    expect(onRemove).toHaveBeenCalledWith({ email: 'alice@example.com' })
+    expect(screen.queryByRole('button', { name: /remove/i })).toBeNull()
+    expect(onRemove).not.toHaveBeenCalled()
   })
 
   it('opens the rename dialog when Rename is clicked and submits the new label', () => {

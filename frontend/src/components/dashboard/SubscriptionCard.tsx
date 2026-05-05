@@ -55,11 +55,17 @@ export function SubscriptionCard({
   sub,
   onForceRefresh,
   onRename,
-  onRemove,
+  onRemove: _onRemove,
   forceRefreshing,
   forceRefreshError,
-  removing,
+  removing: _removing,
 }: SubscriptionCardProps) {
+  // `onRemove` / `removing` retained on the prop interface so the caller
+  // wiring stays intact for the day we gate delete by ownership/admin
+  // role and re-enable the button. Underscore prefix marks intentional
+  // disuse for now.
+  void _onRemove
+  void _removing
   const [renameOpen, setRenameOpen] = useState(false)
   const [labelDraft, setLabelDraft] = useState(sub.label ?? '')
 
@@ -134,18 +140,11 @@ export function SubscriptionCard({
           >
             Rename
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={removing}
-            onClick={() => {
-              onRemove({ email: sub.email })
-            }}
-            className="text-destructive hover:text-destructive ml-auto"
-          >
-            {removing ? 'Removing…' : 'Remove'}
-          </Button>
+          {/* Remove button intentionally hidden from the UI: shared-vault
+              semantics let any authed user delete any sub, which is too
+              destructive a footgun without an admin role. CLI `cvault
+              remove` still works for the original adder. Re-enable here
+              once admin/owner gating lands on the server. */}
         </div>
         {forceRefreshError !== undefined && (
           <p data-slot="force-refresh-error" className="text-destructive text-xs" role="alert">
