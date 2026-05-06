@@ -237,13 +237,14 @@ export async function createSessionTokenFromTemplate(
   const fn = activeFetch()
 
   // Clerk's default template lifetime is 60s — fine for browser apps that
-  // re-mint on every WebSocket reconnect, but heavy for a one-shot CLI that
-  // would otherwise hit `/api/cli/mint-token` on every Convex call. The
+  // re-mint on every WebSocket reconnect, but heavy for a long-running CLI
+  // that would otherwise hit `/api/cli/mint-token` once an hour. The
   // `expires_in_seconds` BAPI parameter overrides the template default
-  // per-request (min 30, max 315360000). 1 hour is the chosen tradeoff:
-  // few enough mints to be a non-issue, short enough that a leaked JWT
-  // becomes useless within an oncall response window.
-  const expiresInSeconds = options.expiresInSeconds ?? 3600
+  // per-request (min 30, max 315360000 = 10 years). 30 days is the chosen
+  // tradeoff: a leaked JWT is dead within a month (so revocation is still
+  // a meaningful operator lever), but the CLI re-mints rarely enough that
+  // the round-trip cost is invisible to users on multi-hour sessions.
+  const expiresInSeconds = options.expiresInSeconds ?? 2_592_000
 
   const resp = await fn(`${CLERK_API_BASE}/v1/sessions/${sessionId}/tokens/${templateName}`, {
     method: 'POST',

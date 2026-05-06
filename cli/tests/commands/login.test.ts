@@ -35,9 +35,9 @@ vi.mock('../../src/auth/openBrowser', () => ({
   openBrowser: vi.fn().mockResolvedValue(undefined),
 }))
 
-// Real class so `instanceof` works inside login.ts's catch branch. Defined
-// via vi.hoisted so vi.mock's hoisted factory can capture the reference.
-const { FakeClerkEmailDomainNotAllowedError } = vi.hoisted(() => ({
+// Real classes so `instanceof` works inside login.ts's catch branch. Defined
+// via vi.hoisted so vi.mock's hoisted factory can capture the references.
+const { FakeClerkEmailDomainNotAllowedError, FakeConvexEndpointNotFoundError } = vi.hoisted(() => ({
   FakeClerkEmailDomainNotAllowedError: class FakeClerkEmailDomainNotAllowedError extends Error {
     override readonly name = 'ClerkEmailDomainNotAllowedError'
     readonly serverMessage: string
@@ -46,12 +46,29 @@ const { FakeClerkEmailDomainNotAllowedError } = vi.hoisted(() => ({
       this.serverMessage = serverMessage
     }
   },
+  FakeConvexEndpointNotFoundError: class FakeConvexEndpointNotFoundError extends Error {
+    override readonly name = 'ConvexEndpointNotFoundError'
+    readonly url: string
+    readonly body: string
+    constructor(url: string, body: string) {
+      super(
+        `cvault is pointing at a Convex deployment that does not have the cvault HTTP routes registered (URL: ${url}). ` +
+          `This usually means a foreign .env.local in your current directory is overriding the baked CLI config — ` +
+          `check VITE_CONVEX_URL / CLERK_FRONTEND_API_URL in your CWD. ` +
+          `If those are correct, your installed binary may be older than the deployed routes (run \`brew upgrade cvault\`). ` +
+          `(body: ${body.slice(0, 200)})`
+      )
+      this.url = url
+      this.body = body
+    }
+  },
 }))
 
 vi.mock('../../src/auth/clerkFapi', () => ({
   exchangeTicketForSession: vi.fn(),
   ClerkSessionExpiredError: class extends Error {},
   ClerkEmailDomainNotAllowedError: FakeClerkEmailDomainNotAllowedError,
+  ConvexEndpointNotFoundError: FakeConvexEndpointNotFoundError,
   // Read from cli/package.json so the mocked UA tracks every release bump
   // automatically (matches the production CLI_VERSION source-of-truth fix).
   cliUserAgent: () => `cvault-cli/${pkg.version} (test)`,
@@ -176,6 +193,50 @@ describe('runLogin', () => {
       const calls = errorSpy.mock.calls.map((c) => String(c[0]))
       expect(calls.some((m) => /domain/i.test(m))).toBe(true)
       expect(calls.some((m) => /sign out|allowlisted/i.test(m))).toBe(true)
+    } finally {
+      errorSpy.mockRestore()
+      exitSpy.mockRestore()
+    }
+  })
+
+  it('prints a friendly error and exits 1 on ConvexEndpointNotFoundError (wrong-deployment hijack)', async () => {
+    // The 404 + "No matching routes found" path that fires when a foreign
+    // `.env.local` in the user's CWD points the CLI at a Convex deployment
+    // without the cvault HTTP routes. Same dispatch shape as
+    // EMAIL_DOMAIN_NOT_ALLOWED: print the actionable message and exit 1.
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(startCallbackServer).mockReturnValue({
+      port: 12345,
+      result: Promise.resolve({ signInToken: 'sit_x' }),
+      cancel,
+    })
+    vi.mocked(exchangeTicketForSession).mockRejectedValueOnce(
+      new FakeConvexEndpointNotFoundError('https://hijacker.convex.site/api/cli/mint-token', 'No matching routes found')
+    )
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${String(code)})`)
+    }) as never)
+
+    try {
+      await expect(
+        runLogin({
+          dashboardUrl: 'https://app.cvault.dev',
+          convexUrl: 'https://x.convex.cloud',
+          frontendApiUrl: 'https://x.clerk.accounts.dev',
+        })
+      ).rejects.toThrow(/process\.exit\(1\)/)
+
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      // The error message must surface (a) the URL the CLI tried, (b) a
+      // pointer at the most likely cause (`.env.local`). The login.ts
+      // catch handler prints the .message verbatim — assert by inspecting
+      // the captured console.error calls.
+      const calls = errorSpy.mock.calls.map((c) => String(c[0]))
+      expect(calls.some((m) => /\.env\.local/i.test(m))).toBe(true)
+      expect(calls.some((m) => /No matching routes found/i.test(m))).toBe(true)
     } finally {
       errorSpy.mockRestore()
       exitSpy.mockRestore()

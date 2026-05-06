@@ -24,7 +24,11 @@ import { defineCommand } from 'citty'
 
 import { api } from '../../../convex/_generated/api'
 import { startCallbackServer } from '../auth/callbackServer'
-import { ClerkEmailDomainNotAllowedError, exchangeTicketForSession } from '../auth/clerkFapi'
+import {
+  ClerkEmailDomainNotAllowedError,
+  ConvexEndpointNotFoundError,
+  exchangeTicketForSession,
+} from '../auth/clerkFapi'
 import { openBrowser } from '../auth/openBrowser'
 import { writeSession } from '../auth/session'
 import { resolveConfig } from '../config'
@@ -111,6 +115,15 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
     if (err instanceof ClerkEmailDomainNotAllowedError) {
       console.error(`Error: ${err.serverMessage}`)
       console.error('Sign out at the cvault dashboard and try again with an allowlisted email.')
+      process.exit(1)
+    }
+    // Wrong-deployment hijack: the CLI hit a Convex deployment that doesn't
+    // have the cvault HTTP routes. The class's `.message` already contains
+    // the actionable "check your `.env.local`" hint + the URL we tried, so
+    // print it verbatim and exit. Re-running `cvault login` won't help — we
+    // exit instead of falling through to the generic re-throw path.
+    if (err instanceof ConvexEndpointNotFoundError) {
+      console.error(`Error: ${err.message}`)
       process.exit(1)
     }
     throw err

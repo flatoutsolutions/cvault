@@ -1,14 +1,16 @@
 /**
- * Spec: §7. CLI reads configuration from CVAULT_* env vars, fallback to
- * VITE_CONVEX_URL / CLERK_FRONTEND_API_URL (repo .env.local), then to
- * ~/.vault/config.json, then to compile-time `BUILD_DEFAULTS` baked in by
- * the build orchestrator.
+ * Spec: §7. CLI reads configuration from CVAULT_* env vars, then
+ * compile-time `BUILD_DEFAULTS` baked in by the build orchestrator (so an
+ * installed binary never gets hijacked by a foreign `.env.local` in the
+ * user's CWD), then `~/.vault/config.json`, and finally the loose repo-dev
+ * fallbacks (`VITE_CONVEX_URL` / `CLERK_FRONTEND_API_URL`) which Bun
+ * auto-loads from `.env.local` in the working directory.
  *
  * Resolution order (highest priority first):
- *   1. CVAULT_*
- *   2. VITE_CONVEX_URL / CLERK_FRONTEND_API_URL
+ *   1. CVAULT_* — always wins (explicit overrides)
+ *   2. BUILD_DEFAULTS (compile-time, empty strings = none → fall through)
  *   3. ~/.vault/config.json
- *   4. BUILD_DEFAULTS (compile-time, empty strings = none)
+ *   4. VITE_CONVEX_URL / CLERK_FRONTEND_API_URL (repo-dev fallback only)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -172,21 +174,27 @@ describe('resolveConfig — BUILD_DEFAULTS tier', () => {
     expect(resolve().dashboardUrl).toBe('https://baked.example.com')
   })
 
-  it('~/.vault/config.json takes precedence over BUILD_DEFAULTS', async () => {
+  it('~/.vault/config.json fills gaps when BUILD_DEFAULTS is empty for that key', async () => {
+    // Under the new priority, BUILD_DEFAULTS (tier 2) beats the file
+    // (tier 3) when both are populated. The file's value still wins
+    // when BUILD_DEFAULTS is empty for that specific key — verify the
+    // per-key fallthrough by mixing populated + empty BUILD_DEFAULTS.
     mockConfigFile({
       convexUrl: 'https://filewins.convex.cloud',
       frontendApiUrl: 'https://filewins.clerk.accounts.dev',
       dashboardUrl: 'https://filewins.example.com',
     })
     mockBuildDefaults({
-      convexUrl: 'https://baked.convex.cloud',
+      convexUrl: '', // empty → file should fill
       frontendApiUrl: 'https://baked.clerk.accounts.dev',
-      dashboardUrl: 'https://baked.example.com',
+      dashboardUrl: '', // empty → file should fill
     })
     const { resolveConfig: resolve } = await import('../src/config')
+    // BUILD_DEFAULTS empty → file wins per-key.
     expect(resolve().convexUrl).toBe('https://filewins.convex.cloud')
-    expect(resolve().frontendApiUrl).toBe('https://filewins.clerk.accounts.dev')
     expect(resolve().dashboardUrl).toBe('https://filewins.example.com')
+    // BUILD_DEFAULTS populated → still beats the file.
+    expect(resolve().frontendApiUrl).toBe('https://baked.clerk.accounts.dev')
   })
 
   it('throws helpful error mentioning baked defaults when ALL sources empty', async () => {
@@ -205,5 +213,97 @@ describe('resolveConfig — BUILD_DEFAULTS tier', () => {
     // Error message lists the four ways to set config; the fourth option
     // mentions the build-time defaults so users know what's available.
     expect(msg).toMatch(/baked into the binary at build time/i)
+  })
+
+  /**
+   * Regression coverage for the `cvault login` 404 hijack: when a user
+   * runs an installed binary from a project directory whose `.env.local`
+   * defines `VITE_CONVEX_URL=<other-deployment>`, Bun auto-loads it into
+   * `process.env` before our config resolver runs. Under the old priority
+   * order (`VITE_CONVEX_URL` beat `BUILD_DEFAULTS`), the CLI would silently
+   * point at the wrong Convex deployment and fail with a 404 "No matching
+   * routes found" body. The new priority order puts `BUILD_DEFAULTS` ahead
+   * of the loose `VITE_*`/`CLERK_*` fallbacks so installed binaries are
+   * deterministic regardless of CWD.
+   */
+  it('BUILD_DEFAULTS beats VITE_CONVEX_URL when BUILD_DEFAULTS is populated', async () => {
+    mockMissingConfigFile()
+    mockBuildDefaults({
+      convexUrl: 'https://baked.convex.cloud',
+      frontendApiUrl: 'https://baked.clerk.accounts.dev',
+      dashboardUrl: 'https://baked.example.com',
+    })
+    vi.stubEnv('VITE_CONVEX_URL', 'https://hijacker.convex.cloud')
+    const { resolveConfig: resolve } = await import('../src/config')
+    expect(resolve().convexUrl).toBe('https://baked.convex.cloud')
+  })
+
+  it('BUILD_DEFAULTS beats CLERK_FRONTEND_API_URL when BUILD_DEFAULTS is populated', async () => {
+    mockMissingConfigFile()
+    mockBuildDefaults({
+      convexUrl: 'https://baked.convex.cloud',
+      frontendApiUrl: 'https://baked.clerk.accounts.dev',
+      dashboardUrl: 'https://baked.example.com',
+    })
+    vi.stubEnv('CLERK_FRONTEND_API_URL', 'https://hijacker.clerk.accounts.dev')
+    const { resolveConfig: resolve } = await import('../src/config')
+    expect(resolve().frontendApiUrl).toBe('https://baked.clerk.accounts.dev')
+  })
+
+  it('CVAULT_CONVEX_URL still beats BUILD_DEFAULTS (explicit override always wins)', async () => {
+    mockMissingConfigFile()
+    mockBuildDefaults({
+      convexUrl: 'https://baked.convex.cloud',
+      frontendApiUrl: 'https://baked.clerk.accounts.dev',
+      dashboardUrl: 'https://baked.example.com',
+    })
+    vi.stubEnv('CVAULT_CONVEX_URL', 'https://override.convex.cloud')
+    const { resolveConfig: resolve } = await import('../src/config')
+    expect(resolve().convexUrl).toBe('https://override.convex.cloud')
+  })
+
+  it('~/.vault/config.json beats VITE/CLERK fallbacks but loses to BUILD_DEFAULTS', async () => {
+    // Layering check: with BUILD_DEFAULTS populated, the file is irrelevant
+    // for the populated keys; with a partial file + partial BUILD_DEFAULTS,
+    // the file fills in the gap before the loose env fallback gets a turn.
+    mockConfigFile({
+      convexUrl: 'https://filewins.convex.cloud',
+      // intentionally omit frontendApiUrl + dashboardUrl so we can exercise
+      // the next tier (BUILD_DEFAULTS) for those.
+    })
+    mockBuildDefaults({
+      convexUrl: 'https://baked.convex.cloud',
+      frontendApiUrl: 'https://baked.clerk.accounts.dev',
+      dashboardUrl: 'https://baked.example.com',
+    })
+    vi.stubEnv('VITE_CONVEX_URL', 'https://loose.convex.cloud')
+    vi.stubEnv('CLERK_FRONTEND_API_URL', 'https://loose.clerk.accounts.dev')
+    const { resolveConfig: resolve } = await import('../src/config')
+    const c = resolve()
+    // BUILD_DEFAULTS wins for convexUrl over both file and loose env...
+    expect(c.convexUrl).toBe('https://baked.convex.cloud')
+    // ...and for the keys the file doesn't cover, BUILD_DEFAULTS still
+    // wins over the loose env fallback.
+    expect(c.frontendApiUrl).toBe('https://baked.clerk.accounts.dev')
+    expect(c.dashboardUrl).toBe('https://baked.example.com')
+  })
+
+  it('~/.vault/config.json wins over loose VITE/CLERK env when BUILD_DEFAULTS is empty', async () => {
+    // Repo-dev mode: BUILD_DEFAULTS = empty strings, so a populated config
+    // file should still beat the loose `.env.local` fallback. This verifies
+    // the new ordering: file is tier 3, loose env is tier 4.
+    mockConfigFile({
+      convexUrl: 'https://filewins.convex.cloud',
+      frontendApiUrl: 'https://filewins.clerk.accounts.dev',
+      dashboardUrl: 'https://filewins.example.com',
+    })
+    mockBuildDefaults({ convexUrl: '', frontendApiUrl: '', dashboardUrl: '' })
+    vi.stubEnv('VITE_CONVEX_URL', 'https://loose.convex.cloud')
+    vi.stubEnv('CLERK_FRONTEND_API_URL', 'https://loose.clerk.accounts.dev')
+    const { resolveConfig: resolve } = await import('../src/config')
+    const c = resolve()
+    expect(c.convexUrl).toBe('https://filewins.convex.cloud')
+    expect(c.frontendApiUrl).toBe('https://filewins.clerk.accounts.dev')
+    expect(c.dashboardUrl).toBe('https://filewins.example.com')
   })
 })
