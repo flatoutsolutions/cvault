@@ -8,10 +8,15 @@
  *      clean working copy these are three empty strings (dev mode),
  *      which `pickString` filters out so resolution falls through to
  *      tier 3+.
- *   3. `~/.vault/config.json` — for users who installed via Homebrew
- *      and don't run from the repo. Plain JSON: `{convexUrl,
+ *   3. `~/.vault/config.json` — gap-filler for keys that
+ *      `BUILD_DEFAULTS` leaves empty (e.g., a developer-built binary
+ *      missing one of the three URLs). Plain JSON: `{convexUrl,
  *      frontendApiUrl, dashboardUrl}`. Optional file; missing keys
- *      fall through.
+ *      fall through. Full overrides require the `CVAULT_*` env vars
+ *      in tier 1 — the file no longer beats `BUILD_DEFAULTS`,
+ *      intentionally, so a stale `config.json` on a Homebrew user's
+ *      machine cannot override the binary's baked-in URLs and silently
+ *      re-point the CLI at a wrong deployment.
  *   4. Project-root `.env*` fallbacks (auto-loaded by Bun from CWD):
  *        VITE_CONVEX_URL          → convexUrl
  *        CLERK_FRONTEND_API_URL   → frontendApiUrl

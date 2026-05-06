@@ -1,4 +1,14 @@
 /**
+ * Tier note: this is a deterministic, fully mocked regression test stored
+ * in the `scenarios/` tier per project convention — scenario tests
+ * exercise end-to-end shapes that span multiple modules (here: config
+ * priority resolution as the user experiences it across BUILD_DEFAULTS,
+ * loose `VITE_/CLERK_` env, and explicit `CVAULT_*` overrides). Despite
+ * the directory name there is no live network or Bun-runtime dependency;
+ * `node:fs.readFileSync` and the build-time `buildInfo` module are mocked
+ * so the test runs against the same `resolveConfig()` function the
+ * production binary calls.
+ *
  * Scenario — config priority chain (regression for the `cvault login` 404
  * "session expired" hijack).
  *

@@ -1,4 +1,11 @@
 /**
+ * Tier note: this is a deterministic, fully mocked regression test stored
+ * in the `scenarios/` tier per project convention — scenario tests
+ * exercise end-to-end shapes the user experiences (here: the full
+ * `mintConvexJwt` error-classification path from Convex 404 → CLI error
+ * class → user-facing message). Despite the directory name there is no
+ * live network — `globalThis.fetch` is stubbed for each case.
+ *
  * Scenario — `mintConvexJwt` distinguishes a wrong-deployment 404 from
  * a real Clerk-session-expired 404.
  *

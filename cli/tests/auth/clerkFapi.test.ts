@@ -158,6 +158,40 @@ describe('mintConvexJwt', () => {
     fetchSpy.mockRestore()
   })
 
+  it('throws ConvexEndpointNotFoundError on 404 with case-variant marker body', async () => {
+    // Convex's wording could shift slightly between releases (case,
+    // pluralization, punctuation). The detection is a case-insensitive
+    // regex `/no matching routes? found/i` so a future "no matching
+    // routes found" / "No matching route found" body still triggers
+    // the actionable path instead of regressing to the misleading
+    // "Clerk session expired" prompt.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(fetchErr('no matching routes found', 404))
+    let caught: unknown
+    try {
+      await mintConvexJwt(baseSession())
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ConvexEndpointNotFoundError)
+    expect(caught).not.toBeInstanceOf(ClerkSessionExpiredError)
+    fetchSpy.mockRestore()
+  })
+
+  it('throws ConvexEndpointNotFoundError on 404 with singular "route" variant', async () => {
+    // The `routes?` group in the detection regex tolerates the
+    // singular form Convex might use if a single-route mismatch is
+    // reported differently in a future release.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(fetchErr('No matching route found', 404))
+    let caught: unknown
+    try {
+      await mintConvexJwt(baseSession())
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ConvexEndpointNotFoundError)
+    fetchSpy.mockRestore()
+  })
+
   it('throws a generic Error on other non-2xx', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(fetchErr('boom', 500))
     await expect(mintConvexJwt(baseSession())).rejects.toThrow(/500/)

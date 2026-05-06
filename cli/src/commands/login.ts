@@ -24,11 +24,7 @@ import { defineCommand } from 'citty'
 
 import { api } from '../../../convex/_generated/api'
 import { startCallbackServer } from '../auth/callbackServer'
-import {
-  ClerkEmailDomainNotAllowedError,
-  ConvexEndpointNotFoundError,
-  exchangeTicketForSession,
-} from '../auth/clerkFapi'
+import { ClerkEmailDomainNotAllowedError, exchangeTicketForSession } from '../auth/clerkFapi'
 import { openBrowser } from '../auth/openBrowser'
 import { writeSession } from '../auth/session'
 import { resolveConfig } from '../config'
@@ -113,19 +109,21 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
     // Make sure the callback server is fully torn down even on exchange failure.
     await handle.cancel()
     if (err instanceof ClerkEmailDomainNotAllowedError) {
+      // Bespoke two-line render: the server message + a login-specific
+      // "sign out and retry with an allowlisted email" hint. Lives here
+      // (not in `formatCliError`) because the hint only applies to the
+      // interactive login flow — non-login commands hitting this class
+      // through the retry path can't meaningfully "sign out and try
+      // again with allowlisted email" mid-call. Out of scope for the
+      // unified-dispatch follow-up.
       console.error(`Error: ${err.serverMessage}`)
       console.error('Sign out at the cvault dashboard and try again with an allowlisted email.')
       process.exit(1)
     }
-    // Wrong-deployment hijack: the CLI hit a Convex deployment that doesn't
-    // have the cvault HTTP routes. The class's `.message` already contains
-    // the actionable "check your `.env.local`" hint + the URL we tried, so
-    // print it verbatim and exit. Re-running `cvault login` won't help — we
-    // exit instead of falling through to the generic re-throw path.
-    if (err instanceof ConvexEndpointNotFoundError) {
-      console.error(`Error: ${err.message}`)
-      process.exit(1)
-    }
+    // Wrong-deployment hijack (`ConvexEndpointNotFoundError`) is now
+    // dispatched centrally by `cli/src/render/cliError.ts:formatCliError`
+    // so login + every other CLI command renders identically. Re-throw
+    // and let the top-level catch in `cli/src/index.ts` format + exit.
     throw err
   }
 
