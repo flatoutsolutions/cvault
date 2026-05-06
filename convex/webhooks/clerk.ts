@@ -22,8 +22,13 @@ export const clerkUsersWebhook = httpAction(async (ctx, request) => {
     case 'user.updated': {
       const data = event.data
       const email = primaryEmailFromUserJSON(data)
-      const domains = await ctx.runQuery(internal.allowedDomains.queries.loadInternal, {})
-      if (!isAllowedEmail(email, domains)) {
+      // Load both allowlists in parallel — the gate only needs both to
+      // make a decision and the queries hit independent tables.
+      const [domains, emails] = await Promise.all([
+        ctx.runQuery(internal.allowedDomains.queries.loadInternal, {}),
+        ctx.runQuery(internal.allowedEmails.queries.loadInternal, {}),
+      ])
+      if (!isAllowedEmail(email, domains, emails)) {
         const userId = data.id
         const result = await deleteClerkUser(userId)
         if (!result.ok) {

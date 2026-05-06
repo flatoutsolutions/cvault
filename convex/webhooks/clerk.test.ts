@@ -184,6 +184,66 @@ describe('clerkUsersWebhook (domain gate)', () => {
 
     expect(res.status).toBe(200)
   })
+
+  it('upserts the user when primary email is on the explicit per-email allowlist (not the domain list)', async () => {
+    const t = vault()
+    // Seed: gmail.com is NOT on the domain allowlist; samuel.asseg@gmail.com IS on the email allowlist.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('allowedEmails', { email: 'samuel.asseg@gmail.com', addedAtMs: 1 })
+    })
+    const event = userCreatedEvent({ userId: 'user_samuel', primaryEmail: 'samuel.asseg@gmail.com' })
+
+    const validateRequest = await import('../utils/validateRequest')
+    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
+
+    const fetchStub = vi.fn(() => Promise.resolve(new Response('', { status: 200 })))
+    __setClerkFetch(fetchStub as unknown as typeof fetch)
+
+    const res = await t.fetch('/webhooks/clerk', {
+      method: 'POST',
+      body: JSON.stringify(event),
+      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    })
+
+    expect(res.status).toBe(200)
+    // Critically, BAPI delete must NOT have been called — the explicit
+    // allowlist row covers the user even though gmail.com is not a
+    // permitted domain.
+    expect(fetchStub).not.toHaveBeenCalled()
+    const userRow = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query('users')
+          .withIndex('byExternalId', (q) => q.eq('externalId', 'user_samuel'))
+          .unique()
+    )
+    expect(userRow).not.toBeNull()
+    expect(userRow?.primaryEmail).toBe('samuel.asseg@gmail.com')
+  })
+
+  it('still deletes when the explicit-email row is for a DIFFERENT email', async () => {
+    const t = vault()
+    // Seed an explicit-email row for someone else; the incoming user is unrelated.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('allowedEmails', { email: 'someone.else@gmail.com', addedAtMs: 1 })
+    })
+    const event = userCreatedEvent({ userId: 'user_intruder', primaryEmail: 'intruder@gmail.com' })
+
+    const validateRequest = await import('../utils/validateRequest')
+    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
+
+    const deleteFetch = vi.fn(() => Promise.resolve(new Response('', { status: 200 })))
+    __setClerkFetch(deleteFetch as unknown as typeof fetch)
+
+    const res = await t.fetch('/webhooks/clerk', {
+      method: 'POST',
+      body: JSON.stringify(event),
+      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    })
+
+    expect(res.status).toBe(200)
+    expect(deleteFetch).toHaveBeenCalledTimes(1)
+  })
 })
 
 /**

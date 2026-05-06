@@ -23,8 +23,8 @@ import { ConvexError, type PropertyValidators } from 'convex/values'
 import type { DataModel } from '../_generated/dataModel'
 import { action, mutation, query } from '../_generated/server'
 import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from './domainGate'
-import { loadAllowedDomainsFromAction } from './domainGateAction'
-import { loadAllowedDomains } from './domainGateServer'
+import { loadAllowedDomainsFromAction, loadAllowedEmailsFromAction } from './domainGateAction'
+import { loadAllowedDomains, loadAllowedEmails } from './domainGateServer'
 
 /**
  * Throwing a plain `Error` from a public function surfaces on the client
@@ -78,8 +78,10 @@ function rejectDomain(): never {
 async function resolveServer(ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>): Promise<UserIdentity> {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) throw notAuthenticatedError()
-  const domains = await loadAllowedDomains(ctx)
-  if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains)) {
+  // Load both lists in parallel — they hit independent tables and the
+  // gate only needs both to make a decision.
+  const [domains, emails] = await Promise.all([loadAllowedDomains(ctx), loadAllowedEmails(ctx)])
+  if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains, emails)) {
     rejectDomain()
   }
   return identity
@@ -88,8 +90,8 @@ async function resolveServer(ctx: GenericQueryCtx<DataModel> | GenericMutationCt
 async function resolveAction(ctx: GenericActionCtx<DataModel>): Promise<UserIdentity> {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) throw notAuthenticatedError()
-  const domains = await loadAllowedDomainsFromAction(ctx)
-  if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains)) {
+  const [domains, emails] = await Promise.all([loadAllowedDomainsFromAction(ctx), loadAllowedEmailsFromAction(ctx)])
+  if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains, emails)) {
     rejectDomain()
   }
   return identity
