@@ -1,5 +1,6 @@
 /**
- * Spec: bug-fix sweep §"CLI error display for ConvexError".
+ * Spec: bug-fix sweep §"CLI error display for ConvexError" + PR #25
+ * follow-up §"Consistent error rendering across all CLI commands".
  *
  * `formatCliError` is the pure formatter that the top-level CLI catch uses
  * to turn a thrown value into a single user-facing line. The contract is
@@ -8,6 +9,7 @@
  *   - ConvexError with `{code, message}` data → "ERROR: <message> (<code>)"
  *   - ConvexError with string data            → "ERROR: <data>"
  *   - ConvexError with any other shape        → "ERROR: <JSON>"
+ *   - ConvexEndpointNotFoundError              → "ERROR: <message>"
  *   - non-ConvexError                         → null  (caller falls through
  *                                                     to the generic display)
  *
@@ -15,10 +17,18 @@
  * regular Errors, plain strings, and `undefined` untouched — the bug-fix
  * spec explicitly requires that the existing behavior for non-ConvexError
  * be preserved.
+ *
+ * The `ConvexEndpointNotFoundError` branch was added so every CLI command
+ * (login + every retry-path command) renders the wrong-deployment hijack
+ * the same way. Previously only `cli/src/commands/login.ts` had a bespoke
+ * `Error: ${err.message}` print + exit; non-login commands fell through to
+ * the generic top-level catch's `error: ${msg}` line, which was an
+ * inconsistent rendering across the surface.
  */
 import { ConvexError } from 'convex/values'
 import { describe, expect, it } from 'vitest'
 
+import { ConvexEndpointNotFoundError } from '../../src/auth/clerkFapi'
 import { formatCliError } from '../../src/render/cliError'
 
 describe('formatCliError', () => {
@@ -64,6 +74,45 @@ describe('formatCliError', () => {
     it('falls back to JSON for array data', () => {
       const err = new ConvexError(['a', 'b'])
       expect(formatCliError(err)).toBe(`ERROR: ${JSON.stringify(['a', 'b'])}`)
+    })
+  })
+
+  describe('ConvexEndpointNotFoundError', () => {
+    // The wrong-deployment hijack class is not a `ConvexError` — it's a
+    // plain `Error` subclass thrown client-side from `mintConvexJwt`. It
+    // routes through the same `formatCliError` dispatch so login + every
+    // non-login command render the same actionable line + exit 1
+    // (instead of login printing one form and the retry path falling
+    // through to the generic `error: <msg>` printer).
+    it('formats ConvexEndpointNotFoundError as "ERROR: <message>"', () => {
+      const err = new ConvexEndpointNotFoundError(
+        'https://hijacker.convex.site/api/cli/mint-token',
+        'No matching routes found'
+      )
+      const formatted = formatCliError(err)
+      expect(formatted).not.toBeNull()
+      // The formatter returns the message verbatim (already actionable —
+      // includes the URL + .env.local pointer + reinstall hint), prefixed
+      // with the same "ERROR:" tag the ConvexError branch uses.
+      expect(formatted).toContain('ERROR:')
+      // The message body itself must be present so the user sees the URL
+      // they tried + the .env.local hint.
+      expect(formatted).toContain('hijacker.convex.site')
+      expect(formatted).toMatch(/\.env\.local/i)
+    })
+
+    it('does not append a `(<code>)` suffix — the class is a plain Error, not a ConvexError', () => {
+      // Defensive: `ConvexEndpointNotFoundError` is not a `ConvexError` so
+      // the structured `(NOT_FOUND)`-style suffix from the ConvexError
+      // branch must NOT appear (no `code` field on the class).
+      const err = new ConvexEndpointNotFoundError(
+        'https://x.convex.site/api/cli/mint-token',
+        'No matching routes found'
+      )
+      const formatted = formatCliError(err) ?? ''
+      // Trailing parenthesised suffix would look like "(SOMETHING)" at end
+      // of the string. Make sure we aren't accidentally rendering one.
+      expect(formatted).not.toMatch(/\(\w+\)\s*$/)
     })
   })
 

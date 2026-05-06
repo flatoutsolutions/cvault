@@ -13,6 +13,7 @@ import {
   CLI_VERSION,
   ClerkEmailDomainNotAllowedError,
   ClerkSessionExpiredError,
+  ConvexEndpointNotFoundError,
   cliUserAgent,
   decodeJwtExp,
   exchangeTicketForSession,
@@ -121,9 +122,74 @@ describe('mintConvexJwt', () => {
     await expect(mintConvexJwt(baseSession())).rejects.toBeInstanceOf(ClerkSessionExpiredError)
   })
 
-  it('throws ClerkSessionExpiredError on 404', async () => {
+  it('throws ClerkSessionExpiredError on 404 when body is NOT the unrouted-deployment marker', async () => {
+    // Generic 404 (e.g. Clerk JWT template missing on this deployment) still
+    // surfaces as ClerkSessionExpiredError so the user is prompted to
+    // re-login. Only the "no matching routes" body indicates a wrong-URL
+    // hijack, which is the case we now distinguish.
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(fetchErr('not found', 404))
     await expect(mintConvexJwt(baseSession())).rejects.toBeInstanceOf(ClerkSessionExpiredError)
+  })
+
+  it('throws ConvexEndpointNotFoundError on 404 + "No matching routes found" body', async () => {
+    // The exact body Convex's HTTP router returns when the deployment has
+    // no `/api/cli/mint-token` registered — i.e. the CLI is pointed at a
+    // foreign deployment (the bug behind Saad's "session expired" loop).
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(fetchErr('No matching routes found', 404))
+    let caught: unknown
+    try {
+      await mintConvexJwt(baseSession())
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ConvexEndpointNotFoundError)
+    // Sanity: not the legacy ClerkSessionExpiredError so the new login.ts
+    // catch site can dispatch on the new class without ambiguity.
+    expect(caught).not.toBeInstanceOf(ClerkSessionExpiredError)
+    const msg = (caught as Error).message
+    // Message must surface the URL the CLI tried to hit so users can spot
+    // the hijack at a glance.
+    expect(msg).toContain('.convex.site')
+    // ...and must point at the most common cause (a foreign `.env.local`
+    // in the user's CWD, auto-loaded by Bun) so the user knows where to
+    // look without filing a support ticket.
+    expect(msg).toMatch(/\.env\.local/i)
+
+    fetchSpy.mockRestore()
+  })
+
+  it('throws ConvexEndpointNotFoundError on 404 with case-variant marker body', async () => {
+    // Convex's wording could shift slightly between releases (case,
+    // pluralization, punctuation). The detection is a case-insensitive
+    // regex `/no matching routes? found/i` so a future "no matching
+    // routes found" / "No matching route found" body still triggers
+    // the actionable path instead of regressing to the misleading
+    // "Clerk session expired" prompt.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(fetchErr('no matching routes found', 404))
+    let caught: unknown
+    try {
+      await mintConvexJwt(baseSession())
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ConvexEndpointNotFoundError)
+    expect(caught).not.toBeInstanceOf(ClerkSessionExpiredError)
+    fetchSpy.mockRestore()
+  })
+
+  it('throws ConvexEndpointNotFoundError on 404 with singular "route" variant', async () => {
+    // The `routes?` group in the detection regex tolerates the
+    // singular form Convex might use if a single-route mismatch is
+    // reported differently in a future release.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(fetchErr('No matching route found', 404))
+    let caught: unknown
+    try {
+      await mintConvexJwt(baseSession())
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ConvexEndpointNotFoundError)
+    fetchSpy.mockRestore()
   })
 
   it('throws a generic Error on other non-2xx', async () => {

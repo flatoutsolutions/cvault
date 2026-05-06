@@ -62,6 +62,38 @@ export class ClerkEmailDomainNotAllowedError extends Error {
 }
 
 /**
+ * Thrown when the Convex mint endpoint returns a 404 with body containing
+ * `No matching routes found` — Convex's HTTP router's standard "no route
+ * registered" response. This signals that the CLI is pointing at a
+ * Convex deployment that does not have the cvault HTTP routes (e.g.
+ * because a foreign `.env.local` in the user's CWD overrode the baked
+ * config — see `cli/src/config.ts` priority docs).
+ *
+ * Distinct from `ClerkSessionExpiredError` so login.ts and other catch
+ * sites can print a specific "wrong deployment" message instead of the
+ * misleading "re-login" prompt.
+ */
+export class ConvexEndpointNotFoundError extends Error {
+  override readonly name = 'ConvexEndpointNotFoundError'
+  /** The full mint URL the CLI tried to hit. */
+  readonly url: string
+  /** Truncated 404 response body. */
+  readonly body: string
+  constructor(url: string, body: string) {
+    super(
+      `cvault is pointing at a Convex deployment that does not have the cvault HTTP routes registered ` +
+        `(URL: ${url}). This usually means a foreign .env.local in your current directory is overriding ` +
+        `the baked CLI config — check VITE_CONVEX_URL / CLERK_FRONTEND_API_URL in your CWD. ` +
+        `If those env vars are correct, your installed binary may be older than the deployed routes — ` +
+        `reinstall the latest cvault (e.g. \`brew upgrade cvault\` if installed via Homebrew, or re-download ` +
+        `from https://github.com/flatoutsolutions/cvault/releases). (body: ${body.slice(0, 200)})`
+    )
+    this.url = url
+    this.body = body
+  }
+}
+
+/**
  * Build a recognizable User-Agent. Per
  * `clerk-convex-tanstack-integration.md` §6, the dashboard surfaces this
  * as the "device" label for sessions.
@@ -159,6 +191,23 @@ export async function mintConvexJwt(session: SessionState): Promise<MintResult> 
     const message = parsed && typeof parsed.message === 'string' ? parsed.message : rawBody
     if (res.status === 403 && code === 'EMAIL_DOMAIN_NOT_ALLOWED') {
       throw new ClerkEmailDomainNotAllowedError(message)
+    }
+    // Convex's HTTP router returns 404 + "No matching routes found" when no
+    // route matches. That body is the diagnostic marker for "the CLI is
+    // pointed at a foreign deployment without the cvault routes" (the
+    // `.env.local` hijack), not "the user's session expired". Surface it
+    // through a dedicated class so the central error formatter can render
+    // the actionable "check your `.env.local`" message instead of
+    // "re-run cvault login" (which doesn't fix anything if the binary is
+    // still pointed at the wrong deployment).
+    //
+    // Match case-insensitively + tolerate the singular "route" form so a
+    // future Convex release tweaking the wording (case, pluralization,
+    // punctuation) doesn't regress us to the misleading
+    // ClerkSessionExpiredError surface. The marker is intentionally
+    // narrow to avoid false positives on unrelated 404 bodies.
+    if (res.status === 404 && /no matching routes? found/i.test(rawBody)) {
+      throw new ConvexEndpointNotFoundError(url, rawBody)
     }
     if (res.status === 401 || res.status === 403 || res.status === 404) {
       throw new ClerkSessionExpiredError(res.status, rawBody)

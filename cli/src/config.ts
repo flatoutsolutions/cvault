@@ -2,17 +2,38 @@
  * Resolve runtime configuration for the CLI.
  *
  * Resolution order (highest priority first):
- *   1. Explicit `CVAULT_*` env vars
- *   2. Project-root `.env*` fallbacks (auto-loaded by Bun from cwd):
+ *   1. Explicit `CVAULT_*` env vars — power-user overrides; always win.
+ *   2. `BUILD_DEFAULTS` from `buildInfo.ts` — values baked into the
+ *      compiled binary by `scripts/build.ts` at release time. On a
+ *      clean working copy these are three empty strings (dev mode),
+ *      which `pickString` filters out so resolution falls through to
+ *      tier 3+.
+ *   3. `~/.vault/config.json` — gap-filler for keys that
+ *      `BUILD_DEFAULTS` leaves empty (e.g., a developer-built binary
+ *      missing one of the three URLs). Plain JSON: `{convexUrl,
+ *      frontendApiUrl, dashboardUrl}`. Optional file; missing keys
+ *      fall through. Full overrides require the `CVAULT_*` env vars
+ *      in tier 1 — the file no longer beats `BUILD_DEFAULTS`,
+ *      intentionally, so a stale `config.json` on a Homebrew user's
+ *      machine cannot override the binary's baked-in URLs and silently
+ *      re-point the CLI at a wrong deployment.
+ *   4. Project-root `.env*` fallbacks (auto-loaded by Bun from CWD):
  *        VITE_CONVEX_URL          → convexUrl
  *        CLERK_FRONTEND_API_URL   → frontendApiUrl
- *        CVAULT_DASHBOARD_URL     → dashboardUrl  (no project-root analog)
- *   3. `~/.vault/config.json` — for users who installed via Homebrew and
- *      don't run from the repo. Plain JSON: `{convexUrl, frontendApiUrl,
- *      dashboardUrl}`. Optional file; missing keys fall through.
- *   4. `BUILD_DEFAULTS` from `buildInfo.ts` — values baked into the
- *      compiled binary by `scripts/build.ts` at release time. Empty
- *      strings (the dev-mode default) fall through to the throw.
+ *      Repo-dev mode only — these are intended for `bun cli/src/index.ts`
+ *      against a personal deployment when BUILD_DEFAULTS is empty.
+ *
+ * Why BUILD_DEFAULTS beats the loose `VITE_*` / `CLERK_*` fallbacks:
+ *   Bun auto-loads `.env.local` from the process CWD when the bundled
+ *   binary starts. Under the original priority (`VITE_CONVEX_URL` >
+ *   `BUILD_DEFAULTS`), a user running `cvault login` from a project
+ *   directory whose `.env.local` defines `VITE_CONVEX_URL=<other>` had
+ *   their CLI silently re-pointed at the wrong Convex deployment, which
+ *   has no `/api/cli/mint-token` route. The 404 surfaced as the
+ *   misleading "Clerk session expired" prompt. Putting BUILD_DEFAULTS
+ *   ahead of the loose env makes installed binaries deterministic
+ *   regardless of CWD; the explicit `CVAULT_*` escape hatch is still
+ *   tier 1.
  *
  * Missing required fields → throw a clear error so the user knows
  * exactly which value to set.
@@ -62,19 +83,24 @@ function pickString(...candidates: Array<unknown>): string | undefined {
 export function resolveConfig(): RuntimeConfig {
   const file = readConfigFile()
 
+  // Tier order: CVAULT_* (explicit) → BUILD_DEFAULTS (baked into installed
+  // binary) → file → loose VITE_/CLERK_ fallback (repo-dev only). See the
+  // top-of-file docstring for the rationale (foreign `.env.local` hijack).
   const convexUrl = pickString(
     process.env.CVAULT_CONVEX_URL,
-    process.env.VITE_CONVEX_URL,
+    BUILD_DEFAULTS.convexUrl,
     file.convexUrl,
-    BUILD_DEFAULTS.convexUrl
+    process.env.VITE_CONVEX_URL
   )
   const frontendApiUrl = pickString(
     process.env.CVAULT_FRONTEND_API_URL,
-    process.env.CLERK_FRONTEND_API_URL,
+    BUILD_DEFAULTS.frontendApiUrl,
     file.frontendApiUrl,
-    BUILD_DEFAULTS.frontendApiUrl
+    process.env.CLERK_FRONTEND_API_URL
   )
-  const dashboardUrl = pickString(process.env.CVAULT_DASHBOARD_URL, file.dashboardUrl, BUILD_DEFAULTS.dashboardUrl)
+  // dashboardUrl has no loose-env analog (no `VITE_*` equivalent), so
+  // the chain is just: explicit → baked → file.
+  const dashboardUrl = pickString(process.env.CVAULT_DASHBOARD_URL, BUILD_DEFAULTS.dashboardUrl, file.dashboardUrl)
 
   const missing: string[] = []
   if (!convexUrl) missing.push('CVAULT_CONVEX_URL (or VITE_CONVEX_URL in repo .env.local)')

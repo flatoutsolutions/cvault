@@ -35,8 +35,14 @@ vi.mock('../../src/auth/openBrowser', () => ({
   openBrowser: vi.fn().mockResolvedValue(undefined),
 }))
 
-// Real class so `instanceof` works inside login.ts's catch branch. Defined
+// Real classes so `instanceof` works inside login.ts's catch branch. Defined
 // via vi.hoisted so vi.mock's hoisted factory can capture the reference.
+//
+// Note: `ConvexEndpointNotFoundError` no longer needs a fake here — its
+// dispatch moved out of login.ts and into the central
+// `cli/src/render/cliError.ts:formatCliError` so it lands at the top-level
+// catch instead of the per-command catch (PR #25 follow-up). Tests for
+// that path live in `cli/tests/render/cliError.test.ts`.
 const { FakeClerkEmailDomainNotAllowedError } = vi.hoisted(() => ({
   FakeClerkEmailDomainNotAllowedError: class FakeClerkEmailDomainNotAllowedError extends Error {
     override readonly name = 'ClerkEmailDomainNotAllowedError'
@@ -52,6 +58,11 @@ vi.mock('../../src/auth/clerkFapi', () => ({
   exchangeTicketForSession: vi.fn(),
   ClerkSessionExpiredError: class extends Error {},
   ClerkEmailDomainNotAllowedError: FakeClerkEmailDomainNotAllowedError,
+  // `ConvexEndpointNotFoundError` is left as a real `class extends Error`
+  // because login.ts no longer imports it — anything that throws an
+  // instance of it now propagates up to the top-level catch (which is
+  // tested separately).
+  ConvexEndpointNotFoundError: class extends Error {},
   // Read from cli/package.json so the mocked UA tracks every release bump
   // automatically (matches the production CLI_VERSION source-of-truth fix).
   cliUserAgent: () => `cvault-cli/${pkg.version} (test)`,
@@ -181,6 +192,12 @@ describe('runLogin', () => {
       exitSpy.mockRestore()
     }
   })
+
+  // ConvexEndpointNotFoundError dispatch was previously bespoke in login.ts
+  // and tested here. As of PR #25 follow-up, `formatCliError` handles the
+  // class centrally — login.ts now re-throws and lets the top-level catch
+  // render. The dispatch contract is verified in
+  // `cli/tests/render/cliError.test.ts:formatCliError → ConvexEndpointNotFoundError`.
 
   it('cancels the callback server if the user closes the tab (timeout)', async () => {
     const cancel = vi.fn().mockResolvedValue(undefined)
