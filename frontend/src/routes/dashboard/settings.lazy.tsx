@@ -98,6 +98,22 @@ function SettingsPage() {
             </Link>
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Allowed emails</CardTitle>
+            <CardDescription>
+              Allow specific email addresses without opening up their entire domain. Useful for one-off exceptions like
+              contractors or personal addresses (e.g. a Gmail account that should not unlock all of{' '}
+              <code className="bg-muted rounded px-1">gmail.com</code>).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link to="/dashboard/settings/emails" className="text-primary text-sm hover:underline">
+              Manage allowed emails →
+            </Link>
+          </CardContent>
+        </Card>
       </div>
 
       <RotateKeyDialog open={rotateOpen} onOpenChange={setRotateOpen} />

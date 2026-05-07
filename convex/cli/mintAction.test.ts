@@ -144,4 +144,41 @@ describe('cli.mintAction.mintConvexJwt — domain gate', () => {
     })
     expect(result.jwt).toBe('jwt-acme')
   })
+
+  it('mints when identity is matched only via allowedEmails (not via domain) — JWT-claim path', async () => {
+    const t = vault()
+    await t.run(async (ctx) => {
+      await ctx.db.insert('allowedEmails', { email: 'samuel.asseg@gmail.com', addedAtMs: 1 })
+    })
+    mockVerify({ sid: 'sess_x', sub: 'user_samuel', email: 'samuel.asseg@gmail.com' })
+    __setClerkFetch(
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ jwt: 'jwt-explicit-email' }), { status: 200 }))
+      ) as unknown as typeof fetch
+    )
+    const result = await t.action(internal.cli.mintAction.mintConvexJwt, {
+      clerkSessionToken: 'tok',
+    })
+    expect(result.jwt).toBe('jwt-explicit-email')
+  })
+
+  it('mints via BAPI fallback when JWT lacks email and the resolved primary is on allowedEmails', async () => {
+    const t = vault()
+    await t.run(async (ctx) => {
+      await ctx.db.insert('allowedEmails', { email: 'samuel.asseg@gmail.com', addedAtMs: 1 })
+    })
+    mockVerify({ sid: 'sess_x', sub: 'user_samuel' })
+    const getUser = vi.fn(() =>
+      Promise.resolve({ primaryEmailAddress: { emailAddress: 'samuel.asseg@gmail.com' } } as never)
+    )
+    __setClerkBackendClientFactory(() => stubClerkBackendClient(getUser))
+    __setClerkFetch(
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ jwt: 'jwt-bapi-explicit' }), { status: 200 }))
+      ) as unknown as typeof fetch
+    )
+    const result = await t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })
+    expect(result.jwt).toBe('jwt-bapi-explicit')
+    expect(getUser).toHaveBeenCalledWith('user_samuel')
+  })
 })

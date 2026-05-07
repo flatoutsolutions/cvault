@@ -39,7 +39,7 @@ import { ConvexError, v } from 'convex/values'
 
 import { internalAction } from '../_generated/server'
 import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from '../utils/domainGate'
-import { loadAllowedDomainsFromAction } from '../utils/domainGateAction'
+import { loadAllowedDomainsFromAction, loadAllowedEmailsFromAction } from '../utils/domainGateAction'
 import { createSessionTokenFromTemplate, getClerkBackendClient } from './clerk'
 
 export const mintConvexJwt = internalAction({
@@ -97,8 +97,8 @@ export const mintConvexJwt = internalAction({
         })
       }
     }
-    const domains = await loadAllowedDomainsFromAction(ctx)
-    if (!isAllowedEmail(email, domains)) {
+    const [domains, emails] = await Promise.all([loadAllowedDomainsFromAction(ctx), loadAllowedEmailsFromAction(ctx)])
+    if (!isAllowedEmail(email, domains, emails)) {
       throw new ConvexError({
         code: DOMAIN_REJECTION_ERROR_CODE,
         message: DOMAIN_REJECTION_MESSAGE,
