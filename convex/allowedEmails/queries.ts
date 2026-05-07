@@ -13,6 +13,19 @@ import { BOOTSTRAP_ALLOWED_EMAILS } from '../utils/domainGate'
  *
  * Mirrors `allowedDomains.queries.list`. Sorted ascending by email so
  * the UI is deterministic.
+ *
+ * Privacy trade-off: the list contents are enumerable by anyone who can
+ * call this Convex function (no auth gate). The blocked page in
+ * `DomainGuard` already renders the same contents to any signed-in
+ * non-allowed user, so this isn't a new exposure surface vs. the existing
+ * `allowedDomains.queries.list`. If the email allowlist ever holds
+ * higher-sensitivity entries than domain allowlist (it likely will,
+ * since domains are typically organizational and emails are personal),
+ * a future iteration should split the read path:
+ *   - `loadInternal` (already exists) → DomainGuard
+ *   - `list` → admin-gated query for the settings UI only
+ * That refactor is out of scope here to keep parity with the domain
+ * pattern, but it's the right next step.
  */
 export const list = query({
   args: {},
