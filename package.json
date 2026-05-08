@@ -1,6 +1,6 @@
 {
   "name": "cvault",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Centralized Claude Code credential vault and sync system across machines",
   "author": "Saad Nauman <saadijutt007@gmail.com>",
   "license": "MIT",
