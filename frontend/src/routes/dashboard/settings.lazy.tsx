@@ -7,7 +7,7 @@
  *
  * Spec: docs/superpowers/specs/2026-05-04-cvault-key-rotation-and-backup-design.md §8.
  */
-import { Link, createLazyFileRoute } from '@tanstack/react-router'
+import { Link, Outlet, createLazyFileRoute, useRouterState } from '@tanstack/react-router'
 import { useState } from 'react'
 
 import { ExportBackupDialog } from '@/components/dashboard/ExportBackupDialog'
@@ -22,9 +22,20 @@ export const Route = createLazyFileRoute('/dashboard/settings')({
 })
 
 function SettingsPage() {
+  // The parent `/dashboard/settings` route owns this component AND is the
+  // parent of `/dashboard/settings/{domains,emails}`. Without an <Outlet />,
+  // navigating to a child route would mount the child but render nothing.
+  // When we're on a child path, delegate fully to <Outlet />; only render
+  // the index cards on the exact `/dashboard/settings` URL.
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const isIndex = pathname === '/dashboard/settings' || pathname === '/dashboard/settings/'
+
   const [rotateOpen, setRotateOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+
+  if (!isIndex) return <Outlet />
+
   return (
     <div className="flex flex-col gap-6">
       <div>
