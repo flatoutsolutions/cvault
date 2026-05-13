@@ -13,12 +13,18 @@ import { __setClerkFetch } from '../cli/clerk'
 
 const ORIGINAL_CLERK_KEY = process.env.CLERK_SECRET_KEY
 const ORIGINAL_WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET
+const ORIGINAL_ENVIRONMENT = process.env.ENVIRONMENT
 
 beforeEach(() => {
   process.env.CLERK_SECRET_KEY = 'sk_test_dummy_for_unit_tests'
   // Use any value — validateRequest is mocked in these tests, so the
   // secret never actually verifies anything.
   process.env.CLERK_WEBHOOK_SECRET = 'whsec_dummy_for_unit_tests'
+  // The webhook reject path's destructive BAPI delete is gated on the
+  // canonical-deployment flag; default tests assume the production
+  // (canonical) behavior. The "non-production" branch has its own
+  // dedicated test below.
+  process.env.ENVIRONMENT = 'production'
 })
 
 afterEach(() => {
@@ -26,6 +32,8 @@ afterEach(() => {
   else process.env.CLERK_SECRET_KEY = ORIGINAL_CLERK_KEY
   if (ORIGINAL_WEBHOOK_SECRET === undefined) delete process.env.CLERK_WEBHOOK_SECRET
   else process.env.CLERK_WEBHOOK_SECRET = ORIGINAL_WEBHOOK_SECRET
+  if (ORIGINAL_ENVIRONMENT === undefined) delete process.env.ENVIRONMENT
+  else process.env.ENVIRONMENT = ORIGINAL_ENVIRONMENT
   __setClerkFetch(undefined)
   vi.restoreAllMocks()
 })
@@ -243,6 +251,72 @@ describe('clerkUsersWebhook (domain gate)', () => {
 
     expect(res.status).toBe(200)
     expect(deleteFetch).toHaveBeenCalledTimes(1)
+  })
+
+  // Multi-deployment safety: a non-canonical (non-production) Convex
+  // deployment subscribed to the same Clerk webhook stream as prod must
+  // NOT call the BAPI DELETE on rejection. Its allowedEmails /
+  // allowedDomains tables are independent of prod's, so a personal
+  // address that prod has admitted would otherwise be destroyed in
+  // Clerk by the dev deployment's rejection path — locking the user out
+  // of prod too, because Clerk users are tenant-global.
+  it('does NOT call BAPI DELETE on rejection when ENVIRONMENT != "production"', async () => {
+    const t = vault()
+    delete process.env.ENVIRONMENT
+    const event = userCreatedEvent({ userId: 'user_devreject', primaryEmail: 'rejectme@gmail.com' })
+
+    const validateRequest = await import('../utils/validateRequest')
+    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
+
+    const fetchStub = vi.fn(() => Promise.resolve(new Response('', { status: 200 })))
+    __setClerkFetch(fetchStub as unknown as typeof fetch)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const res = await t.fetch('/webhooks/clerk', {
+      method: 'POST',
+      body: JSON.stringify(event),
+      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    })
+
+    expect(res.status).toBe(200)
+    expect(fetchStub).not.toHaveBeenCalled()
+    // No users row should have been inserted (rejection short-circuits the upsert).
+    const userRow = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query('users')
+          .withIndex('byExternalId', (q) => q.eq('externalId', 'user_devreject'))
+          .unique()
+    )
+    expect(userRow).toBeNull()
+    // The rejection was logged (so dev devs can see what would have happened).
+    expect(warnSpy).toHaveBeenCalled()
+  })
+
+  // Same path when ENVIRONMENT is explicitly 'development' — should
+  // behave identically to the "unset" case (only 'production' enables
+  // the destructive BAPI call).
+  it('does NOT call BAPI DELETE on rejection when ENVIRONMENT === "development"', async () => {
+    const t = vault()
+    process.env.ENVIRONMENT = 'development'
+    const event = userCreatedEvent({ userId: 'user_devreject2', primaryEmail: 'rejectme2@gmail.com' })
+
+    const validateRequest = await import('../utils/validateRequest')
+    vi.spyOn(validateRequest, 'validateRequest').mockResolvedValue(event as never)
+
+    const fetchStub = vi.fn(() => Promise.resolve(new Response('', { status: 200 })))
+    __setClerkFetch(fetchStub as unknown as typeof fetch)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const res = await t.fetch('/webhooks/clerk', {
+      method: 'POST',
+      body: JSON.stringify(event),
+      headers: { 'svix-id': 'x', 'svix-timestamp': '1', 'svix-signature': 's' },
+    })
+
+    expect(res.status).toBe(200)
+    expect(fetchStub).not.toHaveBeenCalled()
   })
 })
 

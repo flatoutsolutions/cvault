@@ -35,10 +35,15 @@ vi.mock('@clerk/backend', async () => {
 
 const ORIGINAL_KEY = process.env.CLERK_SECRET_KEY
 const ORIGINAL_HOOK = process.env.CLERK_WEBHOOK_SECRET
+const ORIGINAL_ENVIRONMENT = process.env.ENVIRONMENT
 
 beforeEach(() => {
   process.env.CLERK_SECRET_KEY = 'sk_test_dummy'
   process.env.CLERK_WEBHOOK_SECRET = 'whsec_dummy'
+  // Scenario exercises the production (canonical) webhook reject path
+  // (BAPI DELETE on disallowed email). Non-production deployments skip
+  // that destructive call — see clerk.test.ts for the dedicated test.
+  process.env.ENVIRONMENT = 'production'
   verifyTokenMock.mockReset()
 })
 
@@ -47,6 +52,8 @@ afterEach(() => {
   else process.env.CLERK_SECRET_KEY = ORIGINAL_KEY
   if (ORIGINAL_HOOK === undefined) delete process.env.CLERK_WEBHOOK_SECRET
   else process.env.CLERK_WEBHOOK_SECRET = ORIGINAL_HOOK
+  if (ORIGINAL_ENVIRONMENT === undefined) delete process.env.ENVIRONMENT
+  else process.env.ENVIRONMENT = ORIGINAL_ENVIRONMENT
   __setClerkFetch(undefined)
   vi.restoreAllMocks()
 })
