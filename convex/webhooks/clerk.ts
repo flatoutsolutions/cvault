@@ -30,15 +30,35 @@ export const clerkUsersWebhook = httpAction(async (ctx, request) => {
       ])
       if (!isAllowedEmail(email, domains, emails)) {
         const userId = data.id
-        const result = await deleteClerkUser(userId)
-        if (!result.ok) {
-          console.error(
-            `domainGate: BAPI delete failed for ${userId} (${email ?? '<missing>'}) — status=${String(result.status)}, body=${result.body.slice(0, 200)}`
+        // Multi-deployment safety: a single Clerk tenant can fan webhook
+        // deliveries to multiple Convex deployment endpoints (e.g. prod +
+        // a developer's dev deployment subscribed to the same Clerk
+        // instance). Each deployment owns its own `allowedEmails` /
+        // `allowedDomains` tables, so a personal address admitted by prod
+        // is unknown to dev. If dev also ran the destructive BAPI DELETE
+        // on rejection, it would race-destroy the Clerk user that prod
+        // just admitted — locking the user out of prod too, because
+        // Clerk users are tenant-global. Gate the destructive path
+        // behind `ENVIRONMENT === 'production'` so only the canonical
+        // deployment acts on rejection. Non-canonical deployments still
+        // skip the upsert (no users row written) and return 200; the
+        // DomainGuard frontend remains the runtime guardrail against
+        // unauthorized UI access on those deployments.
+        if (process.env.ENVIRONMENT === 'production') {
+          const result = await deleteClerkUser(userId)
+          if (!result.ok) {
+            console.error(
+              `domainGate: BAPI delete failed for ${userId} (${email ?? '<missing>'}) — status=${String(result.status)}, body=${result.body.slice(0, 200)}`
+            )
+            return new Response('clerk delete failed', { status: 500 })
+          }
+          await ctx.runMutation(internal.users.actions.remove, { clerkUserId: userId })
+          console.warn(`domainGate: rejected ${userId} (${email ?? '<missing>'}) — deleted via BAPI`)
+        } else {
+          console.warn(
+            `domainGate: rejected ${userId} (${email ?? '<missing>'}) on non-production deployment (ENVIRONMENT=${String(process.env.ENVIRONMENT)}); skipping BAPI delete + local remove to avoid destroying users authorized on the canonical deployment`
           )
-          return new Response('clerk delete failed', { status: 500 })
         }
-        await ctx.runMutation(internal.users.actions.remove, { clerkUserId: userId })
-        console.warn(`domainGate: rejected ${userId} (${email ?? '<missing>'}) — deleted via BAPI`)
         return new Response(null, { status: 200 })
       }
       await ctx.runMutation(internal.users.actions.upsert, { data })
