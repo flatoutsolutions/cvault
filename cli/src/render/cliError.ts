@@ -16,7 +16,7 @@
  *
  * Currently dispatched here:
  *   - `ConvexError`                 — server-thrown structured error.
- *   - `ConvexEndpointNotFoundError` — client-thrown 404 from mintConvexJwt
+ *   - `ConvexEndpointNotFoundError` — client-thrown 404 from the OAuth refresh call
  *     when the CLI is pointing at a Convex deployment without the cvault
  *     HTTP routes. Routed through the same dispatch so every CLI command
  *     (login + every retry-path command) renders identically; previously

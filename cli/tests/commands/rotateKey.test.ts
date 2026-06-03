@@ -45,8 +45,8 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      withSessionId: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
-      withMeta: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
+      
+      withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []
     await runRotateKey({
@@ -91,8 +91,8 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      withSessionId: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
-      withMeta: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
+      
+      withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []
     await runRotateKey({
@@ -132,8 +132,8 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      withSessionId: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
-      withMeta: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
+      
+      withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []
     await runRotateKey({
@@ -173,8 +173,8 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      withSessionId: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
-      withMeta: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
+      
+      withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     await runRotateKey({
       makeClient: async () => client as unknown as never,
@@ -212,8 +212,8 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      withSessionId: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
-      withMeta: <A extends object>(a: A) => ({ ...a, clerkSessionId: 'fake-session' }),
+      
+      withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []
     await runRotateKey({

@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { runList } from '../../src/commands/list'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { getActiveAccount } from '../../src/credentials'
-import { noopWithMachineLabel, noopWithMeta, noopWithSessionId } from '../scenarios/_helpers'
+import { noopWithMachineLabel, noopWithMeta } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
   getActiveAccount: vi.fn(),
@@ -69,7 +69,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'c@d.com' })
@@ -99,7 +98,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
@@ -117,7 +115,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'a@b.com' })
@@ -138,7 +135,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockImplementationOnce(() => {
@@ -162,7 +158,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
@@ -194,7 +189,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
@@ -219,7 +213,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
@@ -250,7 +243,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce(null)
@@ -294,7 +286,6 @@ describe('runList', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'stefan@example.com' })

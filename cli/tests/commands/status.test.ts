@@ -16,7 +16,7 @@ import { runStatus } from '../../src/commands/status'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { getActiveAccount } from '../../src/credentials'
 import { readCredentials } from '../../src/native/credentialStore'
-import { noopWithMachineLabel, noopWithMeta, noopWithSessionId } from '../scenarios/_helpers'
+import { noopWithMachineLabel, noopWithMeta } from '../scenarios/_helpers'
 
 vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
@@ -94,12 +94,11 @@ describe('runStatus', () => {
         rateLimitTier: 'tier1',
       },
       refreshLog: [{ outcome: 'success', triggeredBy: 'manual', at: 1_900_000_000_000 - 60_000 }],
-      lastMachineActivity: { action: 'switch', clerkSessionId: 'sess_1', at: 1_900_000_000_000 - 5 * 60_000 },
+      lastMachineActivity: { action: 'switch', machineId: 'machine-1', at: 1_900_000_000_000 - 5 * 60_000 },
     })
     vi.mocked(makeVaultClient).mockResolvedValue({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -143,7 +142,6 @@ describe('runStatus', () => {
     vi.mocked(makeVaultClient).mockResolvedValue({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -177,12 +175,11 @@ describe('runStatus', () => {
         rateLimitTier: 'tier1',
       },
       refreshLog: [{ outcome: 'reloginRequired', triggeredBy: 'manual', at: NOW - 60_000 }],
-      lastMachineActivity: { action: 'add', clerkSessionId: 'sess_old', at: NOW - 24 * 60 * 60_000 },
+      lastMachineActivity: { action: 'add', machineId: 'machine-old', at: NOW - 24 * 60 * 60_000 },
     })
     vi.mocked(makeVaultClient).mockResolvedValue({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -229,7 +226,6 @@ describe('runStatus', () => {
     vi.mocked(makeVaultClient).mockResolvedValue({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -269,7 +265,6 @@ describe('runStatus', () => {
     vi.mocked(makeVaultClient).mockResolvedValue({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -337,7 +332,6 @@ describe('runStatus', () => {
     vi.mocked(makeVaultClient).mockResolvedValue({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 

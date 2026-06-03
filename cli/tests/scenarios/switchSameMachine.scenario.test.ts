@@ -75,7 +75,7 @@ describe('Scenario #4 — Switch on the same machine (hash matches)', () => {
     })
     const fake = createFakeVaultClient({
       subscriptions: [sub],
-      clerkSessionId: 'sess_machine_1',
+      machineId: 'machine-1',
     })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
 
@@ -112,9 +112,9 @@ describe('Scenario #4 — Switch on the same machine (hash matches)', () => {
     expect(row.action).toBe('pull')
     expect(row.subscriptionId).toBe(sub._id)
     expect(row.userId).toBe(sub.userId)
-    // The clerkSessionId stamp identifies which machine performed the pull.
-    expect(row.clerkSessionId).toBe('sess_machine_1')
-    expect(row.clerkSessionId.length).toBeGreaterThan(0)
+    // The machineId stamp identifies which machine performed the pull.
+    expect(row.machineId).toBe('machine-1')
+    expect(row.machineId.length).toBeGreaterThan(0)
   })
 
   it('imports when the local hash is missing (first switch on this machine for this sub)', async () => {

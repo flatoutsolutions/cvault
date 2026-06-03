@@ -84,7 +84,7 @@ describe('Scenario #5 — Switch on a second machine (sync, then switch)', () =>
     ])
     const fake = createFakeVaultClient({
       subscriptions: subs,
-      clerkSessionId: 'sess_machine_2',
+      machineId: 'machine-2',
     })
     vi.mocked(makeVaultClient).mockResolvedValue(fake as never)
 
@@ -128,7 +128,7 @@ describe('Scenario #5 — Switch on a second machine (sync, then switch)', () =>
     expect(fake.state.machineActivity.every((r) => r.action === 'pull')).toBe(true)
   })
 
-  it('two distinct machines stamp distinct clerkSessionId values on machineActivity', async () => {
+  it('two distinct machines stamp distinct machineId values on machineActivity', async () => {
     const sub = await makeSub({
       email: 'multi@b.com',
       slot: 1,
@@ -136,7 +136,7 @@ describe('Scenario #5 — Switch on a second machine (sync, then switch)', () =>
     })
     const fake = createFakeVaultClient({
       subscriptions: [sub],
-      clerkSessionId: 'sess_machine_A',
+      machineId: 'machine-A',
     })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
 
@@ -144,17 +144,17 @@ describe('Scenario #5 — Switch on a second machine (sync, then switch)', () =>
     await runSwitch({ slotOrEmail: '1' })
 
     // Simulate machine B taking over: new tempHome (fresh ~/.vault/, no
-    // hash files) and a different stamped Clerk session id.
+    // hash files) and a different machineId.
     const machineBHome = setupTempHome('cvault-second-machine-B-')
     try {
-      fake.state.clerkSessionId = 'sess_machine_B'
+      fake.state.machineId = 'machine-B'
       vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
       // Fresh home -> no hash file -> the import path runs again.
       await runSwitch({ slotOrEmail: '1' })
 
-      const sessions = fake.state.machineActivity.map((r) => r.clerkSessionId)
-      expect(sessions).toContain('sess_machine_A')
-      expect(sessions).toContain('sess_machine_B')
+      const sessions = fake.state.machineActivity.map((r) => r.machineId)
+      expect(sessions).toContain('machine-A')
+      expect(sessions).toContain('machine-B')
       expect(new Set(sessions).size).toBeGreaterThanOrEqual(2)
     } finally {
       cleanupTempHome(machineBHome)

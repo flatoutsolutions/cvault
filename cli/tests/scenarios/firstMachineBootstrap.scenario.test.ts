@@ -72,7 +72,7 @@ async function postCallback(redirect: string, state: string): Promise<void> {
 
 const FIXTURE_SESSION = {
   version: 1 as const,
-  clerkSessionId: 'sess_e2e_bootstrap',
+  machineId: 'machine-e2e-bootstrap',
   clerkSessionToken: 'long-lived-clerk-jwt',
   convexJwt: 'short-lived-convex-jwt',
   convexJwtExpiry: Math.floor(Date.now() / 1000) + 60,
