@@ -21,6 +21,7 @@ import {
 import { ConvexError, type PropertyValidators } from 'convex/values'
 
 import type { DataModel } from '../_generated/dataModel'
+import { internal } from '../_generated/api'
 import { action, mutation, query } from '../_generated/server'
 import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from './domainGate'
 import { loadAllowedDomainsFromAction, loadAllowedEmailsFromAction } from './domainGateAction'
@@ -75,9 +76,31 @@ function rejectDomain(): never {
   })
 }
 
+function rejectRevoked(): never {
+  throw new ConvexError({ code: 'USER_REVOKED', message: 'Access revoked. Contact an administrator.' })
+}
+
+async function assertNotRevoked(
+  ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel> | GenericActionCtx<DataModel>,
+  subject: string
+): Promise<void> {
+  const isRevoked =
+    'runQuery' in ctx
+      ? await (ctx as GenericActionCtx<DataModel>).runQuery(internal.revokedUsers.queries.isRevoked, {
+          externalId: subject,
+        })
+      : await (ctx as GenericQueryCtx<DataModel>).db
+          .query('revokedUsers')
+          .withIndex('byExternalId', (q) => q.eq('externalId', subject))
+          .unique()
+          .then((r) => r !== null)
+  if (isRevoked) rejectRevoked()
+}
+
 async function resolveServer(ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>): Promise<UserIdentity> {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) throw notAuthenticatedError()
+  await assertNotRevoked(ctx, identity.subject)
   // Load both lists in parallel — they hit independent tables and the
   // gate only needs both to make a decision.
   const [domains, emails] = await Promise.all([loadAllowedDomains(ctx), loadAllowedEmails(ctx)])
@@ -90,6 +113,7 @@ async function resolveServer(ctx: GenericQueryCtx<DataModel> | GenericMutationCt
 async function resolveAction(ctx: GenericActionCtx<DataModel>): Promise<UserIdentity> {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) throw notAuthenticatedError()
+  await assertNotRevoked(ctx, identity.subject)
   const [domains, emails] = await Promise.all([loadAllowedDomainsFromAction(ctx), loadAllowedEmailsFromAction(ctx)])
   if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains, emails)) {
     rejectDomain()
