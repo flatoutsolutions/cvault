@@ -6,31 +6,23 @@
  * domain row).
  *
  *  1. Explicit-email user passes the webhook even when their domain is
- *     not on the domain allowlist; subsequent authed query succeeds; CLI
- *     mint succeeds.
+ *     not on the domain allowlist; subsequent authed query succeeds.
  *  2. A user with neither domain match nor explicit-email match is
  *     rejected (BAPI delete + query rejection).
  *  3. Removing the explicit-email row immediately blocks the previously
  *     allowed user on the next authed call.
  *  4. Adding the same email twice is idempotent (returns the same row id).
  *
- * Hermetic — no real network, no real Clerk. Mocks @clerk/backend.verifyToken
- * via the same hoisted-factory pattern as convex/cli/mintAction.test.ts.
+ * Note: the CLI mint path (internal.cli.mintAction.mintConvexJwt) was
+ * removed in Task 19 (hard cutover to OAuth PKCE). The mint-coverage
+ * sub-case in test 1 has been dropped; domain-gate enforcement for the
+ * new OAuth path is covered by the revokedUsers denylist (Task 5).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TEST_IDENTITY, vault } from '../__tests__/helpers'
-import { api, internal } from '../_generated/api'
+import { api } from '../_generated/api'
 import { __setClerkFetch } from '../cli/clerk'
-
-const verifyTokenMock = vi.hoisted(() => vi.fn())
-vi.mock('@clerk/backend', async () => {
-  const actual = await vi.importActual<typeof import('@clerk/backend')>('@clerk/backend')
-  return {
-    ...actual,
-    verifyToken: verifyTokenMock,
-  }
-})
 
 const ORIGINAL_KEY = process.env.CLERK_SECRET_KEY
 const ORIGINAL_HOOK = process.env.CLERK_WEBHOOK_SECRET
@@ -38,7 +30,6 @@ const ORIGINAL_HOOK = process.env.CLERK_WEBHOOK_SECRET
 beforeEach(() => {
   process.env.CLERK_SECRET_KEY = 'sk_test_dummy'
   process.env.CLERK_WEBHOOK_SECRET = 'whsec_dummy'
-  verifyTokenMock.mockReset()
 })
 
 afterEach(() => {
@@ -70,12 +61,8 @@ async function mockValidate(event: object) {
   vi.spyOn(mod, 'validateRequest').mockResolvedValue(event as never)
 }
 
-function mockVerify(payload: object) {
-  verifyTokenMock.mockResolvedValue(payload as never)
-}
-
 describe('scenario — per-email allowlist', () => {
-  it('explicit-email user passes signup webhook + authed APIs + CLI mint', async () => {
+  it('explicit-email user passes signup webhook + authed APIs', async () => {
     const t = vault()
     // Seed: gmail.com is NOT on the domain allowlist; samuel's email IS
     // on the explicit-email allowlist. Without the per-email path, the
@@ -108,15 +95,6 @@ describe('scenario — per-email allowlist', () => {
     } as const
     const subs = await t.withIdentity(samuelIdentity).query(api.subscriptions.queries.listForUser, {})
     expect(Array.isArray(subs)).toBe(true)
-
-    mockVerify({ sid: 'sess_samuel', sub: 'user_samuel', email: 'samuel.asseg@gmail.com' })
-    __setClerkFetch(
-      vi.fn(() =>
-        Promise.resolve(new Response(JSON.stringify({ jwt: 'jwt-ok' }), { status: 200 }))
-      ) as unknown as typeof fetch
-    )
-    const m = await t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })
-    expect(m.jwt).toBe('jwt-ok')
   })
 
   it('non-explicit, non-domain user is BAPI-deleted at signup and query-rejected', async () => {

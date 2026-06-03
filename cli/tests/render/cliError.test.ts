@@ -28,7 +28,7 @@
 import { ConvexError } from 'convex/values'
 import { describe, expect, it } from 'vitest'
 
-import { ConvexEndpointNotFoundError } from '../../src/auth/clerkFapi'
+import { ConvexEndpointNotFoundError } from '../../src/convex/errors'
 import { formatCliError } from '../../src/render/cliError'
 
 describe('formatCliError', () => {

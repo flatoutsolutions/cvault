@@ -15,7 +15,6 @@ import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard/settings'
 import { Route as DashboardMachinesRouteImport } from './routes/dashboard/machines'
 import { Route as DashboardAuditRouteImport } from './routes/dashboard/audit'
-import { Route as CliLinkRouteImport } from './routes/cli/link'
 import { Route as DashboardSettingsEmailsRouteImport } from './routes/dashboard/settings/emails'
 import { Route as DashboardSettingsDomainsRouteImport } from './routes/dashboard/settings/domains'
 
@@ -57,11 +56,6 @@ const DashboardAuditRoute = DashboardAuditRouteImport.update({
 } as any).lazy(() =>
   import('./routes/dashboard/audit.lazy').then((d) => d.Route),
 )
-const CliLinkRoute = CliLinkRouteImport.update({
-  id: '/cli/link',
-  path: '/cli/link',
-  getParentRoute: () => rootRouteImport,
-} as any).lazy(() => import('./routes/cli/link.lazy').then((d) => d.Route))
 const DashboardSettingsEmailsRoute = DashboardSettingsEmailsRouteImport.update({
   id: '/emails',
   path: '/emails',
@@ -81,7 +75,6 @@ const DashboardSettingsDomainsRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRouteWithChildren
-  '/cli/link': typeof CliLinkRoute
   '/dashboard/audit': typeof DashboardAuditRoute
   '/dashboard/machines': typeof DashboardMachinesRoute
   '/dashboard/settings': typeof DashboardSettingsRouteWithChildren
@@ -91,7 +84,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/cli/link': typeof CliLinkRoute
   '/dashboard/audit': typeof DashboardAuditRoute
   '/dashboard/machines': typeof DashboardMachinesRoute
   '/dashboard/settings': typeof DashboardSettingsRouteWithChildren
@@ -103,7 +95,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRouteWithChildren
-  '/cli/link': typeof CliLinkRoute
   '/dashboard/audit': typeof DashboardAuditRoute
   '/dashboard/machines': typeof DashboardMachinesRoute
   '/dashboard/settings': typeof DashboardSettingsRouteWithChildren
@@ -116,7 +107,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/dashboard'
-    | '/cli/link'
     | '/dashboard/audit'
     | '/dashboard/machines'
     | '/dashboard/settings'
@@ -126,7 +116,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/cli/link'
     | '/dashboard/audit'
     | '/dashboard/machines'
     | '/dashboard/settings'
@@ -137,7 +126,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/dashboard'
-    | '/cli/link'
     | '/dashboard/audit'
     | '/dashboard/machines'
     | '/dashboard/settings'
@@ -149,7 +137,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRouteWithChildren
-  CliLinkRoute: typeof CliLinkRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -195,13 +182,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/dashboard/audit'
       preLoaderRoute: typeof DashboardAuditRouteImport
       parentRoute: typeof DashboardRoute
-    }
-    '/cli/link': {
-      id: '/cli/link'
-      path: '/cli/link'
-      fullPath: '/cli/link'
-      preLoaderRoute: typeof CliLinkRouteImport
-      parentRoute: typeof rootRouteImport
     }
     '/dashboard/settings/emails': {
       id: '/dashboard/settings/emails'
@@ -254,7 +234,6 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRouteWithChildren,
-  CliLinkRoute: CliLinkRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

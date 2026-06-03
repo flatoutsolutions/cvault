@@ -16,17 +16,15 @@
  *
  * Currently dispatched here:
  *   - `ConvexError`                 — server-thrown structured error.
- *   - `ConvexEndpointNotFoundError` — client-thrown 404 from the OAuth refresh call
- *     when the CLI is pointing at a Convex deployment without the cvault
- *     HTTP routes. Routed through the same dispatch so every CLI command
- *     (login + every retry-path command) renders identically; previously
- *     only `cli/src/commands/login.ts` had a bespoke handler and non-login
- *     commands fell through to the generic top-level catch's `error: ...`
- *     line — inconsistent rendering across the surface.
+ *   - `ConvexEndpointNotFoundError` — client-thrown 404 when the CLI is
+ *     pointing at a Convex deployment without the cvault HTTP routes.
+ *     Class now lives in `cli/src/convex/errors.ts` (moved from the deleted
+ *     `clerkFapi.ts` in Task 19). Routed through the same dispatch so every
+ *     CLI command renders identically.
  */
 import { ConvexError } from 'convex/values'
 
-import { ConvexEndpointNotFoundError } from '../auth/clerkFapi'
+import { ConvexEndpointNotFoundError } from '../convex/errors'
 
 /**
  * Format an unknown thrown value into a single user-facing line.
