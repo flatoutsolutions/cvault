@@ -70,7 +70,7 @@ function resolveMachineLabel(override?: string): string {
 
 export async function runLogin(opts: RunLoginOptions): Promise<void> {
   const state = randomUUID()
-  const handle = startCallbackServer({
+  const handle = await startCallbackServer({
     expectedState: state,
     ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
   })
