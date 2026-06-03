@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildAuthorizeUrl, exchangeCodeForTokens, refreshAccessToken, OAuthTokenExchangeError } from '../../src/auth/oauthPkce'
+import {
+  buildAuthorizeUrl,
+  exchangeCodeForTokens,
+  refreshAccessToken,
+  OAuthRefreshFailedError,
+  OAuthTokenExchangeError,
+} from '../../src/auth/oauthPkce'
 
 const FRONTEND = 'https://x.clerk.accounts.dev'
 
@@ -39,9 +45,9 @@ describe('exchangeCodeForTokens', () => {
     })
     expect(tokens.refreshToken).toBe('rt')
     expect(tokens.accessTokenExpiry).toBeGreaterThan(0)
-    const body = fetchMock.mock.calls[0]?.[1]?.body as URLSearchParams
-    expect(body.get('grant_type')).toBe('authorization_code')
-    expect(body.get('code_verifier')).toBe('verifier')
+    const call = fetchMock.mock.calls[0] as unknown as [string, { body: URLSearchParams }]
+    expect(call[1].body.get('grant_type')).toBe('authorization_code')
+    expect(call[1].body.get('code_verifier')).toBe('verifier')
   })
 
   it('throws OAuthTokenExchangeError on non-2xx', async () => {
@@ -49,6 +55,32 @@ describe('exchangeCodeForTokens', () => {
     await expect(
       exchangeCodeForTokens({ frontendApiUrl: FRONTEND, clientId: 'c', code: 'x', codeVerifier: 'v', redirectUri: 'r' })
     ).rejects.toBeInstanceOf(OAuthTokenExchangeError)
+  })
+})
+
+describe('refreshAccessToken', () => {
+  it('POSTs form-encoded refresh-token grant and maps the rotated tokens', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ access_token: header('aud_x'), refresh_token: 'rt2', expires_in: 900 }),
+        { status: 200 }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const tokens = await refreshAccessToken({ frontendApiUrl: FRONTEND, clientId: 'client_1', refreshToken: 'rt1' })
+    expect(tokens.refreshToken).toBe('rt2')
+    expect(tokens.accessTokenExpiry).toBeGreaterThan(0)
+    const call = fetchMock.mock.calls[0] as unknown as [string, { body: URLSearchParams }]
+    expect(call[0]).toBe(`${FRONTEND}/oauth/token`)
+    expect(call[1].body.get('grant_type')).toBe('refresh_token')
+    expect(call[1].body.get('refresh_token')).toBe('rt1')
+  })
+
+  it('throws OAuthRefreshFailedError on non-2xx', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 401 })))
+    await expect(
+      refreshAccessToken({ frontendApiUrl: FRONTEND, clientId: 'c', refreshToken: 'dead' })
+    ).rejects.toBeInstanceOf(OAuthRefreshFailedError)
   })
 })
 
