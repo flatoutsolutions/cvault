@@ -31,7 +31,7 @@ export type AuditActivityRow = {
   subEmail: string | undefined
   action: 'switch' | 'add' | 'pull' | 'remove' | 'refresh' | 'rename' | 'login' | 'export' | 'import' | 'rotate'
   ipHash: string | undefined
-  clerkSessionId: string
+  machineId: string
 }
 
 export type AuditRowData = AuditRefreshRow | AuditActivityRow
@@ -97,7 +97,7 @@ export function AuditRow({ row }: AuditRowProps) {
             <span>{row.outcome}</span>
           )
         ) : (
-          <span className="font-mono">{row.clerkSessionId.slice(0, 12)}…</span>
+          <span className="font-mono">{row.machineId.slice(0, 12)}…</span>
         )}
       </div>
 

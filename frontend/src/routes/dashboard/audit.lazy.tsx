@@ -8,7 +8,7 @@
  *
  * Filters (all client-side):
  *   - subEmail (or "all")
- *   - clerkSessionId (or "all")
+ *   - machineId (or "all")
  *   - outcome (success / failure / reloginRequired / activity / "all")
  *
  * Pagination is server-side via Convex `usePaginatedQuery`. The two
@@ -109,7 +109,7 @@ export function AuditPage() {
       subEmail: a.subscriptionId !== undefined ? subEmailById.get(a.subscriptionId) : undefined,
       action: a.action,
       ipHash: a.ipHash,
-      clerkSessionId: a.clerkSessionId,
+      machineId: a.machineId,
     }))
 
     return [...refreshRows, ...activityRows].sort((a, b) => b.at - a.at)
@@ -119,7 +119,7 @@ export function AuditPage() {
     return merged.filter((row) => {
       if (subFilter !== 'all' && row.subEmail !== subFilter) return false
       if (sessionFilter !== 'all') {
-        if (row.kind !== 'activity' || row.clerkSessionId !== sessionFilter) return false
+        if (row.kind !== 'activity' || row.machineId !== sessionFilter) return false
       }
       if (outcomeFilter !== 'all') {
         if (outcomeFilter === 'activity') {
@@ -136,7 +136,7 @@ export function AuditPage() {
   const sessionIds = useMemo(() => {
     const set = new Set<string>()
     for (const a of machineActivity) {
-      set.add(a.clerkSessionId)
+      set.add(a.machineId)
     }
     return Array.from(set).sort()
   }, [machineActivity])
@@ -465,7 +465,7 @@ function OutcomeCell({ row }: { row: AuditRowData }) {
     }
     return <span className="text-muted-foreground text-xs">{row.outcome}</span>
   }
-  return <span className="text-muted-foreground font-mono text-xs">{row.clerkSessionId.slice(0, 12)}…</span>
+  return <span className="text-muted-foreground font-mono text-xs">{row.machineId.slice(0, 12)}…</span>
 }
 
 function DetailCell({ row }: { row: AuditRowData }) {
