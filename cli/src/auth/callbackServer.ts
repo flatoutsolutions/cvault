@@ -7,7 +7,11 @@
  *
  * Hard rules:
  *  - bind 127.0.0.1, not 0.0.0.0 (no exposure beyond the local machine)
- *  - port: 0 — let the OS pick a free port; we read it via server.address()
+ *  - FIXED pre-registered ports (OAUTH_REDIRECT_PORTS). Clerk's OAuth app
+ *    exact-matches the redirect URI, so a random port can't be registered.
+ *    We bind a known port, trying a small fallback list so a single
+ *    port-in-use doesn't break login. Each port's `http://127.0.0.1:<port>/`
+ *    must be registered as a redirect URI in the Clerk OAuth application.
  *  - constant-time state comparison to defeat timing oracles
  *  - hard timeout (default 2 minutes) so a forgotten browser tab can't pin
  *    the listener forever
@@ -19,6 +23,19 @@
 import { timingSafeEqual } from 'node:crypto'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+
+/**
+ * Loopback ports the CLI binds for the OAuth redirect, in preference order.
+ * Each corresponding `http://127.0.0.1:<port>/` MUST be registered as a
+ * redirect URI in the Clerk OAuth application — Clerk exact-matches the
+ * redirect URI, so these cannot be random. The fallback list means a single
+ * port already in use (e.g. by another `cvault login`) doesn't block sign-in.
+ *
+ * High ports from the IANA dynamic range (49152–65535) to avoid collisions
+ * with common services. If you change this list, update the registered
+ * redirect URIs in Clerk to match.
+ */
+export const OAUTH_REDIRECT_PORTS: readonly number[] = [52017, 52018, 52019, 52020]
 
 export interface CallbackResult {
   /** The OAuth authorization code captured from the redirect. */
@@ -34,6 +51,12 @@ export interface StartCallbackOptions {
   expectedState: string
   /** Total time the user has to complete the browser flow. Default 2 min. */
   timeoutMs?: number
+  /**
+   * Ports to try, in order. Defaults to {@link OAUTH_REDIRECT_PORTS}. Tests
+   * override this (e.g. `[0]` for an OS-assigned ephemeral port) to avoid
+   * colliding with the real registered ports.
+   */
+  ports?: readonly number[]
 }
 
 export interface CallbackHandle {
@@ -134,8 +157,13 @@ export function startCallbackServer(opts: StartCallbackOptions): Promise<Callbac
     setTimeout(() => server.close(), 50)
   })
 
+  const ports = opts.ports ?? OAUTH_REDIRECT_PORTS
+
   return new Promise<CallbackHandle>((resolveHandle, rejectHandle) => {
-    server.listen(0, '127.0.0.1', () => {
+    let idx = 0
+
+    const onListening = (): void => {
+      server.removeListener('error', onError)
       const addr = server.address() as AddressInfo | null
       if (addr === null || typeof addr.port !== 'number') {
         server.close()
@@ -171,10 +199,41 @@ export function startCallbackServer(opts: StartCallbackOptions): Promise<Callbac
           resolveResult({ code: '', state: '', cancelled: true })
         },
       })
-    })
+    }
 
-    server.on('error', (err: Error) => {
-      rejectHandle(err)
-    })
+    // On EADDRINUSE, fall through to the next port; any other error (or the
+    // last port also busy) is fatal. The `listening` handler stays attached so
+    // a later successful bind still resolves.
+    const onError = (err: NodeJS.ErrnoException): void => {
+      if (err.code === 'EADDRINUSE' && idx < ports.length - 1) {
+        idx += 1
+        tryNext()
+        return
+      }
+      server.removeListener('listening', onListening)
+      if (err.code === 'EADDRINUSE') {
+        rejectHandle(
+          new Error(
+            `All cvault login callback ports are in use (${ports.join(', ')}). ` +
+              'Close whatever is using them and re-run `cvault login`.'
+          )
+        )
+      } else {
+        rejectHandle(err)
+      }
+    }
+
+    function tryNext(): void {
+      const port = ports[idx]
+      if (port === undefined) {
+        rejectHandle(new Error('No callback ports configured'))
+        return
+      }
+      server.listen(port, '127.0.0.1')
+    }
+
+    server.on('listening', onListening)
+    server.on('error', onError)
+    tryNext()
   })
 }

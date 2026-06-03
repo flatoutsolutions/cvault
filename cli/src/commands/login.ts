@@ -6,7 +6,9 @@
  * Flow:
  *   1. Generate a PKCE code verifier + S256 challenge
  *   2. Generate a random `state` nonce
- *   3. Bind 127.0.0.1 on a random free port via `startCallbackServer` (async)
+ *   3. Bind 127.0.0.1 on a registered fixed port (OAUTH_REDIRECT_PORTS, with
+ *      a fallback list) via `startCallbackServer` (async) — Clerk exact-matches
+ *      the redirect URI, so the port can't be random
  *   4. Open the user's browser to the Clerk OAuth authorize URL
  *   5. Wait for the browser redirect → callback server captures `code`
  *   6. Exchange the code for OAuth tokens via PKCE

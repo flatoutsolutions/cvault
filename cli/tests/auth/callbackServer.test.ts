@@ -9,16 +9,56 @@
  * All tests run under Node (no Bun required) because the server uses
  * node:http internally.
  */
+import { createServer as createNetServer, type AddressInfo } from 'node:net'
+
 import { describe, expect, it } from 'vitest'
 
-import { startCallbackServer } from '../../src/auth/callbackServer'
+import { OAUTH_REDIRECT_PORTS, startCallbackServer } from '../../src/auth/callbackServer'
+
+/** Occupy an OS-assigned loopback port; returns the port + a closer. */
+async function occupyPort(): Promise<{ port: number; close: () => Promise<void> }> {
+  const blocker = createNetServer()
+  await new Promise<void>((resolve) => {
+    blocker.listen(0, '127.0.0.1', () => {
+      resolve()
+    })
+  })
+  const port = (blocker.address() as AddressInfo).port
+  return {
+    port,
+    close: () =>
+      new Promise<void>((resolve) => {
+        blocker.close(() => {
+          resolve()
+        })
+      }),
+  }
+}
 
 describe('startCallbackServer', () => {
-  it('binds 127.0.0.1 on a random free port', async () => {
+  it('binds one of the registered fixed ports by default', async () => {
     const handle = await startCallbackServer({ expectedState: 'st1', timeoutMs: 1_000 })
-    expect(handle.port).toBeGreaterThan(0)
+    expect(OAUTH_REDIRECT_PORTS).toContain(handle.port)
     await handle.cancel()
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
+  })
+
+  it('falls back to the next port when the first is in use', async () => {
+    const blocker = await occupyPort()
+    // First port busy → must fall through to the second (0 = OS-assigned, free).
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 500, ports: [blocker.port, 0] })
+    expect(handle.port).not.toBe(blocker.port)
+    expect(handle.port).toBeGreaterThan(0)
+    await handle.cancel()
+    await blocker.close()
+  })
+
+  it('rejects when every candidate port is in use', async () => {
+    const blocker = await occupyPort()
+    await expect(
+      startCallbackServer({ expectedState: 'st', timeoutMs: 500, ports: [blocker.port] })
+    ).rejects.toThrow(/in use/i)
+    await blocker.close()
   })
 
   it('resolves with code + state on a valid GET redirect and returns 200 HTML', async () => {
