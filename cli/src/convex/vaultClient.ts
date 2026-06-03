@@ -57,10 +57,20 @@ export class VaultClient {
     this.doRefresh = options.refreshAccessToken ?? refreshAccessToken
   }
 
-  /** Build the production `ConvexHttpClient`. Test code overrides via the ctor arg. */
+  /**
+   * Build the production `ConvexHttpClient`. Test code overrides via the ctor arg.
+   *
+   * Convex is authenticated with the **ID token**, not the OAuth access token.
+   * Clerk's OAuth access-token JWT carries `client_id`/`scope` but NO `aud`
+   * claim, so Convex's provider matching (which keys on `aud == applicationID`)
+   * rejects it. The OIDC ID token carries `aud == <OAuth Client ID>` (matching
+   * the `auth.config.ts` provider) plus `email`/`sub`, so it's the token Convex
+   * can verify. Falls back to the access token only to satisfy the string type
+   * when no id token is present (which shouldn't happen — we request `openid`).
+   */
   private buildDefaultClient(session: SessionState): ConvexHttpClientLike {
     const client = new ConvexHttpClient(session.convexUrl)
-    client.setAuth(session.accessToken)
+    client.setAuth(session.idToken ?? session.accessToken)
     return client
   }
 
@@ -133,7 +143,10 @@ export class VaultClient {
       refreshToken: fresh.refreshToken,
       ...(fresh.idToken !== undefined ? { idToken: fresh.idToken } : {}),
     }
-    this.http.setAuth(fresh.accessToken)
+    // Re-auth Convex with the refreshed ID token (see buildDefaultClient for
+    // why the access token can't be used). The refresh_token grant returns a
+    // fresh id_token because `openid` was granted at login.
+    this.http.setAuth(fresh.idToken ?? this.session.idToken ?? fresh.accessToken)
     // Persist asynchronously — we don't want to block the in-flight call on
     // disk I/O if the OS is busy. Errors are swallowed: persistence failure
     // is logged elsewhere; the in-memory state is still correct.

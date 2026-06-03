@@ -34,6 +34,9 @@ const sampleSession: SessionState = {
   accessToken: 'access-token-old',
   accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
   refreshToken: 'refresh-token-old',
+  // Convex is authenticated with the ID token (it carries `aud` = OAuth Client
+  // ID; the access token does not). See VaultClient.buildDefaultClient.
+  idToken: 'id-token-old',
   frontendApiUrl: 'https://clear-redbird-6.clerk.accounts.dev',
   clientId: 'client_test_123',
   convexUrl: 'https://beloved-mouse-707.convex.cloud',
@@ -166,7 +169,7 @@ describe('VaultClient', () => {
     expect(queryStub).toHaveBeenCalledTimes(1)
   })
 
-  it('retries once on auth error after refreshing the access token', async () => {
+  it('retries once on auth error after refreshing, re-authing Convex with the new ID token', async () => {
     queryStub.mockRejectedValueOnce(new Error('401 Unauthenticated')).mockResolvedValueOnce(['sub1'])
 
     // Stub refreshAccessToken by injecting a custom refresher.
@@ -174,6 +177,7 @@ describe('VaultClient', () => {
       accessToken: 'access-token-new',
       accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
       refreshToken: 'refresh-token-new',
+      idToken: 'id-token-new',
     })
     const session = { ...sampleSession }
     const client = new VaultClient(
@@ -197,8 +201,8 @@ describe('VaultClient', () => {
       clientId: sampleSession.clientId,
       refreshToken: sampleSession.refreshToken,
     })
-    // The new access token is set on the HTTP client
-    expect(setAuthStub).toHaveBeenCalledWith('access-token-new')
+    // Convex is re-authed with the refreshed ID token (not the access token).
+    expect(setAuthStub).toHaveBeenCalledWith('id-token-new')
     expect(queryStub).toHaveBeenCalledTimes(2)
   })
 
