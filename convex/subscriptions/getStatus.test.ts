@@ -296,14 +296,14 @@ describe('subscriptions.queries.getStatus', () => {
     await t.run(async (ctx) => {
       await ctx.db.insert('machineActivity', {
         userId: inserted.userId,
-        clerkSessionId: 'sess_old',
+        machineId: 'mach-old',
         action: 'add',
         subscriptionId: inserted.subId,
         at: Date.now() - 24 * 60 * 60 * 1000,
       })
       await ctx.db.insert('machineActivity', {
         userId: inserted.userId,
-        clerkSessionId: 'sess_new',
+        machineId: 'mach-new',
         action: 'switch',
         subscriptionId: inserted.subId,
         at: Date.now() - 5 * 60 * 1000,
@@ -316,7 +316,7 @@ describe('subscriptions.queries.getStatus', () => {
 
     expect(status.lastMachineActivity).toBeDefined()
     expect(status.lastMachineActivity?.action).toBe('switch')
-    expect(status.lastMachineActivity?.clerkSessionId).toBe('sess_new')
+    expect(status.lastMachineActivity?.machineId).toBe('mach-new')
   })
 
   it('returns lastMachineActivity as null when no rows exist for the sub', async () => {
@@ -360,7 +360,7 @@ describe('subscriptions.queries.getStatus', () => {
       const subBAt = Date.now() - 24 * 60 * 60 * 1000
       await ctx.db.insert('machineActivity', {
         userId: subB.userId,
-        clerkSessionId: 'sess_B_old',
+        machineId: 'mach-B-old',
         action: 'switch',
         subscriptionId: subB.subId,
         at: subBAt,
@@ -369,7 +369,7 @@ describe('subscriptions.queries.getStatus', () => {
       for (let i = 0; i < 100; i += 1) {
         await ctx.db.insert('machineActivity', {
           userId: subA.userId,
-          clerkSessionId: `sess_A_${i.toString()}`,
+          machineId: `mach-A-${i.toString()}`,
           action: 'pull',
           subscriptionId: subA.subId,
           at: Date.now() - 60 * 1000 + i,
@@ -383,6 +383,6 @@ describe('subscriptions.queries.getStatus', () => {
 
     expect(status.lastMachineActivity).not.toBeNull()
     expect(status.lastMachineActivity?.action).toBe('switch')
-    expect(status.lastMachineActivity?.clerkSessionId).toBe('sess_B_old')
+    expect(status.lastMachineActivity?.machineId).toBe('mach-B-old')
   })
 })

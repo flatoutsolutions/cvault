@@ -146,7 +146,7 @@ const lastMachineActivityValidator = v.object({
     v.literal('import'),
     v.literal('rotate')
   ),
-  clerkSessionId: v.string(),
+  machineId: v.string(),
   at: v.number(),
 })
 
@@ -208,7 +208,7 @@ export const getStatus = authenticatedQuery({
     const lastMachineActivity = subActivity
       ? {
           action: subActivity.action,
-          clerkSessionId: subActivity.clerkSessionId,
+          machineId: subActivity.machineId,
           at: subActivity.at,
         }
       : null

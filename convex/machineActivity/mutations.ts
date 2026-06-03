@@ -43,7 +43,7 @@ async function hashIp(rawIp: string): Promise<string> {
 export const record = internalMutation({
   args: {
     userId: v.id('users'),
-    clerkSessionId: v.string(),
+    machineId: v.string(),
     action: actionLiteral,
     subscriptionId: v.optional(v.id('subscriptions')),
     at: v.number(),
@@ -60,7 +60,7 @@ export const record = internalMutation({
 
     return await ctx.db.insert('machineActivity', {
       userId: args.userId,
-      clerkSessionId: args.clerkSessionId,
+      machineId: args.machineId,
       action: args.action,
       subscriptionId: args.subscriptionId,
       at: args.at,

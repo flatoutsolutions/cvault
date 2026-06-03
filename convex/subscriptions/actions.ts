@@ -48,17 +48,16 @@ export const pullForSwitch = authenticatedAction({
      */
     machineLabel: v.optional(v.string()),
     /**
-     * Clerk session id of the caller. CLI clients pass this from the
-     * persisted `session.clerkSessionId` because BAPI-minted JWTs lack
-     * the `sid` claim. See `utils/identity.ts`. Optional in the schema
-     * for backward-compat with older CLIs.
+     * Machine id of the caller (CVLT-3: replaces clerkSessionId). CLI clients
+     * pass their persistent machine UUID. Optional for backward-compat with
+     * older CLI callers that pre-date the PKCE migration.
      */
-    clerkSessionId: v.optional(v.string()),
+    machineId: v.optional(v.string()),
   },
   returns: pullResultValidator,
   handler: async (
     ctx,
-    { slotOrEmail, machineLabel, clerkSessionId: callerArgSid }
+    { slotOrEmail, machineLabel, machineId: callerArgSid }
   ): Promise<{
     email: string
     slot: number
@@ -139,7 +138,7 @@ export const pullForSwitch = authenticatedAction({
     }
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId: actorUserId,
-      clerkSessionId: resolveCallerSession(identity, callerArgSid),
+      machineId: callerArgSid ?? resolveCallerSession(identity),
       action: 'pull',
       subscriptionId: fresh._id,
       at: Date.now(),
@@ -182,8 +181,8 @@ export const upsertFromPlaintext = authenticatedAction({
     rateLimitTier: v.string(),
     label: v.optional(v.string()),
     machineLabel: v.optional(v.string()),
-    /** See `pullForSwitch.clerkSessionId`. */
-    clerkSessionId: v.optional(v.string()),
+    /** Machine id (CVLT-3: replaces clerkSessionId). See pullForSwitch.machineId. */
+    machineId: v.optional(v.string()),
   },
   returns: upsertResultValidator,
   handler: async (
@@ -213,7 +212,7 @@ export const upsertFromPlaintext = authenticatedAction({
     // state-changing action emits a `machineActivity` row.
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId: result.userId,
-      clerkSessionId: resolveCallerSession(identity, args.clerkSessionId),
+      machineId: args.machineId ?? resolveCallerSession(identity),
       action: 'add',
       subscriptionId: result.subId,
       at: Date.now(),
@@ -321,13 +320,13 @@ export const refreshSub = authenticatedAction({
      */
     force: v.optional(v.boolean()),
     machineLabel: v.optional(v.string()),
-    /** See `pullForSwitch.clerkSessionId`. */
-    clerkSessionId: v.optional(v.string()),
+    /** Machine id (CVLT-3: replaces clerkSessionId). See pullForSwitch.machineId. */
+    machineId: v.optional(v.string()),
   },
   returns: refreshSubResultValidator,
   handler: async (
     ctx,
-    { slot, localState, force, machineLabel, clerkSessionId: callerArgSid }
+    { slot, localState, force, machineLabel, machineId: callerArgSid }
   ): Promise<{
     email: string
     slot: number
@@ -454,7 +453,7 @@ export const refreshSub = authenticatedAction({
     }
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId: actorUserId,
-      clerkSessionId: resolveCallerSession(identity, callerArgSid),
+      machineId: callerArgSid ?? resolveCallerSession(identity),
       action: 'refresh',
       subscriptionId: fresh._id,
       at: Date.now(),
@@ -500,11 +499,11 @@ export const requestRefresh = authenticatedAction({
   args: {
     subId: v.id('subscriptions'),
     machineLabel: v.optional(v.string()),
-    /** See `pullForSwitch.clerkSessionId`. */
-    clerkSessionId: v.optional(v.string()),
+    /** Machine id (CVLT-3: replaces clerkSessionId). See pullForSwitch.machineId. */
+    machineId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { subId, machineLabel, clerkSessionId: callerArgSid }): Promise<null> => {
+  handler: async (ctx, { subId, machineLabel, machineId: callerArgSid }): Promise<null> => {
     const identity = getIdentity(ctx)
     // Shared-vault: any authed allowed-domain caller resolves any sub.
     // The `authenticatedAction` wrapper is the only access gate.
@@ -539,7 +538,7 @@ export const requestRefresh = authenticatedAction({
     }
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId: actorUserId,
-      clerkSessionId: resolveCallerSession(identity, callerArgSid),
+      machineId: callerArgSid ?? resolveCallerSession(identity),
       action: 'refresh',
       subscriptionId: subId,
       at: Date.now(),

@@ -1,7 +1,10 @@
 /**
- * Machine activity — audit trail of CLI operations per Clerk session.
+ * Machine activity — audit trail of CLI operations per machine (PKCE OAuth
+ * migration). Previously keyed on `clerkSessionId`; now keyed on the
+ * persistent CLI-generated `machineId` (a UUID stored in ~/.vault/machine-id).
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §4.
+ * CVLT-3: docs/superpowers/specs/2026-06-03-cli-oauth-pkce-design.md §4–5.
  *
  * SECURITY: `ipHash` is a SHA-256 prefix (first 8 hex chars). Raw IPs
  * are never stored.
@@ -11,7 +14,7 @@ import { v } from 'convex/values'
 
 export const machineActivitySchema = defineTable({
   userId: v.id('users'),
-  clerkSessionId: v.string(),
+  machineId: v.string(),
   action: v.union(
     v.literal('switch'),
     v.literal('add'),
@@ -39,8 +42,8 @@ export const machineActivitySchema = defineTable({
    * Human-readable identifier for the originating machine. The CLI
    * defaults this to `os.hostname()` at session creation; the user
    * can override via `cvault login --label`. Stored on every row so the
-   * dashboard's per-session aggregation picks up the most-recent label
-   * for each clerkSessionId without a separate join. Optional because:
+   * dashboard's per-machine aggregation picks up the most-recent label
+   * for each machineId without a separate join. Optional because:
    *  (a) legacy rows pre-feature don't have it, and
    *  (b) browser callers (dashboard "Force Refresh") don't have a
    *      hostname — they pass `undefined`.
@@ -48,7 +51,6 @@ export const machineActivitySchema = defineTable({
   machineLabel: v.optional(v.string()),
 })
   .index('byUserAndAt', ['userId', 'at'])
-  .index('byUserAndSessionAndAt', ['userId', 'clerkSessionId', 'at'])
   // M4: composite (subscriptionId, at) index for the per-sub
   // most-recent-activity lookup in `subscriptions.queries.getStatus`.
   // Without this, the query had to take the user's 50 most-recent rows
@@ -57,11 +59,9 @@ export const machineActivitySchema = defineTable({
   // `bySubscriptionAndAt` pattern.
   .index('bySubscriptionAndAt', ['subscriptionId', 'at'])
   // Shared-vault read paths. `byAt` powers `recentForUser` /
-  // `distinctSessionsForUser`; `bySessionAndAt` powers `recentForSession`.
+  // `distinctSessionsForUser`; `byMachineAndAt` powers `recentForMachine`.
   // Per `convex/utils/users.ts:3-7` audit reads are NOT scoped by user;
   // these indexes let the queries iterate the table efficiently without
-  // a per-user prefix. The legacy `byUserAndAt` / `byUserAndSessionAndAt`
-  // indexes are retained because they may be used by other paths and
-  // index removal would require a migration commit.
+  // a per-user prefix.
   .index('byAt', ['at'])
-  .index('bySessionAndAt', ['clerkSessionId', 'at'])
+  .index('byMachineAndAt', ['machineId', 'at'])

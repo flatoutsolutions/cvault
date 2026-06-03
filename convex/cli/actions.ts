@@ -3,169 +3,89 @@
 /**
  * CLI-supporting Convex actions.
  *
- * - `startLink({state})` — called from the dashboard when the CLI sent the
- *   user to `/cli/link?state=<nonce>`. Confirms the dashboard caller is a
- *   real Clerk user, then mints a single-use sign-in token via Clerk
- *   Backend API and returns it. The dashboard then POSTs the token to
- *   the localhost listener the CLI started.
+ * - `recordLogin({machineId, machineLabel?, grantRef?})` — called by the CLI
+ *   immediately after login completes. Upserts the device row and records a
+ *   `login` machineActivity row.
  *
- * - `revokeSession({clerkSessionId})` — called from `/dashboard/machines`
- *   when the user clicks "Revoke". Must ensure the caller actually owns
- *   the session being revoked (we know this because Clerk session ids
- *   already encode the user; we just need to look it up).
+ * - `revokeDevice({machineId})` — called from `/dashboard/machines` when the
+ *   user clicks "Revoke". Looks up the device, revokes the Clerk OAuth grant
+ *   (once Phase 0 wires the BAPI call), marks the device revoked, and records
+ *   a `remove` activity row.
  *
- * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §7 + §8.
- * Reference: docs/research/clerk-convex-tanstack-integration.md §4.
+ * Spec: docs/superpowers/specs/2026-06-03-cli-oauth-pkce-design.md §4–5.
  */
 import { ConvexError, v } from 'convex/values'
 
 import { internal } from '../_generated/api'
 import { authenticatedAction, getIdentity } from '../utils/auth'
-import { isUnknownSession, resolveCallerSession } from '../utils/identity'
-import { getClerkSession, mintSignInToken, revokeClerkSession } from './clerk'
-
-export const startLink = authenticatedAction({
-  args: { state: v.string() },
-  returns: v.object({ signInToken: v.string(), signInTokenId: v.string() }),
-  handler: async (ctx, args): Promise<{ signInToken: string; signInTokenId: string }> => {
-    const identity = getIdentity(ctx)
-    const userId = identity.subject
-
-    const result = await mintSignInToken(userId, 600)
-    if (!result.ok) {
-      throw new ConvexError({
-        code: 'CLERK_BACKEND_ERROR',
-        message: `Clerk sign-in token request failed: ${result.status.toString()}: ${result.body.slice(0, 200)}`,
-      })
-    }
-    // The CLI never sees `state` directly here — the dashboard echoes it
-    // back over the localhost callback so the CLI can correlate. We accept
-    // it on the args so the dashboard knows the action signature it must
-    // call (no semantic use server-side).
-    void args.state
-    return { signInToken: result.signInToken, signInTokenId: result.signInTokenId }
-  },
-})
-
-export const revokeSession = authenticatedAction({
-  args: {
-    clerkSessionId: v.string(),
-    machineLabel: v.optional(v.string()),
-  },
-  returns: v.object({ revoked: v.boolean() }),
-  handler: async (ctx, { clerkSessionId, machineLabel }): Promise<{ revoked: boolean }> => {
-    // Reject the sentinel string up front. The sentinel is a backend
-    // marker for cron-driven writes that lack a real Clerk session; the
-    // Clerk Backend API would 4xx on it and the user would see a confusing
-    // "Server Error" toast. Use the helper so accidental case/whitespace
-    // drift in stored rows is normalized.
-    //
-    // No-audit-row carve-out: we deliberately do NOT write a
-    // `machineActivity` row here. The throw rolls back any pending state;
-    // there was no revoke, no Clerk Backend call, no observable change to
-    // the user's account. A redundant audit row would imply a state
-    // change occurred — violating spec §4 ("one row per state-changing
-    // action") and §12 ("audit reflects what actually happened").
-    if (isUnknownSession(clerkSessionId)) {
-      throw new ConvexError({
-        code: 'NOT_REVOCABLE',
-        message: 'This row represents server-side activity, not a real machine session.',
-      })
-    }
-
-    const identity = getIdentity(ctx)
-
-    // SECURITY: verify the caller actually owns the target session BEFORE
-    // sending the revoke. Without this check, the deployment's
-    // CLERK_SECRET_KEY acts as a confused deputy: any signed-in user could
-    // call this action with someone else's clerkSessionId and revoke it.
-    // Clerk session ids are not designed as unguessable secrets — they
-    // appear in JWT `sid` claims, dashboards, and some logs.
-    const lookup = await getClerkSession(clerkSessionId)
-    if (!lookup.ok) {
-      // Conflate "session does not exist" with "session not owned" to
-      // avoid leaking session-existence info to a probing attacker.
-      throw new ConvexError({
-        code: 'NOT_FOUND',
-        message: 'Session not found or not owned by current user',
-      })
-    }
-    if (lookup.userId !== identity.subject) {
-      throw new ConvexError({
-        code: 'NOT_FOUND',
-        message: 'Session not found or not owned by current user',
-      })
-    }
-
-    const result = await revokeClerkSession(clerkSessionId)
-    if (!result.ok) {
-      throw new ConvexError({
-        code: 'CLERK_BACKEND_ERROR',
-        message: `Clerk session revoke failed: ${result.status.toString()}: ${result.body.slice(0, 200)}`,
-      })
-    }
-
-    // Audit: record the revoke in machineActivity. Per spec §4 + §12 every
-    // authenticated state-changing action should leave an audit row.
-    const callerSession = resolveCallerSession(identity)
-    // Resolve the user row so we can scope the activity correctly. If the
-    // user row is missing (extremely rare; would mean the Clerk webhook
-    // didn't fire) we still return success — the revoke already landed.
-    const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
-      externalId: identity.subject,
-    })
-    if (userId !== null) {
-      await ctx.runMutation(internal.machineActivity.mutations.record, {
-        userId,
-        clerkSessionId: callerSession,
-        action: 'remove',
-        at: Date.now(),
-        ...(machineLabel !== undefined ? { machineLabel } : {}),
-      })
-    }
-
-    return { revoked: true }
-  },
-})
+import { revokeOAuthGrant } from './oauthRevoke'
 
 /**
- * `recordLogin({})` — called by the CLI immediately after `cvault login`
- * persists `~/.vault/session.json`. Inserts a `machineActivity` row with
- * `action='login'` so the dashboard `/machines` view (and audit feed)
- * surfaces every CLI pairing event.
+ * `recordLogin` — called by the CLI immediately after a successful OAuth
+ * login. Upserts the device row in the `devices` registry and records a
+ * `login` row in `machineActivity` so the dashboard surfaces every CLI
+ * pairing event.
  */
 export const recordLogin = authenticatedAction({
   args: {
+    machineId: v.string(),
     machineLabel: v.optional(v.string()),
-    /**
-     * Clerk session id of the calling CLI. Required because BAPI-minted
-     * JWTs do not carry a `sid` claim (Clerk reservation; see
-     * `utils/identity.ts`). Optional in the schema for backward
-     * compatibility with older CLIs, but new CLIs always pass it.
-     */
-    clerkSessionId: v.optional(v.string()),
+    grantRef: v.optional(v.string()),
   },
   returns: v.object({ recorded: v.boolean() }),
-  handler: async (ctx, { machineLabel, clerkSessionId }): Promise<{ recorded: boolean }> => {
+  handler: async (ctx, { machineId, machineLabel, grantRef }): Promise<{ recorded: boolean }> => {
     const identity = getIdentity(ctx)
-    const callerSession = resolveCallerSession(identity, clerkSessionId)
-
-    const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
-      externalId: identity.subject,
-    })
+    const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, { externalId: identity.subject })
     if (userId === null) {
       // User row missing (Clerk webhook hasn't fired yet). Caller can retry
       // after a short delay; no need to fail login itself.
       return { recorded: false }
     }
-
+    const at = Date.now()
+    await ctx.runMutation(internal.devices.mutations.upsert, { userId, machineId, label: machineLabel, at, grantRef })
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId: callerSession,
+      machineId,
       action: 'login',
-      at: Date.now(),
-      ...(machineLabel !== undefined ? { machineLabel } : {}),
+      at,
+      machineLabel,
     })
     return { recorded: true }
+  },
+})
+
+/**
+ * `revokeDevice` — called from the dashboard Machines view. Resolves the
+ * device row, revokes the Clerk OAuth grant (Phase-0-deferred — see
+ * `oauthRevoke.ts`), marks the device revoked, and records a `remove`
+ * activity row.
+ */
+export const revokeDevice = authenticatedAction({
+  args: { machineId: v.string() },
+  returns: v.object({ revoked: v.boolean() }),
+  handler: async (ctx, { machineId }): Promise<{ revoked: boolean }> => {
+    const identity = getIdentity(ctx)
+    const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, { externalId: identity.subject })
+    if (userId === null) throw new ConvexError({ code: 'NOT_FOUND', message: 'User not found' })
+
+    const device = await ctx.runQuery(internal.devices.queries.getForUser, { userId, machineId })
+    if (device === null) throw new ConvexError({ code: 'NOT_FOUND', message: 'Machine not found' })
+
+    // Revoke the Clerk OAuth grant so this machine can't renew. Exact endpoint
+    // confirmed in Phase 0 Task 0 Step 5; implemented in convex/cli/oauthRevoke.ts.
+    if (device.grantRef !== undefined) {
+      await revokeOAuthGrant(device.grantRef)
+    }
+
+    const at = Date.now()
+    await ctx.runMutation(internal.devices.mutations.markRevoked, { userId, machineId, at })
+    await ctx.runMutation(internal.machineActivity.mutations.record, {
+      userId,
+      machineId,
+      action: 'remove',
+      at,
+    })
+
+    return { revoked: true }
   },
 })

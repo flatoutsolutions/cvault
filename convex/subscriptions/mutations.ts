@@ -68,17 +68,17 @@ async function recordActivity(
     subscriptionId?: Id<'subscriptions'>
     machineLabel?: string
     /**
-     * Caller's Clerk session id, supplied by the CLI as an action arg
-     * (BAPI-minted JWTs lack the `sid` claim — see `utils/identity.ts`).
-     * Optional; falls back to `identity.sid` (FAPI/dashboard origin)
-     * then to the `UNKNOWN_SESSION_SENTINEL`.
+     * Machine id, supplied by the CLI as an action arg (CVLT-3: replaces
+     * clerkSessionId). Falls back to the resolved Clerk session id for
+     * legacy callers (dashboard, cron) that pre-date the machine UUID.
+     * These will be fully migrated in later CVLT-3 tasks.
      */
-    clerkSessionId?: string
+    machineId?: string
   }
 ): Promise<void> {
   await ctx.db.insert('machineActivity', {
     userId: args.userId,
-    clerkSessionId: resolveCallerSession(getIdentity(ctx), args.clerkSessionId),
+    machineId: args.machineId ?? resolveCallerSession(getIdentity(ctx)),
     action: args.action,
     subscriptionId: args.subscriptionId,
     at: Date.now(),
@@ -344,18 +344,19 @@ export const softRemove = authenticatedMutation({
     /**
      * Human-readable identifier for the originating CLI machine. The
      * dashboard's "Machines" view renders this as the user-visible
-     * label per Clerk session. Optional — see
+     * label per machine. Optional — see
      * `machineActivity/schema.ts:machineLabel` for the contract.
      */
     machineLabel: v.optional(v.string()),
     /**
-     * Caller's Clerk session id. Required for BAPI-minted CLI JWTs that
-     * lack a `sid` claim. See `utils/identity.ts`.
+     * Machine id (CVLT-3 PKCE migration). BAPI-minted CLI JWTs lack a
+     * `sid` claim; the CLI now sends its persistent machine UUID instead.
+     * Optional for backward compat with older callers.
      */
-    clerkSessionId: v.optional(v.string()),
+    machineId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { email, machineLabel, clerkSessionId }) => {
+  handler: async (ctx, { email, machineLabel, machineId }) => {
     // SHARED-VAULT (`convex/utils/users.ts:3-7`): any authenticated
     // allowed-domain caller resolves any row regardless of nominal owner.
     // Reads, public mutations (this), AND the write-dedupe in
@@ -393,7 +394,7 @@ export const softRemove = authenticatedMutation({
       action: 'remove',
       subscriptionId: sub._id,
       ...(machineLabel !== undefined ? { machineLabel } : {}),
-      ...(clerkSessionId !== undefined ? { clerkSessionId } : {}),
+      ...(machineId !== undefined ? { machineId } : {}),
     })
     return null
   },
@@ -406,10 +407,10 @@ export const rename = authenticatedMutation({
     /** See softRemove docstring. */
     machineLabel: v.optional(v.string()),
     /** See softRemove docstring. */
-    clerkSessionId: v.optional(v.string()),
+    machineId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { email, label, machineLabel, clerkSessionId }) => {
+  handler: async (ctx, { email, label, machineLabel, machineId }) => {
     // Shared-vault lookup + actor attribution rules mirror `softRemove`.
     // See its docstring for the full rationale.
     const matches = await ctx.db
@@ -429,7 +430,7 @@ export const rename = authenticatedMutation({
       action: 'rename',
       subscriptionId: sub._id,
       ...(machineLabel !== undefined ? { machineLabel } : {}),
-      ...(clerkSessionId !== undefined ? { clerkSessionId } : {}),
+      ...(machineId !== undefined ? { machineId } : {}),
     })
     return null
   },

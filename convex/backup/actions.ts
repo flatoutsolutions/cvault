@@ -115,17 +115,17 @@ export const exportEncryptedBackup = authenticatedAction({
   args: {
     passphrase: v.string(),
     /**
-     * Explicit Clerk session id forwarded by the CLI. BAPI-minted JWTs
-     * lack the `sid` claim, so the server prefers `identity.sid` (FAPI)
-     * and falls back to this arg via `resolveCallerSession`.
+     * Machine id forwarded by the CLI (CVLT-3: replaces clerkSessionId).
+     * The server falls back to the resolved Clerk session id for legacy/
+     * dashboard callers that pre-date the PKCE migration.
      */
-    clerkSessionId: v.optional(v.string()),
+    machineId: v.optional(v.string()),
     machineLabel: v.optional(v.string()),
   },
   returns: exportResultValidator,
   handler: async (
     ctx,
-    { passphrase, clerkSessionId, machineLabel }
+    { passphrase, machineId, machineLabel }
   ): Promise<{ filename: string; contentBase64: string; accountCount: number }> => {
     if (passphrase.length < MIN_PASSPHRASE_LEN) {
       throw new ConvexError({
@@ -194,7 +194,7 @@ export const exportEncryptedBackup = authenticatedAction({
       // A6: audit row. No subscriptionId — this is a bulk operation.
       await ctx.runMutation(internal.machineActivity.mutations.record, {
         userId,
-        clerkSessionId: resolveCallerSession(identity, clerkSessionId),
+        machineId: machineId ?? resolveCallerSession(identity),
         action: 'export',
         at: Date.now(),
         ...(machineLabel !== undefined ? { machineLabel } : {}),
@@ -229,16 +229,16 @@ export const importEncryptedBackup = authenticatedAction({
     passphrase: v.string(),
     bundleBase64: v.string(),
     /**
-     * Explicit Clerk session id forwarded by the CLI; see exportEncryptedBackup
-     * for the rationale. Resolved via `resolveCallerSession`.
+     * Machine id forwarded by the CLI (CVLT-3: replaces clerkSessionId).
+     * See exportEncryptedBackup for the rationale.
      */
-    clerkSessionId: v.optional(v.string()),
+    machineId: v.optional(v.string()),
     machineLabel: v.optional(v.string()),
   },
   returns: importResultValidator,
   handler: async (
     ctx,
-    { passphrase, bundleBase64, clerkSessionId, machineLabel }
+    { passphrase, bundleBase64, machineId, machineLabel }
   ): Promise<{ restoredCount: number; skippedCount: number; errors: string[] }> => {
     const identity = getIdentity(ctx)
     const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
@@ -369,7 +369,7 @@ export const importEncryptedBackup = authenticatedAction({
       // A6: audit row.
       await ctx.runMutation(internal.machineActivity.mutations.record, {
         userId,
-        clerkSessionId: resolveCallerSession(identity, clerkSessionId),
+        machineId: machineId ?? resolveCallerSession(identity),
         action: 'import',
         at: Date.now(),
         ...(machineLabel !== undefined ? { machineLabel } : {}),

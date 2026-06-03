@@ -1,5 +1,7 @@
 /**
  * Spec: §4 (machineActivity table) + §6 (ipHash redaction).
+ * CVLT-3: field renamed clerkSessionId → machineId; sentinel/revocable
+ * logic removed; recentForSession → recentForMachine.
  *
  * The `record` mutation is internal — only Convex actions / mutations
  * emit audit rows. Verifies:
@@ -12,20 +14,20 @@ import { SECOND_IDENTITY, TEST_IDENTITY, seedUser, vault } from '../__tests__/he
 import { api, internal } from '../_generated/api'
 
 describe('machineActivity.mutations.record', () => {
-  it('inserts a row with the action + clerkSessionId', async () => {
+  it('inserts a row with the action + machineId', async () => {
     const t = vault()
     const userId = await seedUser(t)
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId: 'sess_test_123',
+      machineId: 'mach-uuid-123',
       action: 'switch',
       at: 1700000000000,
     })
 
     const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     expect(rows).toHaveLength(1)
-    expect(rows[0]?.clerkSessionId).toBe('sess_test_123')
+    expect(rows[0]?.machineId).toBe('mach-uuid-123')
     expect(rows[0]?.action).toBe('switch')
     expect(rows[0]?.at).toBe(1700000000000)
   })
@@ -36,7 +38,7 @@ describe('machineActivity.mutations.record', () => {
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId: 'sess_x',
+      machineId: 'mach-x',
       action: 'pull',
       at: Date.now(),
       rawIp: '203.0.113.42',
@@ -57,7 +59,7 @@ describe('machineActivity.mutations.record', () => {
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId: 'sess_x',
+      machineId: 'mach-x',
       action: 'add',
       at: Date.now(),
     })
@@ -79,7 +81,7 @@ describe('machineActivity.mutations.record', () => {
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId: 'sess_label',
+      machineId: 'mach-label',
       action: 'add',
       at: Date.now(),
       machineLabel: 'office-laptop',
@@ -95,7 +97,7 @@ describe('machineActivity.mutations.record', () => {
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId: 'sess_no_label',
+      machineId: 'mach-no-label',
       action: 'add',
       at: Date.now(),
     })
@@ -116,13 +118,13 @@ describe('machineActivity.queries.recentForUser', () => {
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_a',
+      machineId: 'mach-a',
       action: 'add',
       at: 1000,
     })
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_a',
+      machineId: 'mach-a',
       action: 'switch',
       at: 2000,
     })
@@ -142,19 +144,19 @@ describe('machineActivity.queries.recentForUser', () => {
     // return only half the rows AND in the wrong order.
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_alice',
+      machineId: 'mach-alice',
       action: 'add',
       at: 1000,
     })
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: bobId,
-      clerkSessionId: 'sess_bob',
+      machineId: 'mach-bob',
       action: 'pull',
       at: 2000,
     })
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_alice',
+      machineId: 'mach-alice',
       action: 'switch',
       at: 3000,
     })
@@ -163,7 +165,7 @@ describe('machineActivity.queries.recentForUser', () => {
       paginationOpts: { numItems: 10, cursor: null },
     })
     expect(result.page.map((r) => r.at)).toEqual([3000, 2000, 1000])
-    expect(result.page.map((r) => r.clerkSessionId)).toEqual(['sess_alice', 'sess_bob', 'sess_alice'])
+    expect(result.page.map((r) => r.machineId)).toEqual(['mach-alice', 'mach-bob', 'mach-alice'])
   })
 
   it('returns the same set regardless of which user calls it', async () => {
@@ -173,13 +175,13 @@ describe('machineActivity.queries.recentForUser', () => {
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_a',
+      machineId: 'mach-a',
       action: 'add',
       at: 1000,
     })
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: bobId,
-      clerkSessionId: 'sess_b',
+      machineId: 'mach-b',
       action: 'pull',
       at: 2000,
     })
@@ -191,149 +193,107 @@ describe('machineActivity.queries.recentForUser', () => {
       .withIdentity(SECOND_IDENTITY)
       .query(api.machineActivity.queries.recentForUser, { paginationOpts: { numItems: 10, cursor: null } })
 
-    expect(fromAlice.page.map((r) => r.clerkSessionId)).toEqual(['sess_b', 'sess_a'])
+    expect(fromAlice.page.map((r) => r.machineId)).toEqual(['mach-b', 'mach-a'])
     expect(fromAlice.page).toEqual(fromBob.page)
   })
 })
 
-describe('machineActivity.queries.recentForSession', () => {
-  // Shared-vault: the audit drilldown for a sid must surface rows from
-  // any user that touched that sid. (Sids are unique per Clerk session,
-  // but the table is shared.)
-  it('returns rows for a session even when the caller is a different user', async () => {
+describe('machineActivity.queries.recentForMachine', () => {
+  // Shared-vault: the audit drilldown for a machineId must surface rows from
+  // any user that touched that machine. (machineIds are unique per device.)
+  it('returns rows for a machine even when the caller is a different user', async () => {
     const t = vault()
     const aliceId = await seedUser(t, TEST_IDENTITY)
     const bobId = await seedUser(t, SECOND_IDENTITY)
 
-    // Bob's session writes two rows.
+    // Bob's machine writes two rows.
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: bobId,
-      clerkSessionId: 'sess_bob',
+      machineId: 'mach-bob',
       action: 'add',
       at: 1000,
     })
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: bobId,
-      clerkSessionId: 'sess_bob',
+      machineId: 'mach-bob',
       action: 'pull',
       at: 2000,
     })
-    // Alice has unrelated rows under a different sid.
+    // Alice has unrelated rows under a different machineId.
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_alice',
+      machineId: 'mach-alice',
       action: 'add',
       at: 1500,
     })
 
-    // Auth as Alice, drill into bob's session.
-    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForSession, {
-      clerkSessionId: 'sess_bob',
+    // Auth as Alice, drill into Bob's machine.
+    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForMachine, {
+      machineId: 'mach-bob',
       paginationOpts: { numItems: 10, cursor: null },
     })
     expect(result.page.map((r) => r.at)).toEqual([2000, 1000])
-    expect(result.page.every((r) => r.clerkSessionId === 'sess_bob')).toBe(true)
+    expect(result.page.every((r) => r.machineId === 'mach-bob')).toBe(true)
   })
 })
 
 describe('machineActivity.queries.distinctSessionsForUser', () => {
   /**
-   * The dashboard's "Machines" section reads from this query. Two
-   * grouping behaviors:
+   * The dashboard's "Machines" section reads from this query.
+   * Grouping: collapse on machineId — one row per distinct machineId.
+   * Rows are `.order('desc')` by `at`, so the FIRST row per machineId is
+   * the most-recent one and its `machineLabel` is what surfaces.
    *
-   *  - Real Clerk session ids: collapse on sid alone — one row per sid.
-   *    The most-recent label wins (rows are `.order('desc')` by `at`).
-   *    A relabel-in-place via `cvault login --label new` should not
-   *    leave a ghost row for the old label.
-   *
-   *  - The 'unknown-session' sentinel: split per (sentinel, label).
-   *    Cron, server-context writes, and pre-fix CLIs all write the
-   *    sentinel; collapsing them into one row would lump every machine's
-   *    server-side activity into a single misleading entry. Splitting
-   *    by label preserves at least the per-machine identity even though
-   *    the sid is missing.
+   * CVLT-3: sentinel / unknown-session concept dropped. No `revocable` field.
    */
-  it('collapses real sids to one row using the most-recent label', async () => {
+  it('collapses identical machineIds to one row using the most-recent label', async () => {
     const t = vault()
     const aliceId = await seedUser(t)
 
-    // Session A: two rows under the same sid with different labels.
+    // Machine A: two rows under the same machineId with different labels.
     // The most-recent (at=2000) wins.
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_a',
+      machineId: 'mach-a',
       action: 'add',
       at: 1000,
       machineLabel: 'old-name',
     })
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_a',
+      machineId: 'mach-a',
       action: 'refresh',
       at: 2000,
       machineLabel: 'new-name',
     })
 
-    // Session B: only one row, with a label.
+    // Machine B: only one row, with a label.
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_b',
+      machineId: 'mach-b',
       action: 'add',
       at: 1500,
       machineLabel: 'sole-row',
     })
 
     const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
-    // One row per real sid (sess_a + sess_b = 2 rows).
+    // One row per machineId (mach-a + mach-b = 2 rows).
     expect(result).toHaveLength(2)
-    const sessA = result.find((r) => r.clerkSessionId === 'sess_a')
-    expect(sessA?.machineLabel).toBe('new-name') // most-recent wins
-    const sessB = result.find((r) => r.clerkSessionId === 'sess_b')
-    expect(sessB?.machineLabel).toBe('sole-row')
-    // Real sids are always revocable.
-    expect(result.every((r) => r.revocable)).toBe(true)
+    const machA = result.find((r) => r.machineId === 'mach-a')
+    expect(machA?.machineLabel).toBe('new-name') // most-recent wins
+    const machB = result.find((r) => r.machineId === 'mach-b')
+    expect(machB?.machineLabel).toBe('sole-row')
+    // No revocable field in the new shape.
+    expect(result.every((r) => !('revocable' in r))).toBe(true)
   })
 
-  it('splits the sentinel into one row per machineLabel', async () => {
-    const t = vault()
-    const aliceId = await seedUser(t)
-
-    // Two cron / server-context writes from notional different machines —
-    // both wrote the sentinel because no real Clerk session was available
-    // at the call site. Splitting by label keeps them distinguishable on
-    // the dashboard rather than collapsing into a single row.
-    await t.mutation(internal.machineActivity.mutations.record, {
-      userId: aliceId,
-      clerkSessionId: 'unknown-session',
-      action: 'pull',
-      at: 3000,
-      machineLabel: 'cron-server-a',
-    })
-    await t.mutation(internal.machineActivity.mutations.record, {
-      userId: aliceId,
-      clerkSessionId: 'unknown-session',
-      action: 'pull',
-      at: 4000,
-      machineLabel: 'cron-server-b',
-    })
-
-    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
-    const sentinelRows = result.filter((r) => r.clerkSessionId === 'unknown-session')
-    expect(sentinelRows).toHaveLength(2)
-    // None of the sentinel rows are revocable — there's no live Clerk
-    // session to call BAPI against.
-    expect(sentinelRows.every((r) => !r.revocable)).toBe(true)
-    const labels = sentinelRows.map((r) => r.machineLabel).sort()
-    expect(labels).toEqual(['cron-server-a', 'cron-server-b'])
-  })
-
-  it('returns machineLabel undefined when the session has no labeled rows', async () => {
+  it('returns machineLabel undefined when the machine has no labeled rows', async () => {
     const t = vault()
     const aliceId = await seedUser(t)
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_legacy',
+      machineId: 'mach-legacy',
       action: 'add',
       at: 1000,
       // no machineLabel — legacy / pre-feature row
@@ -344,24 +304,21 @@ describe('machineActivity.queries.distinctSessionsForUser', () => {
     expect(result[0]?.machineLabel).toBeUndefined()
   })
 
-  it('skips rows whose clerkSessionId is the empty string', async () => {
+  it('skips rows whose machineId is the empty string', async () => {
     const t = vault()
     const aliceId = await seedUser(t)
 
-    // Empty sid is structurally identical to "no session" and shouldn't
-    // render as a clickable machine. Defense-in-depth: today no caller
-    // writes empty strings, but a future bug shouldn't leak a phantom
-    // row to the dashboard.
+    // Empty machineId shouldn't render as a clickable machine. Defense-in-depth.
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: '',
+      machineId: '',
       action: 'pull',
       at: 1000,
       machineLabel: 'should-be-hidden',
     })
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_real',
+      machineId: 'mach-real',
       action: 'add',
       at: 2000,
       machineLabel: 'should-show',
@@ -369,10 +326,10 @@ describe('machineActivity.queries.distinctSessionsForUser', () => {
 
     const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
     expect(result).toHaveLength(1)
-    expect(result[0]?.clerkSessionId).toBe('sess_real')
+    expect(result[0]?.machineId).toBe('mach-real')
   })
 
-  it('returns sessions from every user — shared vault visibility', async () => {
+  it('returns machines from every user — shared vault visibility', async () => {
     // Architectural intent — `distinctSessionsForUser` powers the
     // dashboard's Machines view. In shared mode any allowlisted user
     // sees every machine that has touched the vault.
@@ -382,14 +339,14 @@ describe('machineActivity.queries.distinctSessionsForUser', () => {
 
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: aliceId,
-      clerkSessionId: 'sess_alice',
+      machineId: 'mach-alice',
       action: 'add',
       at: 1000,
       machineLabel: 'alice-laptop',
     })
     await t.mutation(internal.machineActivity.mutations.record, {
       userId: bobId,
-      clerkSessionId: 'sess_bob',
+      machineId: 'mach-bob',
       action: 'add',
       at: 2000,
       machineLabel: 'bob-desktop',
@@ -397,27 +354,7 @@ describe('machineActivity.queries.distinctSessionsForUser', () => {
 
     const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.distinctSessionsForUser, {})
     expect(result).toHaveLength(2)
-    const sids = result.map((r) => r.clerkSessionId).sort()
-    expect(sids).toEqual(['sess_alice', 'sess_bob'])
-  })
-
-  it('rejects the sentinel argument on recentForSession (returns empty page)', async () => {
-    // Otherwise a deeplink to /dashboard/machines/unknown-session would
-    // show every cron-driven row mixed across machines.
-    const t = vault()
-    const aliceId = await seedUser(t)
-    await t.mutation(internal.machineActivity.mutations.record, {
-      userId: aliceId,
-      clerkSessionId: 'unknown-session',
-      action: 'pull',
-      at: 1000,
-    })
-
-    const result = await t.withIdentity(TEST_IDENTITY).query(api.machineActivity.queries.recentForSession, {
-      clerkSessionId: 'unknown-session',
-      paginationOpts: { numItems: 10, cursor: null },
-    })
-    expect(result.page).toEqual([])
-    expect(result.isDone).toBe(true)
+    const machineIds = result.map((r) => r.machineId).sort()
+    expect(machineIds).toEqual(['mach-alice', 'mach-bob'])
   })
 })
