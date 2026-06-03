@@ -1,9 +1,12 @@
 /**
- * Spec: §6, §7 — durable Clerk session storage on disk.
+ * Spec: §6, §7 + Task 12 — v2 OAuth session storage on disk.
  *
  * Each test gets a fresh tmp HOME. The actual perm + atomic-write logic
  * lives in `paths.ts`, so this file pins the session-shape contract and
  * the wiring from `readSession`/`writeSession` to those primitives.
+ *
+ * v2 change: old v1 (Clerk-ticket) sessions must be rejected by readSession()
+ * so the user is forced to re-authenticate via OAuth PKCE.
  */
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,14 +33,15 @@ afterEach(() => {
 })
 
 const sample: SessionState = {
-  version: 1,
-  clerkSessionId: 'sess_abc',
-  clerkSessionToken: 'session-jwt',
-  convexJwt: 'convex-jwt',
-  convexJwtExpiry: 1_700_000_060,
+  version: 2,
+  accessToken: 'access-jwt',
+  accessTokenExpiry: 1_700_000_900,
+  refreshToken: 'refresh-token',
+  idToken: 'id-jwt',
   frontendApiUrl: 'https://clear-redbird-6.clerk.accounts.dev',
+  clientId: 'client_test123',
   convexUrl: 'https://beloved-mouse-707.convex.cloud',
-  issuedAt: 1_700_000_000,
+  machineLabel: 'dev-laptop',
 }
 
 describe('sessionFilePath', () => {
@@ -47,7 +51,7 @@ describe('sessionFilePath', () => {
 })
 
 describe('writeSession + readSession', () => {
-  it('round-trips a session through the disk', async () => {
+  it('round-trips a v2 session through the disk', async () => {
     await writeSession(sample)
     const round = await readSession()
     expect(round).toEqual(sample)
@@ -61,14 +65,61 @@ describe('writeSession + readSession', () => {
 
   it('overwrites an existing session', async () => {
     await writeSession(sample)
-    const next: SessionState = { ...sample, clerkSessionId: 'sess_new' }
+    const next: SessionState = { ...sample, accessToken: 'new-access-jwt' }
     await writeSession(next)
-    expect((await readSession()).clerkSessionId).toBe('sess_new')
+    expect((await readSession()).accessToken).toBe('new-access-jwt')
+  })
+
+  it('round-trips a session without optional fields (idToken, machineLabel)', async () => {
+    const minimal: SessionState = {
+      version: 2,
+      accessToken: 'tok',
+      accessTokenExpiry: 1_000_000,
+      refreshToken: 'rt',
+      frontendApiUrl: 'https://t.clerk.accounts.dev',
+      clientId: 'client_abc',
+      convexUrl: 'https://x.convex.cloud',
+    }
+    await writeSession(minimal)
+    const round = await readSession()
+    expect(round).toEqual(minimal)
+    expect(round.idToken).toBeUndefined()
+    expect(round.machineLabel).toBeUndefined()
   })
 })
 
 describe('readSession when not logged in', () => {
   it('throws NotLoggedInError when session.json does not exist', async () => {
+    await expect(readSession()).rejects.toBeInstanceOf(NotLoggedInError)
+  })
+})
+
+describe('readSession with v1 (Clerk-ticket) session', () => {
+  it('rejects a version:1 blob with NotLoggedInError (forces re-login via OAuth)', async () => {
+    const { mkdirSync, writeFileSync, chmodSync } = await import('node:fs')
+    mkdirSync(join(tempHome, '.vault'), { recursive: true })
+    chmodSync(join(tempHome, '.vault'), 0o700)
+    const v1Blob = {
+      version: 1,
+      clerkSessionId: 'sess_old',
+      clerkSessionToken: 'old-token',
+      convexJwt: 'old-convex-jwt',
+      convexJwtExpiry: 1_700_000_060,
+      frontendApiUrl: 'https://clear-redbird-6.clerk.accounts.dev',
+      convexUrl: 'https://beloved-mouse-707.convex.cloud',
+      issuedAt: 1_700_000_000,
+    }
+    writeFileSync(sessionFilePath(), JSON.stringify(v1Blob))
+    chmodSync(sessionFilePath(), 0o600)
+    await expect(readSession()).rejects.toBeInstanceOf(NotLoggedInError)
+  })
+
+  it('rejects a blob with no version field with NotLoggedInError', async () => {
+    const { mkdirSync, writeFileSync, chmodSync } = await import('node:fs')
+    mkdirSync(join(tempHome, '.vault'), { recursive: true })
+    chmodSync(join(tempHome, '.vault'), 0o700)
+    writeFileSync(sessionFilePath(), JSON.stringify({ clerkSessionId: 'sess_x' }))
+    chmodSync(sessionFilePath(), 0o600)
     await expect(readSession()).rejects.toBeInstanceOf(NotLoggedInError)
   })
 })
