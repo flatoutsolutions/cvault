@@ -1,13 +1,12 @@
 /**
- * Spec: §7 — Convex client wrapper with auto-JWT-refresh on 401.
+ * Spec: §7 — Convex client wrapper with auto-access-token-refresh on 401.
  *
  * The wrapper holds a `ConvexHttpClient`, the persisted `SessionState`, and
  * a single retry policy: any 401 / "Not authenticated" / "Unauthenticated"
- * error triggers a fresh `mintConvexJwt` call, then the original op is
- * retried once. Subsequent 401s propagate untouched (long-lived Clerk
- * session is dead → user must re-run `cvault login`).
+ * error triggers an OAuth refresh call, then the original op is retried once.
+ * Subsequent 401s propagate untouched (user must re-run `cvault login`).
  *
- * Tests stub `ConvexHttpClient` methods + `mintConvexJwt` so we never
+ * Tests stub `ConvexHttpClient` methods + `refreshAccessToken` so we never
  * actually hit the network.
  */
 import type { FunctionReference } from 'convex/server'
@@ -20,9 +19,7 @@ import { VaultClient } from '../../src/convex/vaultClient'
 // CRITICAL: VaultClient.refreshAuth() persists the refreshed session to
 // `~/.vault/session.json` via writeSession. Without this mock the tests
 // would clobber the developer's REAL session file every time the
-// auth-retry test runs (verified empirically: a corrupted session.json
-// containing test fixtures like `clerkSessionToken: "session-jwt"` was
-// observed on a developer's machine). The mock must be hoisted by vitest
+// auth-retry test runs. The mock must be hoisted by vitest
 // (`vi.mock` runs before the import below).
 vi.mock('../../src/auth/session', async () => {
   const actual = await vi.importActual<typeof import('../../src/auth/session')>('../../src/auth/session')
@@ -33,15 +30,16 @@ vi.mock('../../src/auth/session', async () => {
 })
 
 const sampleSession: SessionState = {
-  version: 1,
-  clerkSessionId: 'sess_abc',
-  clerkSessionToken: 'session-jwt',
-  convexJwt: 'jwt-old',
-  convexJwtExpiry: 0,
+  version: 2,
+  accessToken: 'access-token-old',
+  accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
+  refreshToken: 'refresh-token-old',
   frontendApiUrl: 'https://clear-redbird-6.clerk.accounts.dev',
+  clientId: 'client_test_123',
   convexUrl: 'https://beloved-mouse-707.convex.cloud',
-  issuedAt: 1_700_000_000,
 }
+
+const TEST_MACHINE_ID = 'machine-uuid-1234-5678'
 
 // Generic FunctionReference-shaped fake for tests.
 const fakeQuery = ((): FunctionReference<'query'> => {
@@ -91,8 +89,7 @@ describe('isAuthError', () => {
   })
 
   // Convex's auth-rejection codes. These must trigger a refresh; otherwise
-  // the cached 60-second convex JWT becomes a hard error the moment it
-  // lapses (verified end-to-end against the live deployment).
+  // the cached access token becomes a hard error the moment it lapses.
   it('matches Convex InvalidAuthHeader / could-not-parse-JWT errors', () => {
     expect(isAuthError(new Error('{"code":"InvalidAuthHeader","message":"Could not parse JWT payload."}'))).toBe(true)
     expect(isAuthError(new Error('InvalidAuthToken: signature verification failed'))).toBe(true)
@@ -126,10 +123,10 @@ describe('VaultClient', () => {
     vi.restoreAllMocks()
   })
 
-  function buildClient(session: SessionState = sampleSession): VaultClient {
+  function buildClient(session: SessionState = sampleSession, machineId = TEST_MACHINE_ID): VaultClient {
     // Dependency-injected client — production builds the real
     // `ConvexHttpClient`; tests inject this fake to avoid the network.
-    return new VaultClient(session, {
+    return new VaultClient(session, machineId, {
       query: queryStub as never,
       mutation: mutationStub as never,
       action: actionStub as never,
@@ -169,31 +166,74 @@ describe('VaultClient', () => {
     expect(queryStub).toHaveBeenCalledTimes(1)
   })
 
-  it('retries once on auth error after refreshing the JWT', async () => {
+  it('retries once on auth error after refreshing the access token', async () => {
     queryStub.mockRejectedValueOnce(new Error('401 Unauthenticated')).mockResolvedValueOnce(['sub1'])
 
-    // Stub mintConvexJwt by injecting a custom refresher.
+    // Stub refreshAccessToken by injecting a custom refresher.
     const refresher = vi.fn().mockResolvedValueOnce({
-      convexJwt: 'jwt-new',
-      convexJwtExpiry: 1_700_000_999,
+      accessToken: 'access-token-new',
+      accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
+      refreshToken: 'refresh-token-new',
     })
     const session = { ...sampleSession }
     const client = new VaultClient(
       session,
+      TEST_MACHINE_ID,
       {
         query: queryStub as never,
         mutation: mutationStub as never,
         action: actionStub as never,
         setAuth: setAuthStub as never,
       },
-      { refreshJwt: refresher }
+      { refreshAccessToken: refresher }
     )
 
     const result = (await client.query(fakeQuery, {})) as string[]
     expect(result).toEqual(['sub1'])
     expect(refresher).toHaveBeenCalledTimes(1)
-    expect(setAuthStub).toHaveBeenCalledWith('jwt-new')
+    // Refresher is called with the session's OAuth params
+    expect(refresher).toHaveBeenCalledWith({
+      frontendApiUrl: sampleSession.frontendApiUrl,
+      clientId: sampleSession.clientId,
+      refreshToken: sampleSession.refreshToken,
+    })
+    // The new access token is set on the HTTP client
+    expect(setAuthStub).toHaveBeenCalledWith('access-token-new')
     expect(queryStub).toHaveBeenCalledTimes(2)
+  })
+
+  it('persists the rotated refresh token after a successful refresh', async () => {
+    const { writeSession } = await import('../../src/auth/session')
+    const writeSessionMock = vi.mocked(writeSession)
+    writeSessionMock.mockClear()
+
+    queryStub.mockRejectedValueOnce(new Error('401 Unauthenticated')).mockResolvedValueOnce(['sub1'])
+
+    const rotatedRefreshToken = 'refresh-token-rotated'
+    const refresher = vi.fn().mockResolvedValueOnce({
+      accessToken: 'access-token-new',
+      accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
+      refreshToken: rotatedRefreshToken,
+    })
+    const client = new VaultClient(
+      { ...sampleSession },
+      TEST_MACHINE_ID,
+      {
+        query: queryStub as never,
+        mutation: mutationStub as never,
+        action: actionStub as never,
+        setAuth: setAuthStub as never,
+      },
+      { refreshAccessToken: refresher }
+    )
+
+    await client.query(fakeQuery, {})
+
+    // writeSession must have been called with the rotated refresh token
+    expect(writeSessionMock).toHaveBeenCalled()
+    const persistedSession = writeSessionMock.mock.calls[0]?.[0]
+    expect(persistedSession?.refreshToken).toBe(rotatedRefreshToken)
+    expect(persistedSession?.accessToken).toBe('access-token-new')
   })
 
   it('does not retry twice when the refresh-then-retry also fails with auth', async () => {
@@ -202,19 +242,21 @@ describe('VaultClient', () => {
       .mockRejectedValueOnce(new Error('401 Unauthenticated again'))
 
     const refresher = vi.fn().mockResolvedValueOnce({
-      convexJwt: 'jwt-new',
-      convexJwtExpiry: 1_700_000_999,
+      accessToken: 'access-token-new',
+      accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
+      refreshToken: 'refresh-token-new',
     })
 
     const client = new VaultClient(
       { ...sampleSession },
+      TEST_MACHINE_ID,
       {
         query: queryStub as never,
         mutation: mutationStub as never,
         action: actionStub as never,
         setAuth: setAuthStub as never,
       },
-      { refreshJwt: refresher }
+      { refreshAccessToken: refresher }
     )
 
     await expect(client.query(fakeQuery, {})).rejects.toThrow(/again/)
@@ -226,15 +268,13 @@ describe('VaultClient', () => {
 /**
  * `machineLabel` propagation: VaultClient exposes the session's
  * machineLabel via a getter and a `withMachineLabel(args)` helper that
- * merges it into action/mutation arg objects. Centralizing the merge
- * keeps every command call site from having to repeat the
- * spread-with-conditional dance — and prevents the bug where a new
- * call site forgets to forward the label.
+ * merges it into action/mutation arg objects.
  */
 describe('VaultClient.withMachineLabel', () => {
   it('exposes the session machineLabel via a getter', () => {
     const client = new VaultClient(
       { ...sampleSession, machineLabel: 'office-mac' },
+      TEST_MACHINE_ID,
       {
         query: vi.fn() as never,
         mutation: vi.fn() as never,
@@ -245,8 +285,8 @@ describe('VaultClient.withMachineLabel', () => {
     expect(client.machineLabel).toBe('office-mac')
   })
 
-  it('returns undefined when the session has no label (legacy session)', () => {
-    const client = new VaultClient(sampleSession, {
+  it('returns undefined when the session has no label', () => {
+    const client = new VaultClient(sampleSession, TEST_MACHINE_ID, {
       query: vi.fn() as never,
       mutation: vi.fn() as never,
       action: vi.fn() as never,
@@ -258,6 +298,7 @@ describe('VaultClient.withMachineLabel', () => {
   it('merges the label into args when present', () => {
     const client = new VaultClient(
       { ...sampleSession, machineLabel: 'air-13' },
+      TEST_MACHINE_ID,
       {
         query: vi.fn() as never,
         mutation: vi.fn() as never,
@@ -270,7 +311,7 @@ describe('VaultClient.withMachineLabel', () => {
   })
 
   it('returns the args unchanged when no label is present', () => {
-    const client = new VaultClient(sampleSession, {
+    const client = new VaultClient(sampleSession, TEST_MACHINE_ID, {
       query: vi.fn() as never,
       mutation: vi.fn() as never,
       action: vi.fn() as never,
@@ -286,6 +327,7 @@ describe('VaultClient.withMachineLabel', () => {
   it('does not mutate the original args object', () => {
     const client = new VaultClient(
       { ...sampleSession, machineLabel: 'air-13' },
+      TEST_MACHINE_ID,
       {
         query: vi.fn() as never,
         mutation: vi.fn() as never,
@@ -296,5 +338,51 @@ describe('VaultClient.withMachineLabel', () => {
     const args = { slot: 1 }
     client.withMachineLabel(args)
     expect((args as { machineLabel?: string }).machineLabel).toBeUndefined()
+  })
+})
+
+/**
+ * `withMeta` injects both `machineId` and optional `machineLabel`.
+ */
+describe('VaultClient.withMeta', () => {
+  it('injects machineId into args', () => {
+    const client = new VaultClient(sampleSession, TEST_MACHINE_ID, {
+      query: vi.fn() as never,
+      mutation: vi.fn() as never,
+      action: vi.fn() as never,
+      setAuth: vi.fn() as never,
+    })
+    const merged = client.withMeta({ slot: 1 })
+    expect(merged.machineId).toBe(TEST_MACHINE_ID)
+    expect(merged.slot).toBe(1)
+  })
+
+  it('injects machineId + machineLabel when label is present', () => {
+    const client = new VaultClient(
+      { ...sampleSession, machineLabel: 'my-laptop' },
+      TEST_MACHINE_ID,
+      {
+        query: vi.fn() as never,
+        mutation: vi.fn() as never,
+        action: vi.fn() as never,
+        setAuth: vi.fn() as never,
+      }
+    )
+    const merged = client.withMeta({ slot: 2 })
+    expect(merged.machineId).toBe(TEST_MACHINE_ID)
+    expect(merged.machineLabel).toBe('my-laptop')
+    expect(merged.slot).toBe(2)
+  })
+
+  it('does not add machineLabel when not set on session', () => {
+    const client = new VaultClient(sampleSession, TEST_MACHINE_ID, {
+      query: vi.fn() as never,
+      mutation: vi.fn() as never,
+      action: vi.fn() as never,
+      setAuth: vi.fn() as never,
+    })
+    const merged = client.withMeta({})
+    expect(merged.machineId).toBe(TEST_MACHINE_ID)
+    expect((merged as { machineLabel?: string }).machineLabel).toBeUndefined()
   })
 })
