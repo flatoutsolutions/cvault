@@ -9,5 +9,6 @@
 export const BUILD_DEFAULTS = {
   convexUrl: '',
   frontendApiUrl: '',
+  clientId: '',
   dashboardUrl: '',
 } as const

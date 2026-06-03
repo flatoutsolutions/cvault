@@ -49,15 +49,18 @@ import { BUILD_DEFAULTS } from './buildInfo'
 export interface RuntimeConfig {
   /** Convex deployment base URL. */
   convexUrl: string
-  /** Clerk Frontend API base URL — used for ticket exchange + JWT mints. */
+  /** Clerk Frontend API base URL — used for OAuth token exchange + refresh. */
   frontendApiUrl: string
-  /** Dashboard base URL — `cvault login` opens `${dashboardUrl}/cli/link`. */
-  dashboardUrl: string
+  /** Clerk OAuth Application Client ID — used for PKCE login + token refresh. */
+  clientId: string
+  /** Dashboard base URL — optional; no longer required for login. */
+  dashboardUrl?: string
 }
 
 interface PartialConfigFile {
   convexUrl?: unknown
   frontendApiUrl?: unknown
+  clientId?: unknown
   dashboardUrl?: unknown
 }
 
@@ -98,29 +101,31 @@ export function resolveConfig(): RuntimeConfig {
     file.frontendApiUrl,
     process.env.CLERK_FRONTEND_API_URL
   )
-  // dashboardUrl has no loose-env analog (no `VITE_*` equivalent), so
-  // the chain is just: explicit → baked → file.
+  // clientId has no loose-env analog; chain is: explicit → baked → file.
+  const clientId = pickString(process.env.CVAULT_OAUTH_CLIENT_ID, BUILD_DEFAULTS.clientId, file.clientId)
+  // dashboardUrl is optional — login no longer needs it. Still supported
+  // for backwards compat (e.g. deep-link helpers).
   const dashboardUrl = pickString(process.env.CVAULT_DASHBOARD_URL, BUILD_DEFAULTS.dashboardUrl, file.dashboardUrl)
 
   const missing: string[] = []
   if (!convexUrl) missing.push('CVAULT_CONVEX_URL (or VITE_CONVEX_URL in repo .env.local)')
   if (!frontendApiUrl) missing.push('CVAULT_FRONTEND_API_URL (or CLERK_FRONTEND_API_URL in repo .env.local)')
-  if (!dashboardUrl) missing.push('CVAULT_DASHBOARD_URL')
+  if (!clientId) missing.push('CVAULT_OAUTH_CLIENT_ID')
 
-  if (!convexUrl || !frontendApiUrl || !dashboardUrl) {
+  if (!convexUrl || !frontendApiUrl || !clientId) {
     throw new Error(
       `cvault is missing required configuration. Set the following:\n` +
         missing.map((m) => `  - ${m}`).join('\n') +
         `\n\nOptions:\n` +
         `  - Export as shell env vars (recommended for installed binary)\n` +
         `  - Create ${CONFIG_PATH} with JSON: ` +
-        `{ "convexUrl": "...", "frontendApiUrl": "...", "dashboardUrl": "..." }\n` +
+        `{ "convexUrl": "...", "frontendApiUrl": "...", "clientId": "..." }\n` +
         `  - Run from the cvault repo root where Bun auto-loads .env.local\n` +
         `  - Build a binary with values baked into the binary at build time ` +
-        `(set CVAULT_*_URL or VITE/CLERK fallback env vars before running ` +
+        `(set CVAULT_*_URL / CVAULT_OAUTH_CLIENT_ID or VITE/CLERK fallback env vars before running ` +
         `\`bun run scripts/build.ts <target>\`)`
     )
   }
 
-  return { convexUrl, frontendApiUrl, dashboardUrl }
+  return { convexUrl, frontendApiUrl, clientId, ...(dashboardUrl !== undefined ? { dashboardUrl } : {}) }
 }
