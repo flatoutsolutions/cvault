@@ -7,6 +7,7 @@ import { keyRotationJobsSchema } from './keyRotationJobs/schema'
 import { machineActivitySchema } from './machineActivity/schema'
 import { rateLimitSchema } from './rateLimit/schema'
 import { refreshLogSchema } from './refreshLog/schema'
+import { revokedUsersSchema } from './revokedUsers/schema'
 import { subscriptionsSchema } from './subscriptions/schema'
 import { usersSchema } from './users/schema'
 
@@ -18,6 +19,7 @@ export default defineSchema({
   machineActivity: machineActivitySchema,
   rateLimit: rateLimitSchema,
   refreshLog: refreshLogSchema,
+  revokedUsers: revokedUsersSchema,
   subscriptions: subscriptionsSchema,
   users: usersSchema,
 })
