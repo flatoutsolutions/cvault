@@ -149,9 +149,9 @@ describe('cli.actions.revokeDevice', () => {
     // Stub Clerk BAPI fetch (should not be called when no sid).
     const clerkCalls: string[] = []
     __setClerkFetch(
-      vi.fn(async (url: RequestInfo | URL) => {
-        clerkCalls.push(String(url))
-        return new Response('{}', { status: 200 })
+      vi.fn((url: string) => {
+        clerkCalls.push(url)
+        return Promise.resolve(new Response('{}', { status: 200 }))
       }) as unknown as typeof fetch
     )
 
@@ -193,7 +193,7 @@ describe('cli.actions.revokeDevice', () => {
     })
 
     // Stub Clerk BAPI to return success.
-    __setClerkFetch(vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch)
+    __setClerkFetch(vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))) as unknown as typeof fetch)
 
     const result = await t.withIdentity(TEST_IDENTITY).action(api.cli.actions.revokeDevice, {
       machineId: 'mach-sid',
@@ -225,9 +225,9 @@ describe('cli.actions.revokeDevice', () => {
 
     const clerkCalls: string[] = []
     __setClerkFetch(
-      vi.fn(async (url: RequestInfo | URL) => {
-        clerkCalls.push(String(url))
-        return new Response('{}', { status: 200 })
+      vi.fn((url: string) => {
+        clerkCalls.push(url)
+        return Promise.resolve(new Response('{}', { status: 200 }))
       }) as unknown as typeof fetch
     )
 
@@ -250,7 +250,7 @@ describe('cli.actions.revokeDevice', () => {
 
     // Stub Clerk BAPI to return an error.
     __setClerkFetch(
-      vi.fn(async () => new Response('Internal Server Error', { status: 500 })) as unknown as typeof fetch
+      vi.fn(() => Promise.resolve(new Response('Internal Server Error', { status: 500 }))) as unknown as typeof fetch
     )
 
     // Should NOT throw — BAPI failure is best-effort.
