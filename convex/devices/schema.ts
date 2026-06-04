@@ -18,6 +18,10 @@ export const devicesSchema = defineTable({
   revokedAt: v.optional(v.number()),
   /** Clerk OAuth grant id captured at login, used to revoke this machine. */
   grantRef: v.optional(v.string()),
+  /** Clerk session id captured at login (from the OIDC id-token `sid` claim).
+   *  Written to the `revokedSessions` denylist on device revoke so the machine
+   *  is locked out instantly without waiting for token expiry. */
+  sid: v.optional(v.string()),
 })
   .index('byUserAndMachine', ['userId', 'machineId'])
   .index('byMachine', ['machineId'])
