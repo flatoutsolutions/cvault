@@ -305,7 +305,7 @@ describe('runLogin', () => {
     vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(SAMPLE_TOKENS)
 
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const processExitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => {
+    const processExitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: string | number | null): never => {
       throw new Error('process.exit called')
     })
 
