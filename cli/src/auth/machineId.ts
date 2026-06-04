@@ -9,6 +9,7 @@
  * Spec: docs/superpowers/plans/2026-06-03-cli-oauth-pkce.md §Task 11.
  */
 import { randomUUID } from 'node:crypto'
+
 import { readSecret, vaultFile, writeSecret } from '../paths'
 
 /**

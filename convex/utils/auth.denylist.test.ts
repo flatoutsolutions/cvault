@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { api, internal } from '../_generated/api'
 import { vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
 
 /** An identity whose email passes the bootstrap domain gate (flatout.solutions). */
 const banIdentity = {
@@ -52,9 +52,9 @@ describe('authenticated wrappers — revokedUsers denylist', () => {
 
     // softRemove is an authenticatedMutation. It will throw USER_REVOKED
     // before it even gets to check whether the email exists.
-    await expect(asUser.mutation(api.subscriptions.mutations.softRemove, { email: 'any@flatout.solutions' })).rejects.toThrow(
-      /revoked/i
-    )
+    await expect(
+      asUser.mutation(api.subscriptions.mutations.softRemove, { email: 'any@flatout.solutions' })
+    ).rejects.toThrow(/revoked/i)
   })
 
   it('rejects authenticatedAction after ban', async () => {
@@ -84,9 +84,7 @@ describe('authenticated wrappers — revokedUsers denylist', () => {
       name: 'Not Banned',
       email: 'notbanned@flatout.solutions',
     }
-    const result = await t
-      .withIdentity(otherIdentity)
-      .query(api.machineActivity.queries.distinctSessionsForUser, {})
+    const result = await t.withIdentity(otherIdentity).query(api.machineActivity.queries.distinctSessionsForUser, {})
     expect(Array.isArray(result)).toBe(true)
   })
 })

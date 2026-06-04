@@ -140,10 +140,7 @@ export function startCallbackServer(opts: StartCallbackOptions): Promise<Callbac
 
     // Length-check first — `timingSafeEqual` requires equal-length buffers.
     const stateBytes = new TextEncoder().encode(state)
-    if (
-      stateBytes.byteLength !== expectedStateBytes.byteLength ||
-      !timingSafeEqual(stateBytes, expectedStateBytes)
-    ) {
+    if (stateBytes.byteLength !== expectedStateBytes.byteLength || !timingSafeEqual(stateBytes, expectedStateBytes)) {
       res.writeHead(400, { 'content-type': 'text/plain' })
       res.end('state mismatch')
       return

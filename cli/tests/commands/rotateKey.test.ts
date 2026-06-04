@@ -45,7 +45,7 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []
@@ -91,7 +91,7 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []
@@ -132,7 +132,7 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []
@@ -173,7 +173,7 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     await runRotateKey({
@@ -212,7 +212,7 @@ describe('runRotateKey', () => {
       action,
       query,
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []

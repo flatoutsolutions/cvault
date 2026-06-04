@@ -276,16 +276,12 @@ describe('VaultClient', () => {
  */
 describe('VaultClient.withMachineLabel', () => {
   it('exposes the session machineLabel via a getter', () => {
-    const client = new VaultClient(
-      { ...sampleSession, machineLabel: 'office-mac' },
-      TEST_MACHINE_ID,
-      {
-        query: vi.fn() as never,
-        mutation: vi.fn() as never,
-        action: vi.fn() as never,
-        setAuth: vi.fn() as never,
-      }
-    )
+    const client = new VaultClient({ ...sampleSession, machineLabel: 'office-mac' }, TEST_MACHINE_ID, {
+      query: vi.fn() as never,
+      mutation: vi.fn() as never,
+      action: vi.fn() as never,
+      setAuth: vi.fn() as never,
+    })
     expect(client.machineLabel).toBe('office-mac')
   })
 
@@ -300,16 +296,12 @@ describe('VaultClient.withMachineLabel', () => {
   })
 
   it('merges the label into args when present', () => {
-    const client = new VaultClient(
-      { ...sampleSession, machineLabel: 'air-13' },
-      TEST_MACHINE_ID,
-      {
-        query: vi.fn() as never,
-        mutation: vi.fn() as never,
-        action: vi.fn() as never,
-        setAuth: vi.fn() as never,
-      }
-    )
+    const client = new VaultClient({ ...sampleSession, machineLabel: 'air-13' }, TEST_MACHINE_ID, {
+      query: vi.fn() as never,
+      mutation: vi.fn() as never,
+      action: vi.fn() as never,
+      setAuth: vi.fn() as never,
+    })
     const merged = client.withMachineLabel({ slot: 1, force: true })
     expect(merged).toEqual({ slot: 1, force: true, machineLabel: 'air-13' })
   })
@@ -329,16 +321,12 @@ describe('VaultClient.withMachineLabel', () => {
   })
 
   it('does not mutate the original args object', () => {
-    const client = new VaultClient(
-      { ...sampleSession, machineLabel: 'air-13' },
-      TEST_MACHINE_ID,
-      {
-        query: vi.fn() as never,
-        mutation: vi.fn() as never,
-        action: vi.fn() as never,
-        setAuth: vi.fn() as never,
-      }
-    )
+    const client = new VaultClient({ ...sampleSession, machineLabel: 'air-13' }, TEST_MACHINE_ID, {
+      query: vi.fn() as never,
+      mutation: vi.fn() as never,
+      action: vi.fn() as never,
+      setAuth: vi.fn() as never,
+    })
     const args = { slot: 1 }
     client.withMachineLabel(args)
     expect((args as { machineLabel?: string }).machineLabel).toBeUndefined()
@@ -362,16 +350,12 @@ describe('VaultClient.withMeta', () => {
   })
 
   it('injects machineId + machineLabel when label is present', () => {
-    const client = new VaultClient(
-      { ...sampleSession, machineLabel: 'my-laptop' },
-      TEST_MACHINE_ID,
-      {
-        query: vi.fn() as never,
-        mutation: vi.fn() as never,
-        action: vi.fn() as never,
-        setAuth: vi.fn() as never,
-      }
-    )
+    const client = new VaultClient({ ...sampleSession, machineLabel: 'my-laptop' }, TEST_MACHINE_ID, {
+      query: vi.fn() as never,
+      mutation: vi.fn() as never,
+      action: vi.fn() as never,
+      setAuth: vi.fn() as never,
+    })
     const merged = client.withMeta({ slot: 2 })
     expect(merged.machineId).toBe(TEST_MACHINE_ID)
     expect(merged.machineLabel).toBe('my-laptop')

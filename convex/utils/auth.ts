@@ -20,8 +20,8 @@ import {
 } from 'convex/server'
 import { ConvexError, type PropertyValidators } from 'convex/values'
 
-import type { DataModel } from '../_generated/dataModel'
 import { internal } from '../_generated/api'
+import type { DataModel } from '../_generated/dataModel'
 import { action, mutation, query } from '../_generated/server'
 import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from './domainGate'
 import { loadAllowedDomainsFromAction, loadAllowedEmailsFromAction } from './domainGateAction'

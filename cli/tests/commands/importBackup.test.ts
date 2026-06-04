@@ -23,7 +23,7 @@ describe('runImportBackup', () => {
       action,
       query: vi.fn(),
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     await runImportBackup({
@@ -52,7 +52,7 @@ describe('runImportBackup', () => {
       action,
       query: vi.fn(),
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     const logs: string[] = []

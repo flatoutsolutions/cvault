@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from 'vitest'
 
+import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api, internal } from '../_generated/api'
-import { vault, seedUser, TEST_IDENTITY } from '../__tests__/helpers'
 
 describe('devices queries', () => {
   describe('listForUser', () => {

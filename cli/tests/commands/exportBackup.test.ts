@@ -25,7 +25,7 @@ describe('runExportBackup', () => {
       action,
       query: vi.fn(),
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     await runExportBackup({
@@ -47,7 +47,7 @@ describe('runExportBackup', () => {
       action,
       query: vi.fn(),
       withMachineLabel: <A extends object>(a: A) => a,
-      
+
       withMeta: <A extends object>(a: A) => ({ ...a, machineId: 'fake-machine-id' }),
     }
     await expect(

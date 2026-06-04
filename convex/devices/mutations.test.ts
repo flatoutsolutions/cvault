@@ -9,8 +9,8 @@
  */
 import { describe, expect, it } from 'vitest'
 
+import { seedUser, vault } from '../__tests__/helpers'
 import { internal } from '../_generated/api'
-import { vault, seedUser } from '../__tests__/helpers'
 
 describe('devices mutations', () => {
   it('upsert creates then updates lastSeenAt for the same (user, machine)', async () => {

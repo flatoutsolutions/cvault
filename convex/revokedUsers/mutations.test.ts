@@ -7,8 +7,8 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { internal } from '../_generated/api'
 import { vault } from '../__tests__/helpers'
+import { internal } from '../_generated/api'
 
 describe('revokedUsers', () => {
   it('ban inserts a row keyed by externalId; second ban is idempotent', async () => {

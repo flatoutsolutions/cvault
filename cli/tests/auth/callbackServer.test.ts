@@ -9,7 +9,7 @@
  * All tests run under Node (no Bun required) because the server uses
  * node:http internally.
  */
-import { createServer as createNetServer, type AddressInfo } from 'node:net'
+import { type AddressInfo, createServer as createNetServer } from 'node:net'
 
 import { describe, expect, it } from 'vitest'
 
@@ -55,9 +55,9 @@ describe('startCallbackServer', () => {
 
   it('rejects when every candidate port is in use', async () => {
     const blocker = await occupyPort()
-    await expect(
-      startCallbackServer({ expectedState: 'st', timeoutMs: 500, ports: [blocker.port] })
-    ).rejects.toThrow(/in use/i)
+    await expect(startCallbackServer({ expectedState: 'st', timeoutMs: 500, ports: [blocker.port] })).rejects.toThrow(
+      /in use/i
+    )
     await blocker.close()
   })
 
@@ -131,8 +131,6 @@ describe('startCallbackServer', () => {
     await handle.cancel()
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
     // After cancel, fetching should fail (connection refused).
-    await expect(
-      fetch(`http://127.0.0.1:${String(handle.port)}/?code=x&state=st`)
-    ).rejects.toThrow()
+    await expect(fetch(`http://127.0.0.1:${String(handle.port)}/?code=x&state=st`)).rejects.toThrow()
   })
 })

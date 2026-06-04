@@ -19,6 +19,13 @@ import { hostname } from 'node:os'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { startCallbackServer } from '../../src/auth/callbackServer'
+import { loadOrCreateMachineId } from '../../src/auth/machineId'
+import { exchangeCodeForTokens } from '../../src/auth/oauthPkce'
+import { openBrowser } from '../../src/auth/openBrowser'
+import { writeSession } from '../../src/auth/session'
+import { runLogin } from '../../src/commands/login'
+
 // Mock citty BEFORE any import that triggers it (citty not in Node test env).
 // vi.mock is hoisted by vitest so order relative to imports doesn't matter.
 vi.mock('citty', () => ({
@@ -45,13 +52,6 @@ vi.mock('../../src/convex/vaultClient', () => ({
   },
   makeVaultClient: vi.fn(),
 }))
-
-import { startCallbackServer } from '../../src/auth/callbackServer'
-import { loadOrCreateMachineId } from '../../src/auth/machineId'
-import { exchangeCodeForTokens } from '../../src/auth/oauthPkce'
-import { openBrowser } from '../../src/auth/openBrowser'
-import { writeSession } from '../../src/auth/session'
-import { runLogin } from '../../src/commands/login'
 
 vi.mock('../../src/auth/callbackServer', () => ({
   startCallbackServer: vi.fn(),
@@ -121,9 +121,7 @@ describe('runLogin', () => {
     expect(openBrowser).toHaveBeenCalledOnce()
     const browserUrl = vi.mocked(openBrowser).mock.calls[0]?.[0] ?? ''
     const parsed = new URL(browserUrl)
-    expect(parsed.origin + parsed.pathname).toBe(
-      `${SAMPLE_OPTS.frontendApiUrl}/oauth/authorize`
-    )
+    expect(parsed.origin + parsed.pathname).toBe(`${SAMPLE_OPTS.frontendApiUrl}/oauth/authorize`)
     expect(parsed.searchParams.get('client_id')).toBe(SAMPLE_OPTS.clientId)
     expect(parsed.searchParams.get('response_type')).toBe('code')
     expect(parsed.searchParams.get('code_challenge')).toBeTruthy()

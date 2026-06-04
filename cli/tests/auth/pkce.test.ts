@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
+
 import { describe, expect, it } from 'vitest'
+
 import { base64UrlEncode, codeChallengeS256, generateCodeVerifier } from '../../src/auth/pkce'
 
 describe('pkce', () => {
