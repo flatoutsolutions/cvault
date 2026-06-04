@@ -5,6 +5,10 @@
  * not-yet-wired error so revokeDevice surfaces it rather than silently
  * skipping the token revoke. Wire the real BAPI call here once Phase 0 lands.
  */
-export async function revokeOAuthGrant(grantRef: string): Promise<void> {
-  throw new Error(`revokeOAuthGrant not yet implemented (CVLT-3 Phase 0 pending) for grant ${grantRef}`)
+// Not `async` (it has no `await` yet — the real BAPI call replaces the body in
+// Phase 0): returns a rejected promise so awaiting callers see the error.
+export function revokeOAuthGrant(grantRef: string): Promise<void> {
+  return Promise.reject(
+    new Error(`revokeOAuthGrant not yet implemented (CVLT-3 Phase 0 pending) for grant ${grantRef}`)
+  )
 }
