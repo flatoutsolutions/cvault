@@ -64,6 +64,20 @@ describe('/dashboard/machines', () => {
     expect(container.querySelectorAll('[data-slot="machine-row"]').length).toBe(2)
   })
 
+  it('renders the IP hash when present', () => {
+    devicesResult = [
+      {
+        machineId: 'mach-ip',
+        lastSeenAt: Date.now() - 60_000,
+        label: 'air',
+        lastIpHash: 'a1b2c3d4',
+        revokedAt: undefined,
+      },
+    ]
+    render(<MachinesPage />)
+    expect(screen.getByText(/IP: a1b2c3d4/)).toBeTruthy()
+  })
+
   it('renders multiple machines with their labels as primary text', () => {
     const now = Date.now()
     devicesResult = [

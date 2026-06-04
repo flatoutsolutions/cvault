@@ -93,5 +93,31 @@ describe('devices queries', () => {
       expect(rows).toHaveLength(1)
       expect(rows[0]?.revokedAt).toBe(9000)
     })
+
+    it('joins the latest machineActivity ipHash (by device sid) into lastIpHash', async () => {
+      const t = vault()
+      const userId = await seedUser(t)
+      await t.mutation(internal.devices.mutations.upsert, {
+        userId,
+        machineId: 'mach-ip',
+        at: 1000,
+        sid: 'sess_ip',
+      })
+      // IP is captured by /api/cli/sync, keyed by the Clerk sid (not the
+      // device UUID). The newest sid-keyed row carrying an ipHash should win.
+      await t.run(async (ctx) => {
+        await ctx.db.insert('machineActivity', {
+          userId,
+          machineId: 'sess_ip',
+          action: 'pull',
+          at: 2000,
+          ipHash: 'a1b2c3d4',
+        })
+      })
+      const asUser = t.withIdentity(TEST_IDENTITY)
+      const rows = await asUser.query(api.devices.queries.listForUser, {})
+      const row = rows.find((r) => r.machineId === 'mach-ip')
+      expect(row?.lastIpHash).toBe('a1b2c3d4')
+    })
   })
 })

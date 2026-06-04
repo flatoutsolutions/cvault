@@ -92,7 +92,7 @@ export function MachinesPage() {
             <div key={d.machineId} className="flex flex-col">
               <MachineRow
                 machineId={d.machineId}
-                lastIpHash={undefined}
+                lastIpHash={d.lastIpHash}
                 lastSeenAt={d.lastSeenAt}
                 machineLabel={d.label}
                 revokedAt={d.revokedAt}
