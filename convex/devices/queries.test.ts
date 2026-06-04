@@ -12,6 +12,41 @@ import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api, internal } from '../_generated/api'
 
 describe('devices queries', () => {
+  describe('getByMachine', () => {
+    it('returns null when the machine does not exist', async () => {
+      const t = vault()
+      const result = await t.query(internal.devices.queries.getByMachine, { machineId: 'no-such-machine' })
+      expect(result).toBeNull()
+    })
+
+    it('returns the device row with userId and sid after upsert', async () => {
+      const t = vault()
+      const userId = await seedUser(t)
+      await t.mutation(internal.devices.mutations.upsert, {
+        userId,
+        machineId: 'mach-global',
+        at: 1000,
+        sid: 'sess_abc',
+      })
+      const result = await t.query(internal.devices.queries.getByMachine, { machineId: 'mach-global' })
+      expect(result).not.toBeNull()
+      expect(result?.userId).toStrictEqual(userId)
+      expect(result?.sid).toBe('sess_abc')
+    })
+
+    it('returns grantRef when present', async () => {
+      const t = vault()
+      const userId = await seedUser(t)
+      await t.mutation(internal.devices.mutations.upsert, {
+        userId,
+        machineId: 'mach-grant',
+        at: 1000,
+        grantRef: 'grant_xyz',
+      })
+      const result = await t.query(internal.devices.queries.getByMachine, { machineId: 'mach-grant' })
+      expect(result?.grantRef).toBe('grant_xyz')
+    })
+  })
   describe('listForUser', () => {
     it('returns an empty array when no devices exist', async () => {
       const t = vault()

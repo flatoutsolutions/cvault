@@ -36,3 +36,28 @@ export const getForUser = internalQuery({
     return row === null ? null : { _id: row._id, ...(row.grantRef !== undefined ? { grantRef: row.grantRef } : {}) }
   },
 })
+
+/** Global lookup by machineId (globally-unique UUID). Returns enough fields for
+ *  revokeDevice to act without needing to know the userId first. */
+export const getByMachine = internalQuery({
+  args: { machineId: v.string() },
+  returns: v.union(
+    v.object({
+      _id: v.id('devices'),
+      userId: v.id('users'),
+      sid: v.optional(v.string()),
+      grantRef: v.optional(v.string()),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, { machineId }) => {
+    const row = await ctx.db.query('devices').withIndex('byMachine', (q) => q.eq('machineId', machineId)).unique()
+    if (row === null) return null
+    return {
+      _id: row._id,
+      userId: row.userId,
+      ...(row.sid !== undefined ? { sid: row.sid } : {}),
+      ...(row.grantRef !== undefined ? { grantRef: row.grantRef } : {}),
+    }
+  },
+})

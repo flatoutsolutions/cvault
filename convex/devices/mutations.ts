@@ -21,9 +21,10 @@ export const upsert = internalMutation({
     label: v.optional(v.string()),
     at: v.number(),
     grantRef: v.optional(v.string()),
+    sid: v.optional(v.string()),
   },
   returns: v.id('devices'),
-  handler: async (ctx, { userId, machineId, label, at, grantRef }) => {
+  handler: async (ctx, { userId, machineId, label, at, grantRef, sid }) => {
     const existing = await ctx.db
       .query('devices')
       .withIndex('byUserAndMachine', (q) => q.eq('userId', userId).eq('machineId', machineId))
@@ -37,6 +38,7 @@ export const upsert = internalMutation({
         createdAt: at,
         lastSeenAt: at,
         grantRef,
+        ...(sid !== undefined ? { sid } : {}),
       })
     }
 
@@ -44,6 +46,7 @@ export const upsert = internalMutation({
       lastSeenAt: at,
       ...(label !== undefined ? { label } : {}),
       ...(grantRef !== undefined ? { grantRef } : {}),
+      ...(sid !== undefined ? { sid } : {}),
       revokedAt: undefined,
     })
     return existing._id

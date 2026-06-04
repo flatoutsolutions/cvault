@@ -3,14 +3,15 @@
 /**
  * CLI-supporting Convex actions.
  *
- * - `recordLogin({machineId, machineLabel?, grantRef?})` — called by the CLI
+ * - `recordLogin({machineId, machineLabel?, grantRef?, sid?})` — called by the CLI
  *   immediately after login completes. Upserts the device row and records a
  *   `login` machineActivity row.
  *
  * - `revokeDevice({machineId})` — called from `/dashboard/machines` when the
- *   user clicks "Revoke". Looks up the device, revokes the Clerk OAuth grant
- *   (once Phase 0 wires the BAPI call), marks the device revoked, and records
- *   a `remove` activity row.
+ *   user clicks "Revoke". Looks up the device globally, denylists its sid in
+ *   `revokedSessions` (instant lockout), best-effort revokes the Clerk session
+ *   via BAPI (kills refresh token), marks the device revoked, and records a
+ *   `remove` activity row.
  *
  * Spec: docs/superpowers/specs/2026-06-03-cli-oauth-pkce-design.md §4–5.
  */
@@ -18,7 +19,7 @@ import { ConvexError, v } from 'convex/values'
 
 import { internal } from '../_generated/api'
 import { authenticatedAction, getIdentity } from '../utils/auth'
-import { revokeOAuthGrant } from './oauthRevoke'
+import { revokeClerkSession } from './clerk'
 
 /**
  * `recordLogin` — called by the CLI immediately after a successful OAuth
@@ -31,9 +32,10 @@ export const recordLogin = authenticatedAction({
     machineId: v.string(),
     machineLabel: v.optional(v.string()),
     grantRef: v.optional(v.string()),
+    sid: v.optional(v.string()),
   },
   returns: v.object({ recorded: v.boolean() }),
-  handler: async (ctx, { machineId, machineLabel, grantRef }): Promise<{ recorded: boolean }> => {
+  handler: async (ctx, { machineId, machineLabel, grantRef, sid }): Promise<{ recorded: boolean }> => {
     const identity = getIdentity(ctx)
     const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, { externalId: identity.subject })
     if (userId === null) {
@@ -42,7 +44,14 @@ export const recordLogin = authenticatedAction({
       return { recorded: false }
     }
     const at = Date.now()
-    await ctx.runMutation(internal.devices.mutations.upsert, { userId, machineId, label: machineLabel, at, grantRef })
+    await ctx.runMutation(internal.devices.mutations.upsert, {
+      userId,
+      machineId,
+      label: machineLabel,
+      at,
+      grantRef,
+      ...(sid !== undefined ? { sid } : {}),
+    })
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId,
       machineId,
@@ -56,31 +65,53 @@ export const recordLogin = authenticatedAction({
 
 /**
  * `revokeDevice` — called from the dashboard Machines view. Resolves the
- * device row, revokes the Clerk OAuth grant (Phase-0-deferred — see
- * `oauthRevoke.ts`), marks the device revoked, and records a `remove`
- * activity row.
+ * device row globally (any user can revoke any machine — shared vault),
+ * denylists the session id in `revokedSessions` for instant lockout,
+ * best-effort revokes the Clerk session via BAPI, marks the device revoked,
+ * and records a `remove` activity row.
  */
 export const revokeDevice = authenticatedAction({
   args: { machineId: v.string() },
   returns: v.object({ revoked: v.boolean() }),
   handler: async (ctx, { machineId }): Promise<{ revoked: boolean }> => {
-    const identity = getIdentity(ctx)
-    const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, { externalId: identity.subject })
-    if (userId === null) throw new ConvexError({ code: 'NOT_FOUND', message: 'User not found' })
-
-    const device = await ctx.runQuery(internal.devices.queries.getForUser, { userId, machineId })
+    // Resolve device globally — the byMachine index makes machineId a
+    // vault-wide unique key so any authenticated user can revoke any machine.
+    const device = await ctx.runQuery(internal.devices.queries.getByMachine, { machineId })
     if (device === null) throw new ConvexError({ code: 'NOT_FOUND', message: 'Machine not found' })
 
-    // Revoke the Clerk OAuth grant so this machine can't renew. Exact endpoint
-    // confirmed in Phase 0 Task 0 Step 5; implemented in convex/cli/oauthRevoke.ts.
-    if (device.grantRef !== undefined) {
-      await revokeOAuthGrant(device.grantRef)
+    const at = Date.now()
+
+    // Instant Convex-level enforcement: denylist the Clerk session id.
+    if (device.sid !== undefined) {
+      await ctx.runMutation(internal.revokedSessions.mutations.revoke, {
+        sid: device.sid,
+        machineId,
+        at,
+      })
+
+      // Defense-in-depth: kill the Clerk refresh token via BAPI so the machine
+      // cannot renew the OAuth token. Best-effort — the denylist already
+      // enforces lockout even if this call fails.
+      try {
+        const r = await revokeClerkSession(device.sid)
+        if (!r.ok) {
+          console.warn(`[revokeDevice] BAPI session revoke non-OK (${String(r.status)}): ${r.body}`)
+        }
+      } catch (e) {
+        console.warn('[revokeDevice] BAPI session revoke threw (ignored):', e)
+      }
     }
 
-    const at = Date.now()
-    await ctx.runMutation(internal.devices.mutations.markRevoked, { userId, machineId, at })
+    // Mark the device row revoked.
+    await ctx.runMutation(internal.devices.mutations.markRevoked, {
+      userId: device.userId,
+      machineId,
+      at,
+    })
+
+    // Audit row.
     await ctx.runMutation(internal.machineActivity.mutations.record, {
-      userId,
+      userId: device.userId,
       machineId,
       action: 'remove',
       at,
