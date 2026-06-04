@@ -66,7 +66,9 @@ vi.mock('../../src/auth/oauthPkce', async () => {
   return {
     ...actual,
     exchangeCodeForTokens: vi.fn(),
-    decodeIdTokenSid: vi.fn((token: string) => (actual as typeof import('../../src/auth/oauthPkce')).decodeIdTokenSid(token)),
+    decodeIdTokenSid: vi.fn((token: string) =>
+      (actual as typeof import('../../src/auth/oauthPkce')).decodeIdTokenSid(token)
+    ),
   }
 })
 

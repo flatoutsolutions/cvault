@@ -51,7 +51,10 @@ export const getByMachine = internalQuery({
     v.null()
   ),
   handler: async (ctx, { machineId }) => {
-    const row = await ctx.db.query('devices').withIndex('byMachine', (q) => q.eq('machineId', machineId)).unique()
+    const row = await ctx.db
+      .query('devices')
+      .withIndex('byMachine', (q) => q.eq('machineId', machineId))
+      .unique()
     if (row === null) return null
     return {
       _id: row._id,

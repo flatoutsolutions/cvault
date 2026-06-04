@@ -249,7 +249,9 @@ describe('cli.actions.revokeDevice', () => {
     })
 
     // Stub Clerk BAPI to return an error.
-    __setClerkFetch(vi.fn(async () => new Response('Internal Server Error', { status: 500 })) as unknown as typeof fetch)
+    __setClerkFetch(
+      vi.fn(async () => new Response('Internal Server Error', { status: 500 })) as unknown as typeof fetch
+    )
 
     // Should NOT throw — BAPI failure is best-effort.
     const result = await t.withIdentity(TEST_IDENTITY).action(api.cli.actions.revokeDevice, {

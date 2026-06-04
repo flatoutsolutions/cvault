@@ -7,7 +7,6 @@
  *  - identities with no sid are unaffected
  *  - identities with a non-revoked sid are unaffected
  */
-import { ConvexError } from 'convex/values'
 import { describe, expect, it } from 'vitest'
 
 import { vault } from '../__tests__/helpers'
