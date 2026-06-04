@@ -24,7 +24,7 @@ import { defineCommand } from 'citty'
 import { api } from '../../../convex/_generated/api'
 import { startCallbackServer } from '../auth/callbackServer'
 import { loadOrCreateMachineId } from '../auth/machineId'
-import { buildAuthorizeUrl, exchangeCodeForTokens } from '../auth/oauthPkce'
+import { buildAuthorizeUrl, decodeIdTokenSid, exchangeCodeForTokens } from '../auth/oauthPkce'
 import { openBrowser } from '../auth/openBrowser'
 import { codeChallengeS256, generateCodeVerifier } from '../auth/pkce'
 import { type SessionState, writeSession } from '../auth/session'
@@ -124,8 +124,13 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
   // can't be written (e.g. user's Clerk webhook hasn't fired yet to create the
   // users row).
   try {
+    const sid = tokens.idToken !== undefined ? decodeIdTokenSid(tokens.idToken) : undefined
     const client = new VaultClient(session, machineId)
-    await client.action(api.cli.actions.recordLogin, { machineId, machineLabel })
+    await client.action(api.cli.actions.recordLogin, {
+      machineId,
+      machineLabel,
+      ...(sid !== undefined ? { sid } : {}),
+    })
   } catch (err) {
     // Check for the domain-gate error (EMAIL_DOMAIN_NOT_ALLOWED). The server
     // rejects at the recordLogin call when the user's email domain is not on

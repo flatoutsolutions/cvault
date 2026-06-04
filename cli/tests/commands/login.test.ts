@@ -21,7 +21,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { startCallbackServer } from '../../src/auth/callbackServer'
 import { loadOrCreateMachineId } from '../../src/auth/machineId'
-import { exchangeCodeForTokens } from '../../src/auth/oauthPkce'
+import { decodeIdTokenSid, exchangeCodeForTokens } from '../../src/auth/oauthPkce'
 import { openBrowser } from '../../src/auth/openBrowser'
 import { writeSession } from '../../src/auth/session'
 import { runLogin } from '../../src/commands/login'
@@ -66,6 +66,7 @@ vi.mock('../../src/auth/oauthPkce', async () => {
   return {
     ...actual,
     exchangeCodeForTokens: vi.fn(),
+    decodeIdTokenSid: vi.fn((token: string) => (actual as typeof import('../../src/auth/oauthPkce')).decodeIdTokenSid(token)),
   }
 })
 
@@ -85,12 +86,18 @@ vi.mock('../../src/auth/pkce', () => ({
   base64UrlEncode: vi.fn(),
 }))
 
+// A valid minimal JWT with a sid claim in the payload.
+function makeIdToken(sid: string): string {
+  const payload = Buffer.from(JSON.stringify({ sid, exp: Math.floor(Date.now() / 1000) + 900 })).toString('base64url')
+  return `header.${payload}.sig`
+}
+
 /** Sample OAuth token response */
 const SAMPLE_TOKENS = {
   accessToken: 'access-token-new',
   accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
   refreshToken: 'refresh-token-new',
-  idToken: 'id-token-new',
+  idToken: makeIdToken('sess_sample_sid'),
 }
 
 const SAMPLE_OPTS = {
@@ -240,6 +247,37 @@ describe('runLogin', () => {
     // writeSession must have been called at least once, with the label baked in.
     expect(callOrder).toContain('writeSession')
     expect(writeSession).toHaveBeenCalledWith(expect.objectContaining({ machineLabel: 'order-test' }))
+  })
+
+  it('calls decodeIdTokenSid with the idToken from the exchange response', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    const idToken = makeIdToken('sess_expected_sid')
+    const tokensWithSid = { ...SAMPLE_TOKENS, idToken }
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(tokensWithSid)
+    vi.mocked(decodeIdTokenSid).mockClear()
+
+    await runLogin(SAMPLE_OPTS)
+
+    // decodeIdTokenSid must be called with the idToken returned by the exchange.
+    expect(decodeIdTokenSid).toHaveBeenCalledWith(idToken)
+    // The real implementation (passed through the mock) returns the sid.
+    expect(vi.mocked(decodeIdTokenSid).mock.results[0]?.value).toBe('sess_expected_sid')
+  })
+
+  it('does not call decodeIdTokenSid when idToken is absent', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    const tokensWithoutIdToken = {
+      accessToken: 'access-token-new',
+      accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
+      refreshToken: 'refresh-token-new',
+      // no idToken
+    }
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(tokensWithoutIdToken)
+    vi.mocked(decodeIdTokenSid).mockClear()
+
+    await runLogin(SAMPLE_OPTS)
+
+    expect(decodeIdTokenSid).not.toHaveBeenCalled()
   })
 
   it('includes the machineId in the v2 session write (via loadOrCreateMachineId)', async () => {

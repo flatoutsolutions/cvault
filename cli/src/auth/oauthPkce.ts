@@ -37,6 +37,21 @@ export class OAuthRefreshFailedError extends Error {
   }
 }
 
+/** Decode the `sid` claim from a JWT id-token payload (no signature
+ *  verification — the server re-verifies). Returns `undefined` on any parse
+ *  failure so callers can treat a missing/malformed token gracefully. */
+export function decodeIdTokenSid(idToken: string): string | undefined {
+  try {
+    const part = idToken.split('.')[1] ?? ''
+    const json = Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
+    const parsed = JSON.parse(json) as { sid?: unknown }
+    if (typeof parsed.sid === 'string') return parsed.sid
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Decode a JWT `exp` claim (no signature verification; the server re-verifies). */
 export function decodeJwtExp(jwt: string): number {
   const part = jwt.split('.')[1] ?? ''

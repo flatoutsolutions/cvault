@@ -4,6 +4,7 @@ import {
   OAuthRefreshFailedError,
   OAuthTokenExchangeError,
   buildAuthorizeUrl,
+  decodeIdTokenSid,
   exchangeCodeForTokens,
   refreshAccessToken,
 } from '../../src/auth/oauthPkce'
@@ -92,6 +93,38 @@ describe('refreshAccessToken', () => {
     await expect(
       refreshAccessToken({ frontendApiUrl: FRONTEND, clientId: 'c', refreshToken: 'dead' })
     ).rejects.toBeInstanceOf(OAuthRefreshFailedError)
+  })
+})
+
+describe('decodeIdTokenSid', () => {
+  it('extracts sid from a valid JWT payload', () => {
+    const payload = Buffer.from(JSON.stringify({ sid: 'sess_abc123', exp: 9999 })).toString('base64url')
+    const token = `header.${payload}.sig`
+    expect(decodeIdTokenSid(token)).toBe('sess_abc123')
+  })
+
+  it('returns undefined when sid is absent from the payload', () => {
+    const payload = Buffer.from(JSON.stringify({ sub: 'user_x', exp: 9999 })).toString('base64url')
+    const token = `header.${payload}.sig`
+    expect(decodeIdTokenSid(token)).toBeUndefined()
+  })
+
+  it('returns undefined when sid is not a string', () => {
+    const payload = Buffer.from(JSON.stringify({ sid: 42, exp: 9999 })).toString('base64url')
+    const token = `header.${payload}.sig`
+    expect(decodeIdTokenSid(token)).toBeUndefined()
+  })
+
+  it('returns undefined for a malformed JWT (not enough parts)', () => {
+    expect(decodeIdTokenSid('not.a.jwt')).toBeUndefined()
+  })
+
+  it('returns undefined for an empty string', () => {
+    expect(decodeIdTokenSid('')).toBeUndefined()
+  })
+
+  it('returns undefined when the payload is invalid base64', () => {
+    expect(decodeIdTokenSid('header.!!!invalid!!!.sig')).toBeUndefined()
   })
 })
 
