@@ -1,0 +1,165 @@
+/**
+ * CVLT-1 — "who is using which subscription".
+ *
+ * Derives the current user↔subscription mapping from data the vault already
+ * records, so no schema change is needed:
+ *
+ *   - A machine's CURRENT subscription is the most-recent `machineActivity`
+ *     row for that machine whose action ACTIVATES a sub (`switch` / `add` /
+ *     `pull`) and carries a `subscriptionId`. Non-activation rows (`refresh`,
+ *     `rename`, `remove`, …) and whole-bundle pulls (no `subscriptionId`)
+ *     don't change which sub a machine is on, so they're skipped.
+ *   - A machine is attributed to a person via its `devices` row (owner).
+ *     Revoked devices are excluded (that machine is signed out). Legacy
+ *     machines with no device row fall back to the activity row's actor.
+ *
+ * Shared vault — no `userId` scoping (see convex/utils/users.ts:3-7), matching
+ * every other dashboard read. The query returns one entry per live
+ * subscription with the distinct people currently on it, so the dashboard can
+ * render an avatar stack per card.
+ */
+import { v } from 'convex/values'
+
+import type { Doc, Id } from '../_generated/dataModel'
+import { authenticatedQuery } from '../utils/auth'
+
+/**
+ * Actions that mean "this machine is now on this sub". Mirrors the CLI's
+ * activation surface: `cvault switch` (records `pull` with a subscriptionId
+ * via pullForSwitch), `cvault add`, and direct switches. A `pull` WITHOUT a
+ * subscriptionId is a whole-bundle sync and is filtered out by the
+ * subscriptionId check below, not here.
+ */
+const ACTIVATION_ACTIONS: ReadonlySet<string> = new Set(['switch', 'add', 'pull'])
+
+/**
+ * Cap on the number of recent activity rows scanned to resolve current
+ * assignments. Matches `machineActivity.queries.distinctSessionsForUser` — the
+ * dashboard summarises machines, not raw events, so the most-recent window is
+ * sufficient for the deployment size.
+ */
+const RECENT_ACTIVITY_LIMIT = 1000
+
+const machineValidator = v.object({
+  machineId: v.string(),
+  label: v.optional(v.string()),
+  lastUsedAt: v.number(),
+})
+
+const userOnSubscriptionValidator = v.object({
+  userId: v.id('users'),
+  name: v.string(),
+  email: v.string(),
+  imageUrl: v.optional(v.string()),
+  machines: v.array(machineValidator),
+  /** Max `lastUsedAt` across this person's machines on the sub. */
+  lastUsedAt: v.number(),
+})
+
+const subscriptionAssignmentValidator = v.object({
+  subscriptionId: v.id('subscriptions'),
+  users: v.array(userOnSubscriptionValidator),
+})
+
+type MachineEntry = { machineId: string; label?: string; lastUsedAt: number }
+type UserAggregate = {
+  userId: Id<'users'>
+  name: string
+  email: string
+  imageUrl?: string
+  machines: MachineEntry[]
+  lastUsedAt: number
+}
+
+/**
+ * The current activation for a machine: which sub it's on, when, and the
+ * actor of that activation (used to attribute legacy machines with no device
+ * row).
+ */
+type CurrentAssignment = { subscriptionId: Id<'subscriptions'>; at: number; actorUserId: Id<'users'> }
+
+export const listAssignments = authenticatedQuery({
+  args: {},
+  returns: v.array(subscriptionAssignmentValidator),
+  handler: async (ctx) => {
+    const liveSubs = (await ctx.db.query('subscriptions').collect())
+      .filter((s) => s.removedAt === undefined)
+      .sort((a, b) => a._creationTime - b._creationTime)
+
+    // Resolve each machine's current activation by walking recent activity
+    // newest-first; the first activation row per machine wins.
+    const recent = await ctx.db.query('machineActivity').withIndex('byAt').order('desc').take(RECENT_ACTIVITY_LIMIT)
+    const currentByMachine = new Map<string, CurrentAssignment>()
+    for (const row of recent) {
+      if (!row.machineId) continue
+      if (currentByMachine.has(row.machineId)) continue
+      if (!ACTIVATION_ACTIONS.has(row.action)) continue
+      if (row.subscriptionId === undefined) continue
+      currentByMachine.set(row.machineId, {
+        subscriptionId: row.subscriptionId,
+        at: row.at,
+        actorUserId: row.userId,
+      })
+    }
+
+    const deviceByMachine = new Map<string, Doc<'devices'>>()
+    for (const d of await ctx.db.query('devices').collect()) {
+      deviceByMachine.set(d.machineId, d)
+    }
+
+    const userById = new Map<Id<'users'>, Doc<'users'>>()
+    for (const u of await ctx.db.query('users').collect()) {
+      userById.set(u._id, u)
+    }
+
+    // subscriptionId -> (ownerUserId -> aggregate)
+    const bySub = new Map<Id<'subscriptions'>, Map<Id<'users'>, UserAggregate>>()
+    for (const [machineId, current] of currentByMachine) {
+      const device = deviceByMachine.get(machineId)
+      // A revoked machine is signed out — it's no longer "using" anything.
+      if (device !== undefined && device.revokedAt !== undefined) continue
+
+      const ownerUserId = device?.userId ?? current.actorUserId
+      const user = userById.get(ownerUserId)
+      if (user === undefined) continue // orphan attribution — defensive.
+
+      let userMap = bySub.get(current.subscriptionId)
+      if (userMap === undefined) {
+        userMap = new Map()
+        bySub.set(current.subscriptionId, userMap)
+      }
+      let agg = userMap.get(ownerUserId)
+      if (agg === undefined) {
+        agg = {
+          userId: ownerUserId,
+          name: user.name,
+          email: user.primaryEmail,
+          machines: [],
+          lastUsedAt: 0,
+          ...(user.imageUrl !== undefined ? { imageUrl: user.imageUrl } : {}),
+        }
+        userMap.set(ownerUserId, agg)
+      }
+      agg.machines.push({
+        machineId,
+        lastUsedAt: current.at,
+        ...(device?.label !== undefined ? { label: device.label } : {}),
+      })
+      if (current.at > agg.lastUsedAt) agg.lastUsedAt = current.at
+    }
+
+    return liveSubs.map((sub) => {
+      const userMap = bySub.get(sub._id)
+      const users =
+        userMap === undefined
+          ? []
+          : Array.from(userMap.values())
+              .map((u) => ({
+                ...u,
+                machines: [...u.machines].sort((a, b) => b.lastUsedAt - a.lastUsedAt),
+              }))
+              .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+      return { subscriptionId: sub._id, users }
+    })
+  },
+})

@@ -30,6 +30,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 import type { api } from '../../../../convex/_generated/api'
+import { AvatarStack } from './AvatarStack'
+import type { SubscriptionUser } from './AvatarStack'
 import { ExpiryCountdown } from './ExpiryCountdown'
 import { ReloginBadge } from './ReloginBadge'
 import { UsageBar, formatRelativeAgo } from './UsageBar'
@@ -49,6 +51,8 @@ export type SubscriptionCardProps = {
   /** When set, the most recent Force Refresh attempt failed with this message. */
   forceRefreshError?: string
   removing: boolean
+  /** People currently using this subscription, for the footer avatar stack. */
+  users: SubscriptionUser[]
 }
 
 export function SubscriptionCard({
@@ -59,6 +63,7 @@ export function SubscriptionCard({
   forceRefreshing,
   forceRefreshError,
   removing: _removing,
+  users,
 }: SubscriptionCardProps) {
   // `onRemove` / `removing` retained on the prop interface so the caller
   // wiring stays intact for the day we gate delete by ownership/admin
@@ -117,34 +122,38 @@ export function SubscriptionCard({
           </span>
         </div>
 
-        <div className="border-border flex flex-wrap items-center gap-2 border-t pt-4">
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            disabled={forceRefreshing}
-            onClick={() => {
-              onForceRefresh({ email: sub.email })
-            }}
-          >
-            {forceRefreshing ? 'Refreshing…' : 'Force Refresh'}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setLabelDraft(sub.label ?? '')
-              setRenameOpen(true)
-            }}
-          >
-            Rename
-          </Button>
-          {/* Remove button intentionally hidden from the UI: shared-vault
-              semantics let any authed user delete any sub, which is too
-              destructive a footgun without an admin role. CLI `cvault
-              remove` still works for the original adder. Re-enable here
-              once admin/owner gating lands on the server. */}
+        <div className="border-border flex flex-wrap items-center justify-between gap-2 border-t pt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              disabled={forceRefreshing}
+              onClick={() => {
+                onForceRefresh({ email: sub.email })
+              }}
+            >
+              {forceRefreshing ? 'Refreshing…' : 'Force Refresh'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setLabelDraft(sub.label ?? '')
+                setRenameOpen(true)
+              }}
+            >
+              Rename
+            </Button>
+            {/* Remove button intentionally hidden from the UI: shared-vault
+                semantics let any authed user delete any sub, which is too
+                destructive a footgun without an admin role. CLI `cvault
+                remove` still works for the original adder. Re-enable here
+                once admin/owner gating lands on the server. */}
+          </div>
+          {/* Who's using this sub — overlapping avatars, click to drill in. */}
+          <AvatarStack users={users} />
         </div>
         {forceRefreshError !== undefined && (
           <p data-slot="force-refresh-error" className="text-destructive text-xs" role="alert">
