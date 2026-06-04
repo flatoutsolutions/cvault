@@ -14,6 +14,7 @@ import { type AddressInfo, createServer as createNetServer } from 'node:net'
 import { describe, expect, it } from 'vitest'
 
 import { OAUTH_REDIRECT_PORTS, startCallbackServer } from '../../src/auth/callbackServer'
+import { OAuthAuthorizationDeniedError } from '../../src/auth/oauthPkce'
 
 /** Occupy an OS-assigned loopback port; returns the port + a closer. */
 async function occupyPort(): Promise<{ port: number; close: () => Promise<void> }> {
@@ -102,12 +103,13 @@ describe('startCallbackServer', () => {
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
   })
 
-  it('rejects with authorization error when ?error param is present', async () => {
+  it('rejects with OAuthAuthorizationDeniedError when ?error param is present', async () => {
     const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 5_000 })
     const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?error=access_denied`)
     expect(resp.status).toBe(200)
     const body = await resp.text()
     expect(body).toContain('You can close this tab')
+    await expect(handle.result).rejects.toBeInstanceOf(OAuthAuthorizationDeniedError)
     await expect(handle.result).rejects.toThrow(/access_denied/)
   })
 

@@ -24,6 +24,8 @@ import { timingSafeEqual } from 'node:crypto'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
+import { OAuthAuthorizationDeniedError } from './oauthPkce'
+
 /**
  * Loopback ports the CLI binds for the OAuth redirect, in preference order.
  * Each corresponding `http://127.0.0.1:<port>/` MUST be registered as a
@@ -124,7 +126,7 @@ export function startCallbackServer(opts: StartCallbackOptions): Promise<Callbac
 
     const error = url.searchParams.get('error')
     if (error !== null) {
-      rejectResult(new Error(`Authorization denied: ${error}`))
+      rejectResult(new OAuthAuthorizationDeniedError(error))
       htmlResponse(res, 'You can close this tab.')
       setTimeout(() => server.close(), 50)
       return

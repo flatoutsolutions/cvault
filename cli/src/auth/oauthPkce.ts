@@ -6,12 +6,6 @@ export function cliUserAgent(): string {
   return `cvault-cli/${CLI_VERSION} (${process.platform}-${process.arch})`
 }
 
-export class OAuthStateMismatchError extends Error {
-  override readonly name = 'OAuthStateMismatchError'
-  constructor() {
-    super('OAuth state mismatch — the browser redirect did not match this login attempt. Re-run `cvault login`.')
-  }
-}
 export class OAuthAuthorizationDeniedError extends Error {
   override readonly name = 'OAuthAuthorizationDeniedError'
   constructor(reason: string) {

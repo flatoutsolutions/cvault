@@ -25,18 +25,6 @@ export const listForUser = authenticatedQuery({
   },
 })
 
-export const getForUser = internalQuery({
-  args: { userId: v.id('users'), machineId: v.string() },
-  returns: v.union(v.object({ _id: v.id('devices'), grantRef: v.optional(v.string()) }), v.null()),
-  handler: async (ctx, { userId, machineId }) => {
-    const row = await ctx.db
-      .query('devices')
-      .withIndex('byUserAndMachine', (q) => q.eq('userId', userId).eq('machineId', machineId))
-      .unique()
-    return row === null ? null : { _id: row._id, ...(row.grantRef !== undefined ? { grantRef: row.grantRef } : {}) }
-  },
-})
-
 /** Global lookup by machineId (globally-unique UUID). Returns enough fields for
  *  revokeDevice to act without needing to know the userId first. */
 export const getByMachine = internalQuery({
