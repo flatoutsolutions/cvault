@@ -20,8 +20,10 @@ import { randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
 
 import { defineCommand } from 'citty'
+import { ConvexError } from 'convex/values'
 
 import { api } from '../../../convex/_generated/api'
+import { DOMAIN_REJECTION_ERROR_CODE } from '../../../convex/utils/domainGate'
 import { startCallbackServer } from '../auth/callbackServer'
 import { loadOrCreateMachineId } from '../auth/machineId'
 import { buildAuthorizeUrl, decodeIdTokenSid, exchangeCodeForTokens } from '../auth/oauthPkce'
@@ -135,12 +137,16 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
     // Check for the domain-gate error (EMAIL_DOMAIN_NOT_ALLOWED). The server
     // rejects at the recordLogin call when the user's email domain is not on
     // the allowlist. Surface a friendly hint.
-    const msg = err instanceof Error ? err.message : String(err)
-    if (/DOMAIN_REJECTION_ERROR_CODE|email.*domain.*not.*allow|domain.*not.*allow/i.test(msg)) {
+    if (
+      err instanceof ConvexError &&
+      (err.data as { code?: string } | undefined)?.code === DOMAIN_REJECTION_ERROR_CODE
+    ) {
+      const msg = (err.data as { message?: string } | undefined)?.message ?? err.message
       console.error(`Error: ${msg}`)
       console.error('Sign out at the cvault dashboard and try again with an allowlisted email.')
       process.exit(1)
     }
+    const msg = err instanceof Error ? err.message : String(err)
     console.warn('Login succeeded but device-registration audit failed:', msg)
   }
 

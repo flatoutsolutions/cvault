@@ -17,8 +17,10 @@
  */
 import { hostname } from 'node:os'
 
+import { ConvexError } from 'convex/values'
 import { describe, expect, it, vi } from 'vitest'
 
+import { DOMAIN_REJECTION_ERROR_CODE } from '../../../convex/utils/domainGate'
 import { startCallbackServer } from '../../src/auth/callbackServer'
 import { loadOrCreateMachineId } from '../../src/auth/machineId'
 import { decodeIdTokenSid, exchangeCodeForTokens } from '../../src/auth/oauthPkce'
@@ -43,10 +45,20 @@ vi.mock('../../../convex/_generated/api', () => ({
   },
 }))
 
+// Mutable action override used by the domain-rejection test.
+let vaultClientActionOverride: (() => Promise<unknown>) | undefined
+
 // Mock VaultClient so recordLogin audit does not hit Convex
 vi.mock('../../src/convex/vaultClient', () => ({
   VaultClient: class {
-    action = vi.fn().mockResolvedValue({ recorded: true })
+    action = vi.fn().mockImplementation((..._args: unknown[]) => {
+      if (vaultClientActionOverride !== undefined) {
+        const override = vaultClientActionOverride
+        vaultClientActionOverride = undefined
+        return override()
+      }
+      return Promise.resolve({ recorded: true })
+    })
     withMeta = vi.fn((args: Record<string, unknown>) => args)
     machineLabel: string | undefined = undefined
   },
@@ -280,6 +292,39 @@ describe('runLogin', () => {
     await runLogin(SAMPLE_OPTS)
 
     expect(decodeIdTokenSid).not.toHaveBeenCalled()
+  })
+
+  it('exits with allowlist hint when recordLogin throws a ConvexError with DOMAIN_REJECTION_ERROR_CODE', async () => {
+    // Set the override so the next VaultClient.action call rejects with the domain error.
+    vaultClientActionOverride = () =>
+      Promise.reject(
+        new ConvexError({ code: DOMAIN_REJECTION_ERROR_CODE, message: 'Your email domain is not allowed.' })
+      )
+
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(SAMPLE_TOKENS)
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const processExitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: number) => {
+      throw new Error('process.exit called')
+    })
+
+    let caughtMessage: string | undefined
+    try {
+      await runLogin(SAMPLE_OPTS)
+    } catch (e) {
+      caughtMessage = (e as Error).message
+    } finally {
+      vaultClientActionOverride = undefined
+    }
+
+    // process.exit throws in our mock — that is the expected path.
+    expect(caughtMessage).toBe('process.exit called')
+    expect(processExitSpy).toHaveBeenCalledWith(1)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringMatching(/allowlist/i))
+
+    consoleErrorSpy.mockRestore()
+    processExitSpy.mockRestore()
   })
 
   it('includes the machineId in the v2 session write (via loadOrCreateMachineId)', async () => {
