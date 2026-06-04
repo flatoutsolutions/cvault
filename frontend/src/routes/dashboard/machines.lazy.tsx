@@ -69,9 +69,9 @@ export function MachinesPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Machines</h1>
         <p className="text-muted-foreground text-sm">
-          Each row is a registered machine that has used the cvault CLI. Revoke a machine to invalidate its credentials
-          — the next CLI call from that machine will require{' '}
-          <code className="bg-muted rounded px-1 py-0.5 font-mono">cvault login</code>.
+          Each row is a registered machine that has used the cvault CLI. Revoke a machine to sign it out — it must run{' '}
+          <code className="bg-muted rounded px-1 py-0.5 font-mono">cvault login</code> again. Takes effect on the
+          machine&apos;s next request.
         </p>
       </div>
 
