@@ -15,8 +15,19 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { SubscriptionUser } from '../AvatarStack'
 import type { SubscriptionMeta } from '../SubscriptionCard'
 import { SubscriptionCard } from '../SubscriptionCard'
+
+function makeUser(name: string, email: string): SubscriptionUser {
+  return {
+    userId: email as unknown as SubscriptionUser['userId'],
+    name,
+    email,
+    machines: [{ machineId: 'mac-1', label: 'Laptop', lastUsedAt: Date.now() - 60_000 }],
+    lastUsedAt: Date.now() - 60_000,
+  }
+}
 
 function makeSub(overrides: Partial<SubscriptionMeta> = {}): SubscriptionMeta {
   const now = Date.now()
@@ -57,6 +68,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     expect(screen.getByText('alice@example.com')).toBeTruthy()
@@ -73,6 +85,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     expect(screen.getByText('Personal Max')).toBeTruthy()
@@ -91,6 +104,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     const bars = container.querySelectorAll('[data-slot="usage-bar"]')
@@ -108,6 +122,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     expect(screen.getByText(/relogin required/i)).toBeTruthy()
@@ -126,6 +141,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     const explainer = screen.getByTestId('relogin-explainer')
@@ -143,6 +159,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     expect(screen.queryByTestId('relogin-explainer')).toBeNull()
@@ -158,6 +175,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     fireEvent.click(screen.getByRole('button', { name: /force refresh/i }))
@@ -173,6 +191,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={true}
         removing={false}
+        users={[]}
       />
     )
     const btn = screen.getByRole('button', { name: /refreshing/i })
@@ -189,10 +208,45 @@ describe('SubscriptionCard', () => {
         onRemove={onRemove}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     expect(screen.queryByRole('button', { name: /remove/i })).toBeNull()
     expect(onRemove).not.toHaveBeenCalled()
+  })
+
+  it('renders the AvatarStack empty state alongside the actions when no one is using the sub', () => {
+    render(
+      <SubscriptionCard
+        sub={makeSub()}
+        onForceRefresh={vi.fn()}
+        onRename={vi.fn()}
+        onRemove={vi.fn()}
+        forceRefreshing={false}
+        removing={false}
+        users={[]}
+      />
+    )
+    expect(screen.getByText(/no machines/i)).toBeTruthy()
+    // The footer actions stay put on the left.
+    expect(screen.getByRole('button', { name: /force refresh/i })).toBeTruthy()
+  })
+
+  it('renders an avatar for each person currently using the sub', () => {
+    render(
+      <SubscriptionCard
+        sub={makeSub()}
+        onForceRefresh={vi.fn()}
+        onRename={vi.fn()}
+        onRemove={vi.fn()}
+        forceRefreshing={false}
+        removing={false}
+        users={[makeUser('Alice Tester', 'alice@example.com')]}
+      />
+    )
+    // Initials fallback proves the AvatarStack rendered the person.
+    expect(screen.getByText('AT')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /people using/i })).toBeTruthy()
   })
 
   it('opens the rename dialog when Rename is clicked and submits the new label', () => {
@@ -205,6 +259,7 @@ describe('SubscriptionCard', () => {
         onRemove={vi.fn()}
         forceRefreshing={false}
         removing={false}
+        users={[]}
       />
     )
     fireEvent.click(screen.getByRole('button', { name: /rename/i }))

@@ -3,7 +3,9 @@
  * Track B item 9 (perf). TanStack Router code-splits each
  * `*.lazy.tsx` into its own chunk loaded on first navigation.
  *
- * Reads:  api.subscriptions.queries.listForUser     (live query)
+ * Reads:
+ *   - api.subscriptions.queries.listForUser          (live query)
+ *   - api.subscriptions.assignments.listAssignments  (who's-using, live)
  * Writes:
  *   - Force Refresh → api.subscriptions.actions.requestRefresh
  *   - Rename        → api.subscriptions.mutations.rename
@@ -31,6 +33,7 @@ export const Route = createLazyFileRoute('/dashboard/')({
  */
 export function SubsPage() {
   const subs = useQuery(api.subscriptions.queries.listForUser, {})
+  const assignments = useQuery(api.subscriptions.assignments.listAssignments, {})
   const rename = useMutation(api.subscriptions.mutations.rename)
   const softRemove = useMutation(api.subscriptions.mutations.softRemove)
   const requestRefresh = useAction(api.subscriptions.actions.requestRefresh)
@@ -57,6 +60,11 @@ export function SubsPage() {
   if (subs.length === 0) {
     return <EmptyState />
   }
+
+  // Index the who's-using data by subscription id so each card gets only its
+  // own people. `assignments` is undefined until its query resolves; cards
+  // render an empty stack until then and fill in reactively.
+  const usersBySub = new Map((assignments ?? []).map((a) => [a.subscriptionId, a.users]))
 
   const handleForceRefresh = async ({ email }: { email: string }) => {
     const sub = subs.find((s) => s.email === email)
@@ -136,6 +144,7 @@ export function SubsPage() {
             forceRefreshing={refreshingByEmail[sub.email] === true}
             forceRefreshError={refreshErrorByEmail[sub.email]}
             removing={removingByEmail[sub.email] === true}
+            users={usersBySub.get(sub._id) ?? []}
           />
         ))}
       </div>
