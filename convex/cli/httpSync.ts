@@ -53,6 +53,28 @@ export const cliSyncHandler = httpAction(async (ctx, request) => {
     })
   }
 
+  // SECURITY: enforce the same revocation denylist the authenticated
+  // query/mutation/action wrappers apply (`convex/utils/auth.ts assertDenylist`).
+  // This HTTP route authenticates with a raw JWT and would otherwise BYPASS the
+  // denylist — letting a revoked device (denylisted `sid`) or banned user
+  // (denylisted `sub`) GET the full plaintext bundle for the token's lifetime,
+  // since the BAPI session-revoke in `revokeDevice` is only best-effort. Run the
+  // check up-front (before rate-limit / bundle work) and 403 on a hit. The
+  // combined `denylist.queries.check` is one round-trip.
+  const sidClaimForDenylist = (identity as { sid?: unknown }).sid
+  const denylist = await ctx.runQuery(internal.denylist.queries.check, {
+    externalId: identity.subject,
+    ...(typeof sidClaimForDenylist === 'string' && sidClaimForDenylist.length > 0
+      ? { sid: sidClaimForDenylist }
+      : {}),
+  })
+  if (denylist.userRevoked || denylist.sessionRevoked) {
+    return new Response(JSON.stringify({ error: 'access revoked' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
   // Resolve the user row up-front so the rate limiter and audit row both
   // have the userId. If the user doesn't exist (Clerk webhook hasn't
   // fired) we treat this as 401 to avoid leaking the anomaly.
