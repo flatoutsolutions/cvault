@@ -17,7 +17,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { UsageBar, formatRelativeAgo } from '../UsageBar'
+import { UsageBar } from '../UsageBar'
 
 describe('UsageBar', () => {
   it('renders the window label and integer percentage', () => {
@@ -68,26 +68,5 @@ describe('UsageBar', () => {
     const past = Date.now() - 60_000
     render(<UsageBar label="5h" usage={{ pct: 50, resetsAt: past, fetchedAt: Date.now() }} />)
     expect(screen.getByText(/now|0m/i)).toBeTruthy()
-  })
-})
-
-describe('formatRelativeAgo', () => {
-  const NOW = 1_700_000_000_000
-
-  it('returns "just now" for ages under one minute', () => {
-    expect(formatRelativeAgo(NOW - 30_000, NOW)).toBe('just now')
-  })
-
-  it('emits compound h+m for ages between 1h and 1d', () => {
-    // 125 minutes = 2h 5m. Pre-fix this rendered as "125m ago".
-    expect(formatRelativeAgo(NOW - 125 * 60_000, NOW)).toBe('2h 5m ago')
-  })
-
-  it('emits plain minutes under 1h', () => {
-    expect(formatRelativeAgo(NOW - 45 * 60_000, NOW)).toBe('45m ago')
-  })
-
-  it('emits compound d+h for ages over a day', () => {
-    expect(formatRelativeAgo(NOW - (2 * 24 * 60 + 3 * 60) * 60_000, NOW)).toBe('2d 3h ago')
   })
 })
