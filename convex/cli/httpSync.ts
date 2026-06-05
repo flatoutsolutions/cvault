@@ -64,9 +64,7 @@ export const cliSyncHandler = httpAction(async (ctx, request) => {
   const sidClaimForDenylist = (identity as { sid?: unknown }).sid
   const denylist = await ctx.runQuery(internal.denylist.queries.check, {
     externalId: identity.subject,
-    ...(typeof sidClaimForDenylist === 'string' && sidClaimForDenylist.length > 0
-      ? { sid: sidClaimForDenylist }
-      : {}),
+    ...(typeof sidClaimForDenylist === 'string' && sidClaimForDenylist.length > 0 ? { sid: sidClaimForDenylist } : {}),
   })
   if (denylist.userRevoked || denylist.sessionRevoked) {
     return new Response(JSON.stringify({ error: 'access revoked' }), {

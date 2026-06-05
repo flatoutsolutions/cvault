@@ -42,7 +42,7 @@ describe('machineActivity.migrations.backfillMachineId', () => {
     expect(result.patched).toBe(1)
     expect(result.done).toBe(true)
 
-    const row = await t.run(async (ctx) => ctx.db.get(legacyId))
+    const row = await t.run(async (ctx) => ctx.db.get('machineActivity', legacyId))
     expect(row?.machineId).toBe('sess_legacy_1')
     // clerkSessionId is retained until migration step 3.
     expect(row?.clerkSessionId).toBe('sess_legacy_1')
