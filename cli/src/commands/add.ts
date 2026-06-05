@@ -31,6 +31,16 @@ export interface RunAddOptions {
   label?: string
 }
 
+/**
+ * Sentinel the vault writes in place of a usable refresh token on
+ * `switch`/`pull`/`sync` so clients can never rotate the shared grant. Kept
+ * in sync with `NEUTERED_REFRESH_TOKEN` in `convex/subscriptions/actions.ts`
+ * (not imported, to keep server modules out of the CLI bundle). The vault
+ * rejects a neutered upsert authoritatively; this is the fail-fast client
+ * guard so we never even make the round-trip.
+ */
+const NEUTERED_REFRESH_TOKEN = 'cvault-neutered-no-refresh'
+
 export async function runAdd(opts: RunAddOptions): Promise<void> {
   // Verify there IS an active credential to capture. If not, bail with a
   // clear hint instead of silently uploading an empty record (or
@@ -55,6 +65,13 @@ export async function runAdd(opts: RunAddOptions): Promise<void> {
   }
 
   const oauth = account.credentials.claudeAiOauth
+  if (oauth.refreshToken === NEUTERED_REFRESH_TOKEN) {
+    throw new Error(
+      `The active credential for ${active.email} is a neutered (vault-managed) token, not a real login.\n` +
+        'This happens after `cvault switch`/`pull`. The vault already owns this account — there is nothing to capture.\n' +
+        'To re-capture, run `cvault add` on a machine where you signed in to claude directly.'
+    )
+  }
   // Round-trip ALL fields legacy `claude-swap --import` required.
   // Specifically, `credentials` and `config` must be JSON objects on
   // import. We capture the source `config.oauthAccount` (and the

@@ -1,8 +1,8 @@
 /**
  * Cross-process lock for the active credentials write cycle.
  *
- * Why we need this: `applyEnvelope`, `clearActive`, and the new `cvault
- * refresh` command all perform a read-modify-write on `~/.claude.json`
+ * Why we need this: `applyEnvelope`, `clearActive`, and the `cvault pull`
+ * hook all perform a read-modify-write on `~/.claude.json`
  * + the credentials store (Keychain on macOS, file on Linux/WSL). If
  * two `cvault` processes race — or worse, if `cvault` and Claude Code
  * itself race — they can interleave the two writes and corrupt the

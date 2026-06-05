@@ -149,6 +149,38 @@ export const listAllActiveSubIds = internalQuery({
 })
 
 /**
+ * Internal query returning the subIds of active, RT-alive subs whose access
+ * token expires within `withinMs` of now. Used by the `refreshExpiringSubs`
+ * cron so the proactive-refresh fanout only touches subs that actually need
+ * work — the inner `refreshOAuthToken` acquires a DB lease unconditionally
+ * (two writes per call), so fanning it over EVERY active sub every tick would
+ * thrash the lease on far-from-expiry rows for no benefit. Narrowing here
+ * keeps the cron's write cost proportional to the work to be done.
+ *
+ * `withinMs` is the caller's proactive-refresh window (`REFRESH_PROACTIVE_MS`),
+ * passed in rather than imported because this query runs in the edge runtime
+ * and must not pull the `'use node'` actions module.
+ *
+ * Unlike the removed v1 `findExpiringSubs` (dropped because a cron driving the
+ * vault's stored RT lost the local-rotation race), this is safe: clients now
+ * receive a NEUTERED refresh token and can never rotate the shared grant, so
+ * the vault's stored RT is always authoritative — the vault is the sole
+ * refresher by construction.
+ */
+export const listSubsExpiringWithin = internalQuery({
+  args: { withinMs: v.number() },
+  returns: v.array(v.object({ subId: v.id('subscriptions') })),
+  handler: async (ctx, { withinMs }) => {
+    const now = Date.now()
+    const horizon = now + withinMs
+    const rows = await ctx.db.query('subscriptions').collect()
+    return rows
+      .filter((r) => r.removedAt === undefined && !isReloginRequired(r, now) && r.expiresAt < horizon)
+      .map((r) => ({ subId: r._id }))
+  },
+})
+
+/**
  * Internal query returning rows whose keyVersion does not match the supplied
  * targetVersion. Used by `rotateAllSubscriptions` to find work to do.
  *

@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-import { addUserPromptSubmitHook, removeUserPromptSubmitHook } from '../../src/native/claudeSettings'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import {
+  addUserPromptSubmitHook,
+  installPullHook,
+  readSettings,
+  removeUserPromptSubmitHook,
+} from '../../src/native/claudeSettings'
 
 const CMD = '/opt/homebrew/bin/cvault pull'
 
@@ -40,5 +49,42 @@ describe('removeUserPromptSubmitHook', () => {
       CMD
     )
     expect(out.hooks?.UserPromptSubmit).toBeUndefined()
+  })
+})
+
+describe('readSettings (on-disk)', () => {
+  let dir: string
+  const ORIGINAL = process.env.CLAUDE_CONFIG_DIR
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'cvault-settings-'))
+    process.env.CLAUDE_CONFIG_DIR = dir
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+    if (ORIGINAL === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = ORIGINAL
+  })
+
+  it('returns an empty object when settings.json does not exist', () => {
+    expect(readSettings()).toEqual({})
+  })
+
+  it('parses a valid settings.json', () => {
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ theme: 'dark' }))
+    expect(readSettings().theme).toBe('dark')
+  })
+
+  it('throws an actionable error (path + "valid JSON") on a malformed settings.json', () => {
+    // A raw SyntaxError ("Unexpected token") would leave the user with no idea
+    // WHICH file is broken or that it silently disabled the pull hook.
+    writeFileSync(join(dir, 'settings.json'), '{ "hooks": , }')
+    expect(() => readSettings()).toThrow(/settings\.json.*valid JSON/i)
+    expect(() => readSettings()).toThrow(new RegExp(dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  })
+
+  it('installPullHook surfaces the actionable error on a malformed settings.json', async () => {
+    writeFileSync(join(dir, 'settings.json'), 'not json at all')
+    await expect(installPullHook(CMD)).rejects.toThrow(/settings\.json.*valid JSON/i)
   })
 })

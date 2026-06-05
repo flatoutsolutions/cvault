@@ -33,6 +33,33 @@ function neuterBlobRefreshToken(plaintext: string): string {
   return JSON.stringify(blob)
 }
 
+/**
+ * Reject a plaintext blob that still carries the neutered sentinel. After a
+ * machine runs `cvault switch`/`pull`, its local keychain holds
+ * NEUTERED_REFRESH_TOKEN in place of a usable refresh token. `cvault add`
+ * re-reads that keychain, so writing such a blob back into the vault would
+ * clobber the real refresh token the vault is the sole keeper of — the next
+ * proactive refresh would send the sentinel to Anthropic, earn `invalid_grant`,
+ * and log out every machine on the shared grant. Malformed JSON is left to the
+ * caller's own parse step; we only block the specific poisoning case.
+ */
+function assertNotNeutered(plaintext: string): void {
+  let refreshToken: unknown
+  try {
+    refreshToken = (JSON.parse(plaintext) as { claudeAiOauth?: { refreshToken?: unknown } }).claudeAiOauth?.refreshToken
+  } catch {
+    return
+  }
+  if (refreshToken === NEUTERED_REFRESH_TOKEN) {
+    throw new ConvexError({
+      code: 'NEUTERED_TOKEN',
+      message:
+        'This machine holds a neutered (vault-managed) refresh token, so it cannot capture a subscription. ' +
+        'The vault already has this account; run `cvault add` from a machine where you signed in to claude directly.',
+    })
+  }
+}
+
 const pullResultValidator = v.object({
   email: v.string(),
   slot: v.number(),
@@ -40,7 +67,7 @@ const pullResultValidator = v.object({
   contentHash: v.string(),
 })
 
-const REFRESH_PROACTIVE_MS = 5 * 60 * 1000
+export const REFRESH_PROACTIVE_MS = 5 * 60 * 1000
 
 async function sha256Hex(input: string): Promise<string> {
   const { createHash } = await import('node:crypto')
@@ -70,11 +97,19 @@ export const pullForSwitch = authenticatedAction({
      * the sole OAuth refresher. Default false (backward-compat).
      */
     neuterRefreshToken: v.optional(v.boolean()),
+    /**
+     * When true, skip the `machineActivity` audit row. Set by the background
+     * `cvault pull` hook, which runs before EVERY claude prompt — auditing
+     * each one would flood the table and bury real activity. Interactive
+     * callers (`switch`/`sync`) leave it unset so their pulls stay on the
+     * audit trail. Default false (record the row).
+     */
+    silent: v.optional(v.boolean()),
   },
   returns: pullResultValidator,
   handler: async (
     ctx,
-    { slotOrEmail, machineLabel, machineId: callerArgSid, neuterRefreshToken }
+    { slotOrEmail, machineLabel, machineId: callerArgSid, neuterRefreshToken, silent }
   ): Promise<{
     email: string
     slot: number
@@ -115,16 +150,18 @@ export const pullForSwitch = authenticatedAction({
     // (Anthropic 5xx, network error, lease lost, etc.). Returning the
     // stale plaintext would let the CLI hand the user a token that's
     // about to fail at Anthropic with an opaque 401 — the user would
-    // have no idea cvault was involved. Surface a clear error so the
-    // CLI can prompt the user to retry or `cvault refresh` manually.
+    // have no idea cvault was involved. Surface a clear error so the CLI
+    // can prompt the user to retry; the vault is the sole refresher now,
+    // so recovery is to retry shortly (the cron will rotate it) or, if the
+    // refresh token itself is dead, re-capture with `cvault add` on a
+    // machine signed in to claude directly.
     if (proactiveRefreshAttempted && fresh.expiresAt < Date.now()) {
       throw new ConvexError({
         code: 'REFRESH_FAILED',
         message:
-          'Anthropic OAuth refresh failed and stored token is expired. ' +
-          'Try `cvault refresh ' +
-          slotOrEmail +
-          '` again, or check /dashboard/audit for details.',
+          `Anthropic OAuth refresh failed and the stored token for ${slotOrEmail} is expired. ` +
+          'Retry in a moment (the vault refreshes automatically), or check /dashboard/audit for details. ' +
+          'If it persists, re-capture with `cvault add` from a machine signed in to claude.',
       })
     }
 
@@ -138,29 +175,37 @@ export const pullForSwitch = authenticatedAction({
     // samuel's row would falsely attribute the pull to samuel. Resolve
     // the caller's user via the same internal helper used by
     // backup/keyRotation (see `internal.users.actions.getIdByExternalId`).
-    const actorUserId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
-      externalId: identity.subject,
-    })
-    if (!actorUserId) {
-      // The Clerk webhook hasn't yet inserted a row for the caller. We
-      // could silently skip the audit, but skipping a pull's audit row
-      // is a worse failure mode than throwing — pulls hand plaintext
-      // tokens to the CLI; an audit gap on that path makes incident
-      // forensics impossible. Throw with the same shape the
-      // backup/keyRotation actions already use.
-      throw new ConvexError({
-        code: 'USER_NOT_FOUND',
-        message: 'No user row for caller. Sign in once to trigger the Clerk webhook, then retry.',
+    //
+    // Skipped entirely for `silent` (background hook) pulls — the hook runs
+    // before every claude prompt, so a row per pull would flood the audit
+    // table; and a missing user row must NOT throw on that path (the hook is
+    // best-effort and never blocks the prompt). Interactive switch/sync pulls
+    // leave `silent` unset and keep their audit trail.
+    if (silent !== true) {
+      const actorUserId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
+        externalId: identity.subject,
+      })
+      if (!actorUserId) {
+        // The Clerk webhook hasn't yet inserted a row for the caller. We
+        // could silently skip the audit, but skipping a pull's audit row
+        // is a worse failure mode than throwing — pulls hand plaintext
+        // tokens to the CLI; an audit gap on that path makes incident
+        // forensics impossible. Throw with the same shape the
+        // backup/keyRotation actions already use.
+        throw new ConvexError({
+          code: 'USER_NOT_FOUND',
+          message: 'No user row for caller. Sign in once to trigger the Clerk webhook, then retry.',
+        })
+      }
+      await ctx.runMutation(internal.machineActivity.mutations.record, {
+        userId: actorUserId,
+        machineId: callerArgSid ?? resolveCallerSession(identity),
+        action: 'pull',
+        subscriptionId: fresh._id,
+        at: Date.now(),
+        ...(machineLabel !== undefined ? { machineLabel } : {}),
       })
     }
-    await ctx.runMutation(internal.machineActivity.mutations.record, {
-      userId: actorUserId,
-      machineId: callerArgSid ?? resolveCallerSession(identity),
-      action: 'pull',
-      subscriptionId: fresh._id,
-      at: Date.now(),
-      ...(machineLabel !== undefined ? { machineLabel } : {}),
-    })
 
     const decrypted = decrypt(fresh.ciphertext, fresh.nonce, fresh.keyVersion)
     const plaintext = neuterRefreshToken === true ? neuterBlobRefreshToken(decrypted) : decrypted
@@ -213,6 +258,7 @@ export const upsertFromPlaintext = authenticatedAction({
     created: boolean
   }> => {
     const identity = getIdentity(ctx)
+    assertNotNeutered(args.plaintextBlob)
     const { ciphertext, nonce, keyVersion } = encrypt(args.plaintextBlob)
     const result = await ctx.runMutation(internal.subscriptions.mutations.upsertEncrypted, {
       externalId: identity.subject,

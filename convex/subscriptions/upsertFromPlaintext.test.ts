@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api } from '../_generated/api'
+import { NEUTERED_REFRESH_TOKEN } from './actions'
 import { __setAnthropicFetch } from './anthropic'
 import { decrypt } from './crypto'
 
@@ -206,6 +207,56 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
     const row = await t.run(async (ctx) => await ctx.db.get('subscriptions', second.subId))
     const recovered = decrypt(row?.ciphertext ?? new ArrayBuffer(0), row?.nonce ?? new ArrayBuffer(0), row?.keyVersion)
     expect(recovered).toBe(newer)
+  })
+
+  /**
+   * Vault-poisoning guard. After this machine ran `cvault switch`/`pull`, its
+   * local keychain blob carries the NEUTERED sentinel in place of a usable
+   * refresh token. `cvault add` reads that same keychain — so re-adding an
+   * account previously switched-to would push the dead sentinel into the
+   * vault, overwriting the REAL refresh token the vault is the sole keeper of.
+   * The next proactive refresh would then send the sentinel to Anthropic,
+   * earn `invalid_grant`, and log out every machine on the shared grant — the
+   * exact failure this whole subsystem exists to prevent. So the upsert MUST
+   * reject a neutered blob and leave the stored row untouched.
+   */
+  it('rejects a blob carrying the neutered sentinel and leaves the vault row intact', async () => {
+    const t = vault()
+    await seedUser(t)
+
+    // Seed a real sub.
+    const first = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'shared@example.com',
+      plaintextBlob: SAMPLE_BLOB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
+    const neuteredBlob = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-FRESH-AAAAAAAAAAAAAAAAAAAAAAAA',
+        refreshToken: NEUTERED_REFRESH_TOKEN,
+        expiresAt: 1700000000000,
+        scopes: ['user:inference'],
+      },
+    })
+
+    await expect(
+      t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+        email: 'shared@example.com',
+        plaintextBlob: neuteredBlob,
+        expiresAt: Date.now() + 60 * 60 * 1000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+      })
+    ).rejects.toThrow(/neuter/i)
+
+    // The stored row still decrypts to the ORIGINAL blob with the real RT.
+    const row = await t.run(async (ctx) => await ctx.db.get('subscriptions', first.subId))
+    const recovered = decrypt(row?.ciphertext ?? new ArrayBuffer(0), row?.nonce ?? new ArrayBuffer(0), row?.keyVersion)
+    expect(recovered).toBe(SAMPLE_BLOB)
   })
 
   it('upsertFromPlaintext stores the current keyVersion on the row', async () => {

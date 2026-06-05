@@ -7,8 +7,8 @@
  *
  * Compares the local Keychain blob against the vault row metadata and
  * prints a human-readable summary (default) or structured JSON
- * (`--json`). Read-only — never mutates either side. Users run this
- * before `cvault refresh` to decide whether to drive a sync.
+ * (`--json`). Read-only — never mutates either side. Users run this to
+ * diagnose whether the local Keychain is in sync with the vault.
  *
  * Drift labels (`vault newer`, `local newer`, `RT mismatch`, `none`)
  * key the printed comparison and the JSON `drift` field. The label is
@@ -206,7 +206,12 @@ function renderHumanReport(report: PerSubReport): string {
       lines.push('  AT expires:   (unparseable)')
     }
     if (report.local.refreshTokenPrefix !== undefined) {
-      lines.push(`  RT prefix:    ${report.local.refreshTokenPrefix}...`)
+      // After switch/pull the local RT is the vault-managed sentinel; show a
+      // friendly marker rather than a prefix that reads like a corrupt token.
+      const rt = report.local.refreshTokenPrefix.startsWith('cvault-neutered-no-refresh')
+        ? '(vault-managed)'
+        : `${report.local.refreshTokenPrefix}...`
+      lines.push(`  RT prefix:    ${rt}`)
     }
   }
   lines.push('')

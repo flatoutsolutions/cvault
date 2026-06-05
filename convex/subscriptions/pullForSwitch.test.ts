@@ -51,6 +51,51 @@ describe('pullForSwitch neuterRefreshToken', () => {
     expect(blob.claudeAiOauth.accessToken).toBe('sk-ant-oat01-REAL-AAAAAAAAAAAAAAAAAAAA')
   })
 
+  it('skips the machineActivity audit row when silent is true (hook-originated pull)', async () => {
+    const t = vault()
+    await seedUser(t)
+    await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'a@b.com',
+      plaintextBlob: BLOB,
+      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
+    await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.pullForSwitch, {
+      slotOrEmail: 'a@b.com',
+      neuterRefreshToken: true,
+      silent: true,
+    })
+
+    // The hook runs before EVERY claude prompt; a 'pull' audit row per prompt
+    // would flood the table and bury real activity. silent suppresses it.
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    expect(rows.some((r) => r.action === 'pull')).toBe(false)
+  })
+
+  it('still writes the machineActivity audit row when silent is absent (switch/sync)', async () => {
+    const t = vault()
+    await seedUser(t)
+    await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'a@b.com',
+      plaintextBlob: BLOB,
+      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
+    await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.pullForSwitch, {
+      slotOrEmail: 'a@b.com',
+      neuterRefreshToken: true,
+    })
+
+    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
+    expect(rows.some((r) => r.action === 'pull')).toBe(true)
+  })
+
   it('returns the real refresh token when the flag is absent (back-compat)', async () => {
     const t = vault()
     await seedUser(t)

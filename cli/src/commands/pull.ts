@@ -58,7 +58,9 @@ export async function runPull(): Promise<void> {
   const client = await makeVaultClient()
   const pull = await client.action(
     api.subscriptions.actions.pullForSwitch,
-    client.withMeta({ slotOrEmail: active.email, neuterRefreshToken: true })
+    // silent: this runs from the UserPromptSubmit hook before every claude
+    // prompt, so it must not write a machineActivity audit row per pull.
+    client.withMeta({ slotOrEmail: active.email, neuterRefreshToken: true, silent: true })
   )
   await importEnvelope(buildSingleAccountEnvelope(pull), true)
 }

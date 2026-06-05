@@ -35,7 +35,16 @@ export function settingsPath(): string {
 export function readSettings(): ClaudeSettings {
   const path = settingsPath()
   if (!existsSync(path)) return {}
-  return JSON.parse(readFileSync(path, 'utf8')) as ClaudeSettings
+  const raw = readFileSync(path, 'utf8')
+  try {
+    return JSON.parse(raw) as ClaudeSettings
+  } catch (err) {
+    // A raw SyntaxError tells the user nothing actionable. Name the file and
+    // the fix — a malformed settings.json otherwise silently disables the
+    // pull hook (install/uninstall both throw before touching it).
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(`${path} is not valid JSON (${detail}). Fix it by hand, then re-run.`)
+  }
 }
 
 /** Pure: append a synchronous UserPromptSubmit hook unless it already exists. */

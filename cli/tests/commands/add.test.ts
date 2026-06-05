@@ -107,4 +107,17 @@ describe('runAdd', () => {
     // Must not have touched the vault client at all.
     expect(makeVaultClient).not.toHaveBeenCalled()
   })
+
+  it('refuses to upload a neutered (vault-managed) credential and never hits the vault', async () => {
+    // After `cvault switch`/`pull` this machine's keychain holds the dead
+    // sentinel in place of a real refresh token. Re-`add`ing it would poison
+    // the vault, so we must bail BEFORE the network round-trip.
+    vi.mocked(getActiveAccount).mockReturnValueOnce({ email: 'shared@example.com' })
+    const env = singleAccountEnvelope({ number: 1, email: 'shared@example.com' })
+    env.accounts[0]!.credentials.claudeAiOauth.refreshToken = 'cvault-neutered-no-refresh'
+    vi.mocked(exportAccount).mockReturnValueOnce(env)
+
+    await expect(runAdd({})).rejects.toThrow(/neuter/i)
+    expect(makeVaultClient).not.toHaveBeenCalled()
+  })
 })

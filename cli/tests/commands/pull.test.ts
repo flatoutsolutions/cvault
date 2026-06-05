@@ -55,7 +55,9 @@ describe('runPull', () => {
 
     expect(action).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ slotOrEmail: 'a@b.com', neuterRefreshToken: true })
+      // silent: the hook runs before every prompt — its pulls must NOT spam
+      // the audit trail (server skips the machineActivity row when silent).
+      expect.objectContaining({ slotOrEmail: 'a@b.com', neuterRefreshToken: true, silent: true })
     )
     expect(importEnvelope).toHaveBeenCalledTimes(1)
   })
@@ -87,7 +89,10 @@ describe('runPull', () => {
 
     await runPull()
 
-    expect(action).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ neuterRefreshToken: true }))
+    expect(action).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ neuterRefreshToken: true, silent: true })
+    )
     expect(importEnvelope).toHaveBeenCalledTimes(1)
   })
 })

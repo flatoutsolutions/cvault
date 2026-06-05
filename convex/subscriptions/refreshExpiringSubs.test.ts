@@ -81,10 +81,11 @@ describe('refreshExpiringSubs', () => {
     const t = vault()
     await seedUser(t)
 
-    // expiresAt 8h out — well OUTSIDE REFRESH_PROACTIVE_MS, so refreshOAuthToken
-    // must acquire the lease, see the token is fresh, and bail without hitting
-    // Anthropic. This is the safety property that makes fanning the cron over
-    // ALL subs cheap.
+    // expiresAt 8h out — well OUTSIDE REFRESH_PROACTIVE_MS, so the cron's
+    // narrowing query (`listSubsExpiringWithin`) excludes it entirely and
+    // refreshOAuthToken is never invoked for it. No lease write, no Anthropic
+    // call. This is the safety property that keeps the cron's cost
+    // proportional to the subs that actually need refreshing.
     const farExpiryAt = Date.now() + 8 * 60 * 60 * 1000
     const BLOB = JSON.stringify({
       claudeAiOauth: {
