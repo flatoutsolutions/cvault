@@ -1,6 +1,12 @@
 
 .env.local
 
+# Compiled bundle artifacts emitted by `bun run build:bundle` — build outputs
+# (CI rebuilds on release), never commit. `index.js.map` was tracked by accident
+# and embedded stale pre-cutover source (clerkFapi, /cli/link) + dev URLs.
+index.js
+index.js.map
+
 # scripts/build.ts rewrites this file with the build-host's URLs before
 # `bun build --compile`, then resets it on exit. The committed copy is
 # the empty-defaults placeholder; subsequent regenerations are noise.

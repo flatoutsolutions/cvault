@@ -148,9 +148,13 @@ export class VaultClient {
     // fresh id_token because `openid` was granted at login.
     this.http.setAuth(fresh.idToken ?? this.session.idToken ?? fresh.accessToken)
     // Persist asynchronously — we don't want to block the in-flight call on
-    // disk I/O if the OS is busy. Errors are swallowed: persistence failure
-    // is logged elsewhere; the in-memory state is still correct.
-    void writeSession(this.session).catch(() => undefined)
+    // disk I/O if the OS is busy. A persistence failure is non-fatal: the
+    // in-memory session is already updated, so this call succeeds and the next
+    // process start just refreshes again. We emit a warning (rather than
+    // silently swallowing) so the failure is at least visible.
+    void writeSession(this.session).catch((err: unknown) => {
+      console.warn('Warning: failed to persist refreshed session:', err instanceof Error ? err.message : err)
+    })
   }
 
   /**

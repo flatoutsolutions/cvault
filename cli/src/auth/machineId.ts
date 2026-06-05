@@ -3,8 +3,9 @@
  *
  * Generated once per machine (random UUIDv4), then read back on every
  * subsequent call. The id is a display/grouping label ONLY — it is never
- * used as an authorization input. Revocation acts on the Clerk OAuth grant
- * and the revokedUsers denylist, not on this value.
+ * used as an authorization input. Revocation acts on the `revokedSessions`
+ * denylist (by the id-token `sid`, for per-machine lockout) and the
+ * `revokedUsers` denylist (by `sub`, for a user-level ban) — not on this value.
  *
  * Spec: docs/superpowers/plans/2026-06-03-cli-oauth-pkce.md §Task 11.
  */
