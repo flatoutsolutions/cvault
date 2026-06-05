@@ -28,7 +28,8 @@ import { exportCommand } from './commands/exportBackup'
 import { importCommand } from './commands/importBackup'
 import { listCommand } from './commands/list'
 import { loginCommand } from './commands/login'
-import { refreshCommand } from './commands/refresh'
+import { logoutCommand } from './commands/logout'
+import { pullCommand } from './commands/pull'
 import { removeCommand } from './commands/remove'
 import { rotateKeyCommand } from './commands/rotateKey'
 import { statusCommand } from './commands/status'
@@ -44,10 +45,11 @@ const main = defineCommand({
   },
   subCommands: {
     login: loginCommand,
+    logout: logoutCommand,
     add: addCommand,
+    pull: pullCommand,
     list: listCommand,
     switch: switchCommand,
-    refresh: refreshCommand,
     remove: removeCommand,
     status: statusCommand,
     sync: syncCommand,

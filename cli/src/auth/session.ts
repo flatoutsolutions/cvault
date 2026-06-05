@@ -17,6 +17,8 @@
  * Version guard: `version !== 2` (i.e. the old Clerk-ticket v1 sessions)
  * triggers a NotLoggedInError so the user re-authenticates via OAuth PKCE.
  */
+import { unlink } from 'node:fs/promises'
+
 import { readSecret, vaultFile, writeSecret } from '../paths'
 
 export interface SessionState {
@@ -87,4 +89,16 @@ export async function readSession(): Promise<SessionState> {
  */
 export async function writeSession(state: SessionState): Promise<void> {
   await writeSecret(sessionFilePath(), JSON.stringify(state, null, 2))
+}
+
+/**
+ * Remove the persisted session file. Idempotent (missing file is fine).
+ */
+export async function deleteSession(): Promise<void> {
+  try {
+    await unlink(sessionFilePath())
+  } catch (err) {
+    // ENOENT = file already gone; that's fine.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+  }
 }

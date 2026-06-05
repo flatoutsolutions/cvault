@@ -43,3 +43,34 @@ export const pollUsage = internalAction({
     return null
   },
 })
+
+/**
+ * Proactively refresh every active sub's OAuth token. The inner
+ * `refreshOAuthToken` action no-ops unless the sub is within
+ * `REFRESH_PROACTIVE_MS` of expiry (and uses the refresh lease), so fanning
+ * it over all subs is safe and cheap. This makes the VAULT the sole
+ * refresher — clients (which carry a neutered refresh token) never rotate.
+ */
+export const refreshExpiringSubs = internalAction({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    const active = await ctx.runQuery(internal.subscriptions.internalReads.listAllActiveSubIds, {})
+    const results = await Promise.allSettled(
+      active.map((row) =>
+        ctx.runAction(internal.subscriptions.actions.refreshOAuthToken, {
+          subId: row.subId,
+          triggeredBy: 'onUse',
+        })
+      )
+    )
+    for (const [idx, r] of results.entries()) {
+      if (r.status === 'rejected') {
+        const subId = active[idx]?.subId ?? 'unknown'
+        const reason = r.reason instanceof Error ? r.reason.message : String(r.reason)
+        console.error(`[cvault] refreshExpiringSubs: sub ${String(subId)} threw unhandled: ${reason}`)
+      }
+    }
+    return null
+  },
+})

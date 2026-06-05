@@ -201,6 +201,27 @@ describe('runSync', () => {
     expect(out).not.toMatch(/\(slot \d+\)/)
   })
 
+  it('requests a neutered refresh token for each sub', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValueOnce([{ slot: 1, email: 'a@b.com' }]),
+      action: vi.fn().mockResolvedValueOnce({
+        email: 'a@b.com',
+        slot: 1,
+        plaintextBlob: SAMPLE_BLOB,
+        contentHash: 'h1',
+      }),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withMeta: noopWithMeta,
+    } as never)
+
+    await runSync()
+
+    expect(client.action).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ neuterRefreshToken: true }))
+  })
+
   it('prints a friendly message when there are no subs', async () => {
     const client = {
       query: vi.fn().mockResolvedValueOnce([]),

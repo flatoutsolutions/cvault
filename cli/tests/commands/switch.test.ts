@@ -81,6 +81,17 @@ function setupClientReturning(blob: string, contentHash: string): FakeClient {
   return client
 }
 
+describe('runSwitch — neutered refresh token', () => {
+  it('requests a neutered refresh token from the vault', async () => {
+    const client = setupClientReturning(SAMPLE_BLOB, 'hash-abc')
+    vi.mocked(getActiveAccount).mockReturnValue(null)
+
+    await runSwitch({ slotOrEmail: 'a@b.com' })
+
+    expect(client.action).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ neuterRefreshToken: true }))
+  })
+})
+
 describe('runSwitch — fresh switch (no local hash)', () => {
   it('pulls, imports, and writes hash (switchTo is no longer called)', async () => {
     setupClientReturning(SAMPLE_BLOB, 'hash-abc')

@@ -39,7 +39,10 @@ interface SubMetaListed {
 }
 
 async function syncOneUnlocked(client: VaultClient, sub: SubMetaListed): Promise<void> {
-  const pull = await client.action(api.subscriptions.actions.pullForSwitch, client.withMeta({ slotOrEmail: sub.email }))
+  const pull = await client.action(
+    api.subscriptions.actions.pullForSwitch,
+    client.withMeta({ slotOrEmail: sub.email, neuterRefreshToken: true })
+  )
 
   const envelope = buildSingleAccountEnvelope(pull)
   importEnvelopeUnlocked(envelope, true)
