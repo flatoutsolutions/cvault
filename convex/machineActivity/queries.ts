@@ -19,7 +19,9 @@
 import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 
+import type { Doc } from '../_generated/dataModel'
 import { authenticatedQuery } from '../utils/auth'
+import { UNKNOWN_SESSION_SENTINEL } from '../utils/identity'
 
 const machineActivityRowValidator = v.object({
   _id: v.id('machineActivity'),
@@ -45,6 +47,39 @@ const machineActivityRowValidator = v.object({
 })
 
 /**
+ * Project a raw `machineActivity` doc onto the public audit-row shape,
+ * coalescing the CVLT-3 migration fields. Legacy rows carry `clerkSessionId`
+ * with no `machineId`; until `migrations.backfillMachineId` runs we surface the
+ * old session id as the machine key so the row keeps a stable, non-empty
+ * identifier (and the `machineId: v.string()` return validator holds). The
+ * undeclared `clerkSessionId` field is dropped so the row matches the validator
+ * exactly.
+ */
+function toAuditRow(row: Doc<'machineActivity'>): {
+  _id: Doc<'machineActivity'>['_id']
+  _creationTime: number
+  userId: Doc<'machineActivity'>['userId']
+  machineId: string
+  action: Doc<'machineActivity'>['action']
+  subscriptionId?: Doc<'machineActivity'>['subscriptionId']
+  at: number
+  ipHash?: string
+  machineLabel?: string
+} {
+  return {
+    _id: row._id,
+    _creationTime: row._creationTime,
+    userId: row.userId,
+    machineId: row.machineId ?? row.clerkSessionId ?? UNKNOWN_SESSION_SENTINEL,
+    action: row.action,
+    ...(row.subscriptionId !== undefined ? { subscriptionId: row.subscriptionId } : {}),
+    at: row.at,
+    ...(row.ipHash !== undefined ? { ipHash: row.ipHash } : {}),
+    ...(row.machineLabel !== undefined ? { machineLabel: row.machineLabel } : {}),
+  }
+}
+
+/**
  * Audit feed for `/dashboard/audit`. Cursor-paginated so the page can
  * scroll the full history without paying a `.collect()` over an
  * append-only table that grows on every action (one row per add /
@@ -67,7 +102,10 @@ export const recentForUser = authenticatedQuery({
     pageStatus: v.optional(v.union(v.literal('SplitRecommended'), v.literal('SplitRequired'), v.null())),
   }),
   handler: async (ctx, { paginationOpts }) => {
-    return await ctx.db.query('machineActivity').withIndex('byAt').order('desc').paginate(paginationOpts)
+    const result = await ctx.db.query('machineActivity').withIndex('byAt').order('desc').paginate(paginationOpts)
+    // Coalesce legacy rows (clerkSessionId, no machineId) so the page satisfies
+    // `machineId: v.string()` and drops the undeclared clerkSessionId field.
+    return { ...result, page: result.page.map(toAuditRow) }
   },
 })
 
@@ -92,11 +130,14 @@ export const recentForMachine = authenticatedQuery({
     pageStatus: v.optional(v.union(v.literal('SplitRecommended'), v.literal('SplitRequired'), v.null())),
   }),
   handler: async (ctx, { machineId, paginationOpts }) => {
-    return await ctx.db
+    const result = await ctx.db
       .query('machineActivity')
       .withIndex('byMachineAndAt', (q) => q.eq('machineId', machineId))
       .order('desc')
       .paginate(paginationOpts)
+    // Map so backfilled legacy rows (which keep their old `clerkSessionId`
+    // field alongside the copied `machineId`) match the validator exactly.
+    return { ...result, page: result.page.map(toAuditRow) }
   },
 })
 

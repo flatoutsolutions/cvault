@@ -14,7 +14,26 @@ import { v } from 'convex/values'
 
 export const machineActivitySchema = defineTable({
   userId: v.id('users'),
-  machineId: v.string(),
+  /**
+   * Persistent CLI-generated machine id (CVLT-3). OPTIONAL during the staged
+   * migration off `clerkSessionId`: a Convex schema push validates the declared
+   * shape against EVERY existing document, and legacy prod rows carry a
+   * `clerkSessionId` with no `machineId` — declaring `machineId` required would
+   * reject those rows and fail the deploy. New writes (`mutations.record`)
+   * always populate it. Migration path:
+   *   1. (this commit) `machineId` optional + `clerkSessionId` re-added optional
+   *      → push succeeds against legacy rows; read paths coalesce the two.
+   *   2. run `internal.machineActivity.migrations.backfillMachineId` once to
+   *      copy `clerkSessionId` → `machineId` on legacy rows.
+   *   3. (follow-up) unset `clerkSessionId` on all rows, then drop it here and
+   *      tighten `machineId` back to required.
+   */
+  machineId: v.optional(v.string()),
+  /**
+   * Legacy Clerk session id (pre-PKCE). Re-added as OPTIONAL so legacy rows
+   * validate on push; new rows never write it. Removed in migration step 3.
+   */
+  clerkSessionId: v.optional(v.string()),
   action: v.union(
     v.literal('switch'),
     v.literal('add'),

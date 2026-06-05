@@ -18,6 +18,7 @@ import { ConvexError, v } from 'convex/values'
 
 import { type Doc } from '../_generated/dataModel'
 import { authenticatedQuery } from '../utils/auth'
+import { UNKNOWN_SESSION_SENTINEL } from '../utils/identity'
 
 const subscriptionMetaValidator = v.object({
   _id: v.id('subscriptions'),
@@ -208,7 +209,9 @@ export const getStatus = authenticatedQuery({
     const lastMachineActivity = subActivity
       ? {
           action: subActivity.action,
-          machineId: subActivity.machineId,
+          // Coalesce the CVLT-3 migration fields: a legacy row carries
+          // `clerkSessionId` with no `machineId` until the backfill runs.
+          machineId: subActivity.machineId ?? subActivity.clerkSessionId ?? UNKNOWN_SESSION_SENTINEL,
           at: subActivity.at,
         }
       : null
