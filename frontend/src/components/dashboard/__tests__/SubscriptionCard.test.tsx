@@ -227,7 +227,7 @@ describe('SubscriptionCard', () => {
         users={[]}
       />
     )
-    expect(screen.getByText(/nobody has used/i)).toBeTruthy()
+    expect(screen.getByText(/no recent users/i)).toBeTruthy()
     // The footer actions stay put on the left.
     expect(screen.getByRole('button', { name: /force refresh/i })).toBeTruthy()
   })

@@ -55,7 +55,7 @@ export function AvatarStack({ users, max = 4 }: AvatarStackProps) {
   if (users.length === 0) {
     return (
       <span data-slot="avatar-stack-empty" className="text-muted-foreground text-xs italic">
-        Nobody has used this subscription yet
+        No recent users
       </span>
     )
   }

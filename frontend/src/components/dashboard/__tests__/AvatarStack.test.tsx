@@ -35,7 +35,7 @@ function avatars(container: HTMLElement): NodeListOf<Element> {
 describe('AvatarStack', () => {
   it('renders a muted empty state when there are no users', () => {
     const { container } = render(<AvatarStack users={[]} />)
-    expect(screen.getByText(/nobody has used/i)).toBeTruthy()
+    expect(screen.getByText(/no recent users/i)).toBeTruthy()
     expect(avatars(container)).toHaveLength(0)
   })
 
