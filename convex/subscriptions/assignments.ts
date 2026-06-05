@@ -24,13 +24,18 @@ import type { Doc, Id } from '../_generated/dataModel'
 import { authenticatedQuery } from '../utils/auth'
 
 /**
- * Actions that mean "this machine is now on this sub". Mirrors the CLI's
- * activation surface: `cvault switch` (records `pull` with a subscriptionId
- * via pullForSwitch), `cvault add`, and direct switches. A `pull` WITHOUT a
- * subscriptionId is a whole-bundle sync and is filtered out by the
- * subscriptionId check below, not here.
+ * Actions that mean "this machine is now on this sub". These are the only
+ * activation actions any current code path writes: `cvault add` (records
+ * `add`) and `cvault switch` / `cvault pull <sub>` (both record `pull` with a
+ * subscriptionId via pullForSwitch). A `pull` WITHOUT a subscriptionId is a
+ * whole-bundle sync and is filtered out by the subscriptionId check below, not
+ * here.
+ *
+ * NB: the `machineActivity` schema still permits a legacy `switch` action
+ * literal, but no mutation has emitted it since `cvault switch` was changed to
+ * record `pull`, so it is intentionally NOT in this set.
  */
-const ACTIVATION_ACTIONS: ReadonlySet<string> = new Set(['switch', 'add', 'pull'])
+const ACTIVATION_ACTIONS: ReadonlySet<string> = new Set(['add', 'pull'])
 
 /**
  * Cap on the number of recent activity rows scanned to resolve current
@@ -102,14 +107,31 @@ export const listAssignments = authenticatedQuery({
       })
     }
 
+    // Full-table read. Fine at shared-vault scale (tens of devices). If the
+    // device registry grows large, resolve only the machineIds in
+    // `currentByMachine` via the `byMachine` index (devices/schema.ts) instead
+    // of collecting every row.
     const deviceByMachine = new Map<string, Doc<'devices'>>()
     for (const d of await ctx.db.query('devices').collect()) {
       deviceByMachine.set(d.machineId, d)
     }
 
+    // Full-table read, same tradeoff as `devices` above. At scale, look up only
+    // the distinct owner ids resolved below via `ctx.db.get` rather than
+    // collecting the whole `users` table.
     const userById = new Map<Id<'users'>, Doc<'users'>>()
     for (const u of await ctx.db.query('users').collect()) {
       userById.set(u._id, u)
+    }
+
+    // User-level bans (the `revokedUsers` denylist). A banned user is locked
+    // out of the whole vault everywhere else via `denylist.queries.check`'s
+    // `userRevoked` (see convex/utils/auth.ts). A Convex query can't
+    // `runQuery`, so we read the same denylist table directly here — keyed by
+    // Clerk `externalId`, matching that check's semantics exactly.
+    const bannedExternalIds = new Set<string>()
+    for (const r of await ctx.db.query('revokedUsers').collect()) {
+      bannedExternalIds.add(r.externalId)
     }
 
     // subscriptionId -> (ownerUserId -> aggregate)
@@ -122,6 +144,9 @@ export const listAssignments = authenticatedQuery({
       const ownerUserId = device?.userId ?? current.actorUserId
       const user = userById.get(ownerUserId)
       if (user === undefined) continue // orphan attribution — defensive.
+      // A user-level ban signs the person out of the entire vault, so they're
+      // no longer "using" anything — exclude them just like a revoked device.
+      if (bannedExternalIds.has(user.externalId)) continue
 
       let userMap = bySub.get(current.subscriptionId)
       if (userMap === undefined) {

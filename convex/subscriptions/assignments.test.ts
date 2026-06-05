@@ -1,12 +1,14 @@
 /**
  * CVLT-1 — `listAssignments` query.
  *
- * Derives "who is using which subscription" from existing data: a machine's
- * CURRENT subscription is the most-recent `machineActivity` row for that
- * machine whose action selects/activates a sub (`switch` / `add` / `pull`)
- * and carries a `subscriptionId`. Machines are attributed to a person via
- * their `devices` row (owner); revoked devices are excluded. The query
- * returns one entry per live subscription with the distinct people on it.
+ * Derives "who recently used which subscription" from existing data: a
+ * machine's CURRENT subscription is the most-recent `machineActivity` row for
+ * that machine whose action activates a sub (`add`, or `pull` with a
+ * `subscriptionId` — what `cvault switch` records) and carries a
+ * `subscriptionId`. Machines are attributed to a person via their `devices`
+ * row (owner); revoked devices and users on the `revokedUsers` denylist are
+ * excluded. The query returns one entry per live subscription with the
+ * distinct people on it.
  *
  * Shared vault — no userId scoping (see convex/utils/users.ts).
  */
@@ -102,7 +104,7 @@ describe('subscriptions.queries.listAssignments', () => {
     const aliceId = await seedUser(t)
     const subId = await seedSubRow(t, { userId: aliceId, email: 'a@example.com', slot: 1 })
     await seedDevice(t, { userId: aliceId, machineId: 'mac-1', label: "Alice's MacBook" })
-    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subId, at: 5000 })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'pull', subscriptionId: subId, at: 5000 })
 
     const result = await asAlice(t).query(api.subscriptions.assignments.listAssignments, {})
 
@@ -128,7 +130,7 @@ describe('subscriptions.queries.listAssignments', () => {
     )
     const subId = await seedSubRow(t, { userId: aliceId, email: 'a@example.com', slot: 1 })
     await seedDevice(t, { userId: aliceId, machineId: 'mac-1' })
-    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subId, at: 5000 })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'pull', subscriptionId: subId, at: 5000 })
 
     const result = await asAlice(t).query(api.subscriptions.assignments.listAssignments, {})
 
@@ -165,8 +167,8 @@ describe('subscriptions.queries.listAssignments', () => {
     const subA = await seedSubRow(t, { userId: aliceId, email: 'a@example.com', slot: 1 })
     const subB = await seedSubRow(t, { userId: aliceId, email: 'b@example.com', slot: 2 })
     await seedDevice(t, { userId: aliceId, machineId: 'mac-1' })
-    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subA, at: 1000 })
-    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subB, at: 9000 })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'pull', subscriptionId: subA, at: 1000 })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'pull', subscriptionId: subB, at: 9000 })
 
     const result = await asAlice(t).query(api.subscriptions.assignments.listAssignments, {})
 
@@ -174,16 +176,50 @@ describe('subscriptions.queries.listAssignments', () => {
     expect(result.find((r) => r.subscriptionId === subB)?.users).toHaveLength(1)
   })
 
-  it('excludes machines whose device has been revoked', async () => {
+  it("does not activate off a legacy 'switch' row (no current writer emits one)", async () => {
+    // `cvault switch` records a `pull`; the `switch` literal is retained in the
+    // schema only for historical rows and is intentionally not an activation.
     const t = vault()
     const aliceId = await seedUser(t)
     const subId = await seedSubRow(t, { userId: aliceId, email: 'a@example.com', slot: 1 })
-    await seedDevice(t, { userId: aliceId, machineId: 'mac-1', revoked: true })
+    await seedDevice(t, { userId: aliceId, machineId: 'mac-1' })
     await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subId, at: 5000 })
 
     const result = await asAlice(t).query(api.subscriptions.assignments.listAssignments, {})
 
     expect(result.find((r) => r.subscriptionId === subId)?.users).toEqual([])
+  })
+
+  it('excludes machines whose device has been revoked', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t)
+    const subId = await seedSubRow(t, { userId: aliceId, email: 'a@example.com', slot: 1 })
+    await seedDevice(t, { userId: aliceId, machineId: 'mac-1', revoked: true })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'pull', subscriptionId: subId, at: 5000 })
+
+    const result = await asAlice(t).query(api.subscriptions.assignments.listAssignments, {})
+
+    expect(result.find((r) => r.subscriptionId === subId)?.users).toEqual([])
+  })
+
+  it('excludes a user on the revokedUsers denylist (user-level ban)', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+    const subId = await seedSubRow(t, { userId: aliceId, email: 'shared@example.com', slot: 1 })
+    await seedDevice(t, { userId: aliceId, machineId: 'mac-a' })
+    await seedDevice(t, { userId: bobId, machineId: 'mac-b' })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-a', action: 'pull', subscriptionId: subId, at: 4000 })
+    await seedActivity(t, { userId: bobId, machineId: 'mac-b', action: 'add', subscriptionId: subId, at: 6000 })
+    // Ban Bob at the user level — his device isn't revoked, but he's locked out.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('revokedUsers', { externalId: SECOND_IDENTITY.subject, at: Date.now() })
+    })
+
+    const result = await asAlice(t).query(api.subscriptions.assignments.listAssignments, {})
+
+    const entry = result.find((r) => r.subscriptionId === subId)
+    expect(entry?.users.map((u) => u.userId)).toEqual([aliceId])
   })
 
   it("dedupes a person's machines into one entry and reports the max lastUsedAt", async () => {
@@ -192,8 +228,8 @@ describe('subscriptions.queries.listAssignments', () => {
     const subId = await seedSubRow(t, { userId: aliceId, email: 'a@example.com', slot: 1 })
     await seedDevice(t, { userId: aliceId, machineId: 'mac-1', label: 'Laptop' })
     await seedDevice(t, { userId: aliceId, machineId: 'mac-2', label: 'Desktop' })
-    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subId, at: 3000 })
-    await seedActivity(t, { userId: aliceId, machineId: 'mac-2', action: 'switch', subscriptionId: subId, at: 7000 })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'pull', subscriptionId: subId, at: 3000 })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-2', action: 'pull', subscriptionId: subId, at: 7000 })
 
     const result = await asAlice(t).query(api.subscriptions.assignments.listAssignments, {})
 
@@ -211,7 +247,7 @@ describe('subscriptions.queries.listAssignments', () => {
     await seedActivity(t, {
       userId: aliceId,
       machineId: 'mac-legacy',
-      action: 'switch',
+      action: 'pull',
       subscriptionId: subId,
       at: 5000,
     })
@@ -231,7 +267,7 @@ describe('subscriptions.queries.listAssignments', () => {
     const subId = await seedSubRow(t, { userId: aliceId, email: 'shared@example.com', slot: 1 })
     await seedDevice(t, { userId: aliceId, machineId: 'mac-a' })
     await seedDevice(t, { userId: bobId, machineId: 'mac-b' })
-    await seedActivity(t, { userId: aliceId, machineId: 'mac-a', action: 'switch', subscriptionId: subId, at: 4000 })
+    await seedActivity(t, { userId: aliceId, machineId: 'mac-a', action: 'pull', subscriptionId: subId, at: 4000 })
     await seedActivity(t, { userId: bobId, machineId: 'mac-b', action: 'add', subscriptionId: subId, at: 6000 })
 
     const result = await asAlice(t).query(api.subscriptions.assignments.listAssignments, {})

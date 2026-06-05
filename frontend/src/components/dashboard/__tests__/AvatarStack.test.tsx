@@ -1,6 +1,6 @@
 /**
- * AvatarStack — overlapping avatars of the people currently on a subscription,
- * shown on the right of each SubscriptionCard footer (CVLT-1).
+ * AvatarStack — overlapping avatars of the people who recently used a
+ * subscription, shown on the right of each SubscriptionCard footer (CVLT-1).
  *
  * Contract under test:
  * - Renders one avatar per user, up to `max` (default 4)
@@ -35,7 +35,7 @@ function avatars(container: HTMLElement): NodeListOf<Element> {
 describe('AvatarStack', () => {
   it('renders a muted empty state when there are no users', () => {
     const { container } = render(<AvatarStack users={[]} />)
-    expect(screen.getByText(/no machines/i)).toBeTruthy()
+    expect(screen.getByText(/nobody has used/i)).toBeTruthy()
     expect(avatars(container)).toHaveLength(0)
   })
 
@@ -83,7 +83,7 @@ describe('AvatarStack', () => {
     // Email + machine labels are not visible until the popover is opened.
     expect(screen.queryByText('alice@x.com')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /people using/i }))
+    fireEvent.click(screen.getByRole('button', { name: /recently used/i }))
 
     expect(screen.getByText('alice@x.com')).toBeTruthy()
     expect(screen.getByText('bob@x.com')).toBeTruthy()

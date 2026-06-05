@@ -2,10 +2,14 @@
  * AvatarStack — the "who is using this subscription" affordance on each
  * SubscriptionCard footer (CVLT-1).
  *
- * Renders an overlapping stack of round avatars for the people currently on a
- * subscription, with a "+N" overflow chip past `max`. Clicking the stack opens
- * a popover that lists every person, their email, and the machine(s) they're
- * using it on.
+ * Renders an overlapping stack of round avatars for the people who most
+ * recently used a subscription, with a "+N" overflow chip past `max`. Clicking
+ * the stack opens a popover that lists every person, their email, and the
+ * machine(s) they used it on.
+ *
+ * "Most recently used", not "currently using": attribution is each machine's
+ * latest activation with no recency window, so a long-idle machine still
+ * appears until it's revoked. The copy below says "recently used" to match.
  *
  * Type contract: `SubscriptionUser` is derived from the
  * `api.subscriptions.assignments.listAssignments` return so this component
@@ -51,7 +55,7 @@ export function AvatarStack({ users, max = 4 }: AvatarStackProps) {
   if (users.length === 0) {
     return (
       <span data-slot="avatar-stack-empty" className="text-muted-foreground text-xs italic">
-        No machines on this subscription yet
+        Nobody has used this subscription yet
       </span>
     )
   }
@@ -63,7 +67,7 @@ export function AvatarStack({ users, max = 4 }: AvatarStackProps) {
     <Popover>
       <PopoverTrigger
         type="button"
-        aria-label={`Show people using this subscription (${users.length.toString()})`}
+        aria-label={`Show who recently used this subscription (${users.length.toString()})`}
         className="flex items-center -space-x-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {visible.map((user) => (
@@ -80,7 +84,7 @@ export function AvatarStack({ users, max = 4 }: AvatarStackProps) {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-0">
         <div className="border-border border-b px-4 py-3">
-          <p className="text-sm font-medium">Using this subscription</p>
+          <p className="text-sm font-medium">Recently used by</p>
           <p className="text-muted-foreground text-xs">
             {users.length.toString()} {users.length === 1 ? 'person' : 'people'}
           </p>

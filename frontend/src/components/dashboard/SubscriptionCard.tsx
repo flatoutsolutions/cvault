@@ -51,7 +51,7 @@ export type SubscriptionCardProps = {
   /** When set, the most recent Force Refresh attempt failed with this message. */
   forceRefreshError?: string
   removing: boolean
-  /** People currently using this subscription, for the footer avatar stack. */
+  /** People who recently used this subscription, for the footer avatar stack. */
   users: SubscriptionUser[]
 }
 
@@ -152,7 +152,7 @@ export function SubscriptionCard({
                 remove` still works for the original adder. Re-enable here
                 once admin/owner gating lands on the server. */}
           </div>
-          {/* Who's using this sub — overlapping avatars, click to drill in. */}
+          {/* Who recently used this sub — overlapping avatars, click to drill in. */}
           <AvatarStack users={users} />
         </div>
         {forceRefreshError !== undefined && (

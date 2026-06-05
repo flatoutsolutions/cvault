@@ -227,7 +227,7 @@ describe('SubscriptionCard', () => {
         users={[]}
       />
     )
-    expect(screen.getByText(/no machines/i)).toBeTruthy()
+    expect(screen.getByText(/nobody has used/i)).toBeTruthy()
     // The footer actions stay put on the left.
     expect(screen.getByRole('button', { name: /force refresh/i })).toBeTruthy()
   })
@@ -246,7 +246,7 @@ describe('SubscriptionCard', () => {
     )
     // Initials fallback proves the AvatarStack rendered the person.
     expect(screen.getByText('AT')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /people using/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /recently used/i })).toBeTruthy()
   })
 
   it('opens the rename dialog when Rename is clicked and submits the new label', () => {
