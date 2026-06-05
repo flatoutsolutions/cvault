@@ -85,6 +85,17 @@ describe('refreshAccessToken', () => {
     expect(call[1].body.get('refresh_token')).toBe('rt1')
   })
 
+  it('preserves the prior refresh token when the response omits a rotated one', async () => {
+    // Non-rotating refresh grant (RFC 6749 §6): no refresh_token in the body.
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ access_token: header('aud_x'), expires_in: 900 }), { status: 200 })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const tokens = await refreshAccessToken({ frontendApiUrl: FRONTEND, clientId: 'client_1', refreshToken: 'rt_keep' })
+    // Must NOT become undefined — the prior token carries forward.
+    expect(tokens.refreshToken).toBe('rt_keep')
+  })
+
   it('throws OAuthRefreshFailedError on non-2xx', async () => {
     vi.stubGlobal(
       'fetch',

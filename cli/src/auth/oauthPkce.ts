@@ -83,16 +83,31 @@ export function buildAuthorizeUrl(opts: {
 
 interface TokenResponse {
   access_token: string
-  refresh_token: string
+  /**
+   * Optional: the OAuth spec (RFC 6749 §6) lets the refresh_token grant OMIT a
+   * new refresh_token when the authorization server does NOT rotate it. In that
+   * case the caller must keep using the prior one — see the `fallbackRefreshToken`
+   * arg to {@link toTokens}.
+   */
+  refresh_token?: string
   id_token?: string
   expires_in?: number
 }
 
-function toTokens(body: TokenResponse): OAuthTokens {
+/**
+ * @param fallbackRefreshToken used when the response omits `refresh_token`
+ *   (non-rotating refresh grant). The authorization_code grant always returns
+ *   one, so callers there pass nothing and a missing token is a hard error.
+ */
+function toTokens(body: TokenResponse, fallbackRefreshToken?: string): OAuthTokens {
+  const refreshToken = body.refresh_token ?? fallbackRefreshToken
+  if (refreshToken === undefined) {
+    throw new Error('OAuth token response did not include a refresh_token')
+  }
   return {
     accessToken: body.access_token,
     accessTokenExpiry: decodeJwtExp(body.access_token),
-    refreshToken: body.refresh_token,
+    refreshToken,
     ...(body.id_token !== undefined ? { idToken: body.id_token } : {}),
   }
 }
@@ -134,5 +149,6 @@ export async function refreshAccessToken(opts: {
     }),
   })
   if (!res.ok) throw new OAuthRefreshFailedError(res.status, await res.text().catch(() => ''))
-  return toTokens((await res.json()) as TokenResponse)
+  // Preserve the current refresh token if the server didn't rotate one.
+  return toTokens((await res.json()) as TokenResponse, opts.refreshToken)
 }
