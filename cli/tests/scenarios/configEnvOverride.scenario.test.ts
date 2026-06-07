@@ -69,7 +69,13 @@ function mockMissingConfigFile(): void {
 }
 
 function mockBuildDefaults(defaults: { convexUrl: string; frontendApiUrl: string; dashboardUrl: string }): void {
-  vi.doMock('../../src/buildInfo', () => ({ BUILD_DEFAULTS: defaults }))
+  // Bake a non-empty `clientId` into the mocked BUILD_DEFAULTS. These scenarios
+  // exercise the URL priority chain, not OAuth client-id resolution — but
+  // `resolveConfig()` requires a `clientId` (added with the OAuth-PKCE login).
+  // Without baking one here the tests would fall through to `CVAULT_OAUTH_CLIENT_ID`
+  // in the ambient env and throw in a clean CI shell (the release pipeline),
+  // while passing locally only because `.env.local` happens to provide it.
+  vi.doMock('../../src/buildInfo', () => ({ BUILD_DEFAULTS: { ...defaults, clientId: 'client_test_scenario' } }))
 }
 
 describe('Scenario — config priority chain (foreign .env.local hijack regression)', () => {
