@@ -21,7 +21,7 @@ import { v } from 'convex/values'
 
 import type { Doc } from '../_generated/dataModel'
 import { authenticatedQuery } from '../utils/auth'
-import { UNKNOWN_SESSION_SENTINEL } from '../utils/identity'
+import { coalesceMachineId } from '../utils/identity'
 
 const machineActivityRowValidator = v.object({
   _id: v.id('machineActivity'),
@@ -70,7 +70,7 @@ function toAuditRow(row: Doc<'machineActivity'>): {
     _id: row._id,
     _creationTime: row._creationTime,
     userId: row.userId,
-    machineId: row.machineId ?? row.clerkSessionId ?? UNKNOWN_SESSION_SENTINEL,
+    machineId: coalesceMachineId(row),
     action: row.action,
     ...(row.subscriptionId !== undefined ? { subscriptionId: row.subscriptionId } : {}),
     at: row.at,

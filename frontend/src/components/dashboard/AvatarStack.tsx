@@ -19,9 +19,9 @@ import type { FunctionReturnType } from 'convex/server'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { formatRelativeAgo } from '@/lib/time'
 
 import type { api } from '../../../../convex/_generated/api'
-import { formatRelativeAgo } from './UsageBar'
 
 /** One person on a subscription, as returned by `listAssignments`. */
 export type SubscriptionUser = FunctionReturnType<

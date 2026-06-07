@@ -28,13 +28,14 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { formatRelativeAgo } from '@/lib/time'
 
 import type { api } from '../../../../convex/_generated/api'
 import { AvatarStack } from './AvatarStack'
 import type { SubscriptionUser } from './AvatarStack'
 import { ExpiryCountdown } from './ExpiryCountdown'
 import { ReloginBadge } from './ReloginBadge'
-import { UsageBar, formatRelativeAgo } from './UsageBar'
+import { UsageBar } from './UsageBar'
 
 /**
  * Element type of `api.subscriptions.queries.listForUser`'s return array.

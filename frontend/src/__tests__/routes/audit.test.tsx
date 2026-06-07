@@ -1,80 +1,47 @@
 /**
- * /dashboard/audit — merged feed page tests.
+ * /dashboard/audit — human-readable activity feed tests.
  *
- * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §11.
+ * The page makes four Convex queries (routed by ref name in the mock):
+ *   - api.audit.feed.recentFeed          → { events, capped }  (FILTERED server-side)
+ *   - api.audit.feed.feedSummary         → health strip (filter-independent)
+ *   - api.subscriptions.queries.listForUser → Sub filter options
+ *   - api.devices.queries.listForUser    → Machine filter options
  *
- * Verifies:
- *   - Loading state (any of the queries undefined)
- *   - Empty state (no rows)
- *   - Merged ordering (most recent first regardless of source)
- *   - Filter by sub email
- *   - Filter by outcome (failure / activity)
- *   - ShadCN data-table rendering (column headers, row count)
- *   - Pagination controls (First / Prev / Next / Last)
- *   - Page indicator ("Page X of Y · N rows loaded")
- *   - Page size selector (10/25/50/100, default 25)
- *   - Page size change resets to page 0
- *   - "Last" disabled until status='Exhausted'
- *   - "Prev" disabled on first page; "Next" disabled on last page when exhausted
- *   - Clicking Next when CanLoadMore triggers loadMore
+ * Because filtering now happens on the server, these tests verify that the page
+ * (a) passes the selected filters to recentFeed as query args, (b) renders
+ * whatever rows the server returns, (c) drives the health strip from
+ * feedSummary, and (d) shows the right empty-state copy. The filtering logic
+ * itself is covered in convex/audit/feed.test.ts.
  */
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AuditPage } from '../../routes/dashboard/audit.lazy'
 
-/**
- * Convex function-reference identity is opaque (Proxy), so instead of
- * pattern-matching the path, we route by call order. The audit page
- * makes three Convex hook calls per render in this order:
- *   1. usePaginatedQuery — refreshLog.recentForUser
- *   2. usePaginatedQuery — machineActivity.recentForUser
- *   3. useQuery          — subscriptions.listForUser
- * — verified by reading routes/dashboard/audit.tsx.
- */
-type PaginatedFake = {
-  results: unknown[] | undefined
-  /** Convex hook returns one of these strings; tests choose. */
-  status: 'LoadingFirstPage' | 'CanLoadMore' | 'LoadingMore' | 'Exhausted'
+function refToName(ref: unknown): string {
+  const r = ref as Record<string | symbol, unknown>
+  if (typeof r._functionPath === 'string') return r._functionPath
+  const sym = Symbol.for('functionName')
+  const v = r[sym]
+  return typeof v === 'string' ? v : 'default'
 }
 
-const loadMoreRefreshMock = vi.fn()
-const loadMoreActivityMock = vi.fn()
-
-let nextResults: {
-  refreshLog: PaginatedFake
-  machineActivity: PaginatedFake
-  subscriptions: unknown
-} = {
-  refreshLog: { results: undefined, status: 'LoadingFirstPage' },
-  machineActivity: { results: undefined, status: 'LoadingFirstPage' },
-  subscriptions: undefined,
-}
-
-function setRefreshLog(value: PaginatedFake) {
-  nextResults = { ...nextResults, refreshLog: value }
-}
-function setMachineActivity(value: PaginatedFake) {
-  nextResults = { ...nextResults, machineActivity: value }
-}
-function setSubscriptions(value: unknown) {
-  nextResults = { ...nextResults, subscriptions: value }
-}
-
-let usePaginatedQueryCallCount = 0
+let feedResult: unknown = { events: [], capped: false }
+let summaryResult: unknown = { needsAttention: 0, activeMachines: 0, lastRefreshAt: undefined }
+let subsResult: unknown = []
+let devicesResult: unknown = []
+let lastFeedArgs: Record<string, unknown> | undefined
 
 vi.mock('convex/react', () => ({
-  useQuery: () => nextResults.subscriptions,
-  usePaginatedQuery: () => {
-    const idx = usePaginatedQueryCallCount % 2
-    usePaginatedQueryCallCount += 1
-    const fake = idx === 0 ? nextResults.refreshLog : nextResults.machineActivity
-    return {
-      results: fake.results ?? [],
-      status: fake.status,
-      loadMore: idx === 0 ? loadMoreRefreshMock : loadMoreActivityMock,
-      isLoading: fake.status === 'LoadingFirstPage' || fake.status === 'LoadingMore',
+  useQuery: (ref: unknown, args: unknown) => {
+    const name = refToName(ref)
+    if (name.includes('recentFeed')) {
+      lastFeedArgs = args as Record<string, unknown>
+      return feedResult
     }
+    if (name.includes('feedSummary')) return summaryResult
+    if (name.includes('devices')) return devicesResult
+    return subsResult
   },
 }))
 
@@ -83,378 +50,164 @@ vi.mock('@tanstack/react-router', () => ({
   createLazyFileRoute: () => () => ({}),
 }))
 
-/**
- * Polyfills for Radix UI Select primitives in jsdom. The Radix Select
- * implementation calls `hasPointerCapture` / `releasePointerCapture` /
- * `scrollIntoView` on DOM elements during open/close — none of which jsdom
- * implements. Without these stubs, clicking the SelectTrigger throws and
- * the dropdown never opens, making the "change page size" test
- * untestable. These are global no-ops; nothing in the audit page depends
- * on the real semantics.
- *
- * Reference: https://github.com/radix-ui/primitives/issues/1860
- */
+// Radix Select needs these DOM methods that jsdom lacks; without them the
+// dropdown throws on open. Global no-ops — the page doesn't rely on semantics.
 beforeAll(() => {
-  if (typeof Element.prototype.hasPointerCapture !== 'function') {
-    Element.prototype.hasPointerCapture = () => false
-  }
-  if (typeof Element.prototype.releasePointerCapture !== 'function') {
+  if (typeof Element.prototype.hasPointerCapture !== 'function') Element.prototype.hasPointerCapture = () => false
+  if (typeof Element.prototype.releasePointerCapture !== 'function')
     Element.prototype.releasePointerCapture = () => undefined
-  }
-  if (typeof Element.prototype.scrollIntoView !== 'function') {
-    Element.prototype.scrollIntoView = () => undefined
-  }
+  if (typeof Element.prototype.scrollIntoView !== 'function') Element.prototype.scrollIntoView = () => undefined
 })
 
-/**
- * Build a sequence of N refreshLog rows, newest-first. `at` decreases by
- * 1 minute per row so the sort order is stable and predictable.
- */
-function buildRefreshRows(count: number, opts?: { now?: number; subscriptionId?: string }) {
-  const now = opts?.now ?? Date.now()
-  const subscriptionId = opts?.subscriptionId ?? 'sub_1'
-  return Array.from({ length: count }, (_, i) => ({
-    _id: `log_${i.toString()}`,
-    _creationTime: now,
-    userId: 'u_1',
-    subscriptionId,
-    triggeredBy: 'manual' as const,
-    outcome: 'success' as const,
-    at: now - (i + 1) * 60_000,
-  }))
+const NOW = 1_700_000_000_000
+
+function activity(over: Record<string, unknown> = {}) {
+  return { kind: 'activity', id: 'a1', at: NOW - 60_000, action: 'switch', machineId: 'mac-1', ...over }
+}
+function refresh(over: Record<string, unknown> = {}) {
+  return { kind: 'refresh', id: 'r1', at: NOW - 120_000, outcome: 'success', triggeredBy: 'onUse', ...over }
+}
+
+function setFeed(events: unknown[], capped = false) {
+  feedResult = { events, capped }
 }
 
 describe('/dashboard/audit', () => {
   beforeEach(() => {
-    nextResults = {
-      refreshLog: { results: undefined, status: 'LoadingFirstPage' },
-      machineActivity: { results: undefined, status: 'LoadingFirstPage' },
-      subscriptions: undefined,
-    }
-    usePaginatedQueryCallCount = 0
-    loadMoreRefreshMock.mockClear()
-    loadMoreActivityMock.mockClear()
+    feedResult = { events: [], capped: false }
+    summaryResult = { needsAttention: 0, activeMachines: 0, lastRefreshAt: undefined }
+    subsResult = []
+    devicesResult = []
+    lastFeedArgs = undefined
   })
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('renders skeletons while both paginated queries are loading their first page', () => {
-    setRefreshLog({ results: undefined, status: 'LoadingFirstPage' })
-    setMachineActivity({ results: undefined, status: 'LoadingFirstPage' })
-    setSubscriptions(undefined)
+  it('renders a skeleton while the feed query is loading', () => {
+    feedResult = undefined
     const { container } = render(<AuditPage />)
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
   })
 
-  it('renders an empty-state message when both queries return zero rows', () => {
-    setRefreshLog({ results: [], status: 'Exhausted' })
-    setMachineActivity({ results: [], status: 'Exhausted' })
-    setSubscriptions([])
-    render(<AuditPage />)
-    expect(screen.getByText(/no audit rows/i)).toBeTruthy()
-  })
-
-  it('renders rows from both backends, most recent first', () => {
-    const now = Date.now()
-    setRefreshLog({
-      results: [
-        {
-          _id: 'log_1',
-          _creationTime: now,
-          userId: 'u_1',
-          subscriptionId: 'sub_1',
-          triggeredBy: 'manual',
-          outcome: 'success',
-          at: now - 10 * 60_000,
-        },
-      ],
-      status: 'Exhausted',
-    })
-    setMachineActivity({
-      results: [
-        {
-          _id: 'act_1',
-          _creationTime: now,
-          userId: 'u_1',
-          machineId: 'mach_abc12345xyz',
-          action: 'switch',
-          subscriptionId: 'sub_1',
-          at: now - 5 * 60_000,
-          ipHash: 'a1b2c3d4',
-        },
-      ],
-      status: 'Exhausted',
-    })
-    setSubscriptions([{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
+  it('renders the rows the server returns', () => {
+    setFeed([
+      activity({
+        action: 'switch',
+        subEmail: 'team@acme.com',
+        machineLabel: "Alice's MacBook",
+        actor: { userId: 'u1', name: 'Alice Tester' },
+      }),
+    ])
     const { container } = render(<AuditPage />)
-    const rows = Array.from(container.querySelectorAll('[data-slot="audit-row"]'))
-    expect(rows).toHaveLength(2)
-    // Most-recent (activity, 5m ago) is first; refresh (10m ago) second.
-    expect(rows[0]?.textContent).toContain('switch')
-    expect(rows[1]?.textContent).toContain('refresh')
+    expect(container.querySelectorAll('[data-slot="audit-row"]')).toHaveLength(1)
+    expect(screen.getByText('Switched subscription')).toBeTruthy()
+    expect(screen.getByText('Alice Tester')).toBeTruthy()
+    expect(screen.getByText('team@acme.com')).toBeTruthy()
+    expect(screen.getByText("Alice's MacBook")).toBeTruthy()
   })
 
-  it('renders explicit empty-state card when filters narrow non-empty data to 0 rows', () => {
-    const now = Date.now()
-    setRefreshLog({
-      results: [
-        {
-          _id: 'log_1',
-          _creationTime: now,
-          userId: 'u_1',
-          subscriptionId: 'sub_1',
-          triggeredBy: 'manual',
-          outcome: 'success',
-          at: now - 1000,
-        },
-      ],
-      status: 'Exhausted',
-    })
-    setMachineActivity({ results: [], status: 'Exhausted' })
-    setSubscriptions([{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
+  it('renders System as the actor for automatic refresh events', () => {
+    setFeed([refresh({ outcome: 'failure', error: 'boom', subEmail: 'team@acme.com' })])
     render(<AuditPage />)
-    // Apply a filter that excludes the only loaded row.
-    fireEvent.change(screen.getByLabelText(/outcome/i), { target: { value: 'failure' } })
-    expect(screen.getByText(/no matching activity/i)).toBeTruthy()
+    expect(screen.getByText(/system/i)).toBeTruthy()
   })
 
-  it('filters by outcome=failure and excludes activity rows', () => {
-    const now = Date.now()
-    setRefreshLog({
-      results: [
-        {
-          _id: 'log_1',
-          _creationTime: now,
-          userId: 'u_1',
-          subscriptionId: 'sub_1',
-          triggeredBy: 'manual',
-          outcome: 'success',
-          at: now - 1000,
-        },
-        {
-          _id: 'log_2',
-          _creationTime: now,
-          userId: 'u_1',
-          subscriptionId: 'sub_1',
-          triggeredBy: 'manual',
-          outcome: 'failure',
-          error: 'Anthropic refresh 500',
-          at: now - 2000,
-        },
-      ],
-      status: 'Exhausted',
-    })
-    setMachineActivity({
-      results: [
-        {
-          _id: 'act_1',
-          _creationTime: now,
-          userId: 'u_1',
-          machineId: 'mach_abc',
-          action: 'pull',
-          subscriptionId: undefined,
-          at: now - 500,
-          ipHash: undefined,
-        },
-      ],
-      status: 'Exhausted',
-    })
-    setSubscriptions([{ _id: 'sub_1', email: 'alice@example.com', slot: 1 }])
+  it('hides routine events by default by asking the server (includeRoutine: false)', () => {
+    render(<AuditPage />)
+    expect(lastFeedArgs?.includeRoutine).toBe(false)
+  })
 
+  it('asks the server to include routine events when the toggle is pressed', () => {
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('button', { name: /show routine events/i }))
+    expect(lastFeedArgs?.includeRoutine).toBe(true)
+  })
+
+  it('passes the chosen status filter to the server query', () => {
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by status/i }))
+    fireEvent.click(screen.getByRole('option', { name: 'Failed' }))
+    expect(lastFeedArgs?.status).toBe('failed')
+  })
+
+  it('passes the chosen subscription filter to the server query', () => {
+    subsResult = [{ _id: 's1', email: 'team@acme.com' }]
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by subscription/i }))
+    fireEvent.click(screen.getByRole('option', { name: 'team@acme.com' }))
+    expect(lastFeedArgs?.sub).toBe('team@acme.com')
+  })
+
+  it('builds Machine filter options from the device registry, not the feed', () => {
+    devicesResult = [{ machineId: 'mac-1', label: "Alice's MacBook", lastSeenAt: 1 }]
+    setFeed([]) // empty feed — the option must still come from devices
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by machine/i }))
+    fireEvent.click(screen.getByRole('option', { name: "Alice's MacBook" }))
+    expect(lastFeedArgs?.machine).toBe('mac-1')
+  })
+
+  it('shows a healthy summary strip when feedSummary reports no attention needed', () => {
+    summaryResult = { needsAttention: 0, activeMachines: 2, lastRefreshAt: Date.now() }
+    render(<AuditPage />)
+    expect(screen.getByText(/vault healthy/i)).toBeTruthy()
+    expect(screen.getByText(/2 machines active/i)).toBeTruthy()
+    expect(screen.getByText(/last refresh/i)).toBeTruthy()
+  })
+
+  it('warns in the summary strip when feedSummary reports subs needing attention', () => {
+    summaryResult = { needsAttention: 2, activeMachines: 1, lastRefreshAt: undefined }
+    render(<AuditPage />)
+    expect(screen.getByText(/2 subscriptions need attention/i)).toBeTruthy()
+  })
+
+  it('notes when the feed is capped at the recent window', () => {
+    setFeed([activity({ actor: { userId: 'u1', name: 'Alice Tester' } })], true)
+    render(<AuditPage />)
+    expect(screen.getByText(/most recent 500/i)).toBeTruthy()
+  })
+
+  it('points at the routine toggle when the unfiltered feed is empty', () => {
+    setFeed([])
+    render(<AuditPage />)
+    expect(screen.getByText(/routine events.*are hidden/i)).toBeTruthy()
+  })
+
+  it('shows a plain empty-state when routine events are also shown', () => {
+    setFeed([])
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('button', { name: /show routine events/i }))
+    expect(screen.getByText(/no activity yet/i)).toBeTruthy()
+  })
+
+  it('tells the user older history was not fully searched when a filter empties a capped feed', () => {
+    setFeed([], true)
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by status/i }))
+    fireEvent.click(screen.getByRole('option', { name: 'Failed' }))
+    expect(screen.getByText(/older history was not fully searched/i)).toBeTruthy()
+  })
+
+  it('shows the plain no-match copy when a filter empties an uncapped feed', () => {
+    setFeed([], false)
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by status/i }))
+    fireEvent.click(screen.getByRole('option', { name: 'Failed' }))
+    expect(screen.getByText(/no events match the current filters/i)).toBeTruthy()
+  })
+
+  it('paginates the returned matches at 25 rows per page by default', () => {
+    const events = Array.from({ length: 30 }, (_, i) =>
+      activity({ id: `a${i.toString()}`, at: NOW - i * 60_000, actor: { userId: 'u1', name: 'Alice Tester' } })
+    )
+    setFeed(events)
     const { container } = render(<AuditPage />)
-    // Pick the Outcome filter and switch to 'failure'
-    const outcomeSelect = screen.getByLabelText(/outcome/i)
-    fireEvent.change(outcomeSelect, { target: { value: 'failure' } })
+    expect(container.querySelectorAll('[data-slot="audit-row"]')).toHaveLength(25)
+    expect(screen.getByText(/page\s+1\s+of\s+2/i)).toBeTruthy()
 
-    const rows = Array.from(container.querySelectorAll('[data-slot="audit-row"]'))
-    expect(rows).toHaveLength(1)
-    expect(rows[0]?.textContent).toContain('Anthropic refresh 500')
-  })
-
-  describe('table structure', () => {
-    it('renders a table with column headers (Kind, Outcome, Detail, IP, When)', () => {
-      setRefreshLog({ results: [], status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      const table = screen.getByRole('table')
-      expect(table).toBeTruthy()
-      const headers = within(table).getAllByRole('columnheader')
-      const headerText = headers.map((h) => h.textContent.toLowerCase()).join(' ')
-      expect(headerText).toContain('kind')
-      expect(headerText).toContain('outcome')
-      expect(headerText).toContain('detail')
-      expect(headerText).toContain('ip')
-      expect(headerText).toContain('when')
-    })
-
-    it('renders an empty-state row inside the table body when no rows match', () => {
-      setRefreshLog({ results: [], status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      expect(screen.getByText(/no audit rows/i)).toBeTruthy()
-    })
-  })
-
-  describe('pagination controls', () => {
-    it('renders 25 rows per page by default', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      const { container } = render(<AuditPage />)
-      const rows = container.querySelectorAll('[data-slot="audit-row"]')
-      expect(rows.length).toBe(25)
-    })
-
-    it('renders "Page 1 of 3" when Exhausted with 60 rows at page size 25', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      expect(screen.getByText(/page\s+1\s+of\s+3/i)).toBeTruthy()
-    })
-
-    it('shows "Page 1 of ?" when status is CanLoadMore (total unknown)', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'CanLoadMore' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      expect(screen.getByText(/page\s+1\s+of\s+\?/i)).toBeTruthy()
-    })
-
-    it('renders the loaded-rows count', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      expect(screen.getByText(/60\s+rows\s+loaded/i)).toBeTruthy()
-    })
-
-    it('disables Prev/First on the first page', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      const prev = screen.getByRole('button', { name: /^prev/i })
-      const first = screen.getByRole('button', { name: /^first/i })
-      expect((prev as HTMLButtonElement).disabled).toBe(true)
-      expect((first as HTMLButtonElement).disabled).toBe(true)
-    })
-
-    it('clicking Next advances the page', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      fireEvent.click(screen.getByRole('button', { name: /^next/i }))
-      expect(screen.getByText(/page\s+2\s+of\s+3/i)).toBeTruthy()
-    })
-
-    it('disables Next on the last page when Exhausted', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      fireEvent.click(screen.getByRole('button', { name: /^next/i }))
-      fireEvent.click(screen.getByRole('button', { name: /^next/i }))
-      expect(screen.getByText(/page\s+3\s+of\s+3/i)).toBeTruthy()
-      const next = screen.getByRole('button', { name: /^next/i })
-      expect((next as HTMLButtonElement).disabled).toBe(true)
-    })
-
-    it('disables Last when status is not Exhausted (total unknown)', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'CanLoadMore' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      const last = screen.getByRole('button', { name: /^last/i })
-      expect((last as HTMLButtonElement).disabled).toBe(true)
-    })
-
-    it('clicking Last jumps to the final page when Exhausted', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      fireEvent.click(screen.getByRole('button', { name: /^last/i }))
-      expect(screen.getByText(/page\s+3\s+of\s+3/i)).toBeTruthy()
-    })
-
-    it('clicking First jumps back to page 1', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      fireEvent.click(screen.getByRole('button', { name: /^next/i }))
-      fireEvent.click(screen.getByRole('button', { name: /^next/i }))
-      expect(screen.getByText(/page\s+3\s+of\s+3/i)).toBeTruthy()
-      fireEvent.click(screen.getByRole('button', { name: /^first/i }))
-      expect(screen.getByText(/page\s+1\s+of\s+3/i)).toBeTruthy()
-    })
-
-    it('clicking Next when status is CanLoadMore triggers loadMore on both queries', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(25, { now }), status: 'CanLoadMore' })
-      setMachineActivity({ results: [], status: 'CanLoadMore' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      // We've loaded exactly one page; next click runs out of loaded data
-      // and must request more from the server.
-      fireEvent.click(screen.getByRole('button', { name: /^next/i }))
-      expect(loadMoreRefreshMock).toHaveBeenCalled()
-      expect(loadMoreActivityMock).toHaveBeenCalled()
-    })
-  })
-
-  describe('page size selector', () => {
-    it('shows the current page size (25) on the trigger', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      const trigger = screen.getByRole('combobox', { name: /rows per page/i })
-      expect(trigger.textContent).toContain('25')
-    })
-
-    it('changing the page size to 50 shows 50 rows on page 1', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      const { container } = render(<AuditPage />)
-      // Open the Radix Select and click "50". The Select content portals
-      // to document.body, so getByRole('option') sees it after click.
-      fireEvent.click(screen.getByRole('combobox', { name: /rows per page/i }))
-      fireEvent.click(screen.getByRole('option', { name: '50' }))
-      expect(container.querySelectorAll('[data-slot="audit-row"]').length).toBe(50)
-    })
-
-    it('changing the page size resets to page 1', () => {
-      const now = Date.now()
-      setRefreshLog({ results: buildRefreshRows(60, { now }), status: 'Exhausted' })
-      setMachineActivity({ results: [], status: 'Exhausted' })
-      setSubscriptions([])
-      render(<AuditPage />)
-      // Move to page 2 first.
-      fireEvent.click(screen.getByRole('button', { name: /^next/i }))
-      expect(screen.getByText(/page\s+2/i)).toBeTruthy()
-      // Now change page size — must reset to page 1.
-      fireEvent.click(screen.getByRole('combobox', { name: /rows per page/i }))
-      fireEvent.click(screen.getByRole('option', { name: '50' }))
-      expect(screen.getByText(/page\s+1\s+of\s+2/i)).toBeTruthy()
-    })
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }))
+    expect(container.querySelectorAll('[data-slot="audit-row"]')).toHaveLength(5)
+    expect(screen.getByText(/page\s+2\s+of\s+2/i)).toBeTruthy()
   })
 })

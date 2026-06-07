@@ -19,6 +19,7 @@
  * `onRevoke` to `api.cli.actions.revokeDevice`.
  */
 import { Button } from '@/components/ui/button'
+import { relativeTime } from '@/lib/time'
 
 export type MachineRowProps = {
   machineId: string
@@ -38,18 +39,6 @@ export type MachineRowProps = {
   revokedAt: number | undefined
   onRevoke: (args: { machineId: string }) => void
   pending: boolean
-}
-
-function relativeTime(at: number, now: number = Date.now()): string {
-  const ms = now - at
-  if (ms < 0) return 'just now'
-  const minutes = Math.floor(ms / 60_000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes.toString()}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours.toString()}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days.toString()}d ago`
 }
 
 export function MachineRow({

@@ -48,6 +48,19 @@ export function isUnknownSession(s: string | undefined | null): boolean {
 }
 
 /**
+ * Project a `machineActivity` row's machine key, coalescing the CVLT-3
+ * migration fields. New CLI writes carry a real `machineId` UUID; legacy
+ * rows (pre-`migrations.backfillMachineId`) carry only `clerkSessionId`;
+ * the rare cron/server row carries neither and falls back to
+ * {@link UNKNOWN_SESSION_SENTINEL}. Centralised here so every audit read —
+ * the `machineActivity` feed and the merged `audit/feed` window — derives
+ * the same stable, non-empty key from one authoritative rule.
+ */
+export function coalesceMachineId(row: { machineId?: string; clerkSessionId?: string }): string {
+  return row.machineId ?? row.clerkSessionId ?? UNKNOWN_SESSION_SENTINEL
+}
+
+/**
  * Resolve the canonical Clerk session id for an audit row. Order:
  *
  *   1. `identity.sid` (FAPI-origin tokens — dashboard).
