@@ -152,11 +152,25 @@ jobs:
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          # The Clerk OAuth application's Client ID — required by `cvault login`
+          # (OAuth Authorization Code + PKCE). `build-bundle.ts` reads
+          # CVAULT_OAUTH_CLIENT_ID from the step env and bakes it into
+          # BUILD_DEFAULTS.clientId. Reuses the same secret deploy.yml feeds to
+          # Convex as CLERK_OAUTH_CLIENT_ID (one OAuth app → one client id).
+          # Without this the shipped binary had an empty clientId and `cvault
+          # login` failed with "missing CVAULT_OAUTH_CLIENT_ID".
+          CVAULT_OAUTH_CLIENT_ID: ${{ secrets.CLERK_OAUTH_CLIENT_ID }}
           # Cloudflare auto-suffixed our `cvault` project name (the
           # bare `cvault.pages.dev` host was already taken globally by an
           # unrelated project). Use the real assigned hostname.
           DASHBOARD_URL: https://cvault-bsy.pages.dev
         run: |
+          # Fail loudly if the client id secret is missing rather than baking an
+          # empty value and shipping a binary whose `cvault login` throws.
+          if [ -z "$CVAULT_OAUTH_CLIENT_ID" ]; then
+            echo "::error::CVAULT_OAUTH_CLIENT_ID is empty — set the CLERK_OAUTH_CLIENT_ID repo secret"
+            exit 1
+          fi
           DEPLOY_NAME=$(echo "$CONVEX_DEPLOY_KEY" | sed 's/.*:\(.*\)|.*/\1/')
           export VITE_CONVEX_URL="https://${DEPLOY_NAME}.convex.cloud"
           # Derive the Clerk Frontend API URL from the publishable key
@@ -164,7 +178,7 @@ jobs:
           # is base64-encoded `<host>$`).
           export CLERK_FRONTEND_API_URL="https://$(echo "$CLERK_PUBLISHABLE_KEY" | sed 's/pk_[a-z]*_//' | base64 -d | tr -d '$')"
           export CVAULT_DASHBOARD_URL="$DASHBOARD_URL"
-          echo "Bundling with VITE_CONVEX_URL=$VITE_CONVEX_URL CLERK_FRONTEND_API_URL=$CLERK_FRONTEND_API_URL CVAULT_DASHBOARD_URL=$CVAULT_DASHBOARD_URL"
+          echo "Bundling with VITE_CONVEX_URL=$VITE_CONVEX_URL CLERK_FRONTEND_API_URL=$CLERK_FRONTEND_API_URL CVAULT_DASHBOARD_URL=$CVAULT_DASHBOARD_URL CVAULT_OAUTH_CLIENT_ID=${CVAULT_OAUTH_CLIENT_ID:+<set>}"
           bun run scripts/build-bundle.ts
 
       - name: Smoke-check bundle (size + JS-ness)
