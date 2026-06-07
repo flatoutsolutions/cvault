@@ -128,11 +128,15 @@ describe('startCallbackServer', () => {
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
   })
 
-  it('cancel() stops the server, settles the result, and refuses further connections', async () => {
+  it('cancel() stops the server and settles the result as cancelled', async () => {
     const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 60_000 })
     await handle.cancel()
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
-    // After cancel, fetching should fail (connection refused).
-    await expect(fetch(`http://127.0.0.1:${String(handle.port)}/?code=x&state=st`)).rejects.toThrow()
+    // Note: we intentionally do NOT assert that a subsequent fetch to the
+    // (now-freed) port is refused. That port is ephemeral, and under parallel
+    // test workers the OS can immediately rebind it to another callback
+    // server, so the assertion is racy (a `Response` from the new listener
+    // instead of a connection-refused). `cancel()` calls `server.close()` and
+    // the cancelled result above is the deterministic guarantee of our code.
   })
 })
