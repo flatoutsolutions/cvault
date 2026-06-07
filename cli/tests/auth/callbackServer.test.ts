@@ -8,6 +8,14 @@
  *
  * All tests run under Node (no Bun required) because the server uses
  * node:http internally.
+ *
+ * Port convention: every test that does NOT specifically exercise port
+ * selection passes `ports: [0]` so the OS assigns a free ephemeral port.
+ * The default `OAUTH_REDIRECT_PORTS` is a small fixed set; binding it across
+ * sequential tests (whose servers close on a 50ms timer) and parallel CI
+ * workers caused bind contention → slow binds, timeouts, and reused-port
+ * races. Only the "binds a registered fixed port by default" test below
+ * relies on the default set.
  */
 import { type AddressInfo, createServer as createNetServer } from 'node:net'
 
@@ -63,7 +71,7 @@ describe('startCallbackServer', () => {
   })
 
   it('resolves with code + state on a valid GET redirect and returns 200 HTML', async () => {
-    const handle = await startCallbackServer({ expectedState: 'st-abc', timeoutMs: 5_000 })
+    const handle = await startCallbackServer({ expectedState: 'st-abc', timeoutMs: 5_000, ports: [0] })
     const url = `http://127.0.0.1:${String(handle.port)}/?code=abc123&state=st-abc`
     const resp = await fetch(url)
     expect(resp.status).toBe(200)
@@ -74,7 +82,7 @@ describe('startCallbackServer', () => {
   })
 
   it('returns 400 on mismatched state and does not settle the result', async () => {
-    const handle = await startCallbackServer({ expectedState: 'real-state', timeoutMs: 200 })
+    const handle = await startCallbackServer({ expectedState: 'real-state', timeoutMs: 200, ports: [0] })
     const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?code=x&state=wrong`)
     expect(resp.status).toBe(400)
     const text = await resp.text()
@@ -85,7 +93,7 @@ describe('startCallbackServer', () => {
   })
 
   it('returns 400 on missing code or state', async () => {
-    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 200 })
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 200, ports: [0] })
     // Only state, no code
     const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?state=st`)
     expect(resp.status).toBe(400)
@@ -96,7 +104,7 @@ describe('startCallbackServer', () => {
   })
 
   it('returns 405 on non-GET methods', async () => {
-    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 200 })
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 200, ports: [0] })
     const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/`, { method: 'POST' })
     expect(resp.status).toBe(405)
     await handle.cancel()
@@ -104,7 +112,7 @@ describe('startCallbackServer', () => {
   })
 
   it('rejects with OAuthAuthorizationDeniedError when ?error param is present', async () => {
-    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 5_000 })
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 5_000, ports: [0] })
     const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?error=access_denied`)
     expect(resp.status).toBe(200)
     const body = await resp.text()
@@ -114,14 +122,14 @@ describe('startCallbackServer', () => {
   })
 
   it('rejects with a timeout error after the configured window', async () => {
-    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 50 })
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 50, ports: [0] })
     await expect(handle.result).rejects.toThrow(/timed out/i)
   })
 
   it('rejects state values of a different length without throwing', async () => {
     // timingSafeEqual only works on equal-length buffers; the wrapper must
     // short-circuit length mismatches first.
-    const handle = await startCallbackServer({ expectedState: 'longer-state', timeoutMs: 200 })
+    const handle = await startCallbackServer({ expectedState: 'longer-state', timeoutMs: 200, ports: [0] })
     const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?code=x&state=short`)
     expect(resp.status).toBe(400)
     await handle.cancel()
@@ -129,7 +137,7 @@ describe('startCallbackServer', () => {
   })
 
   it('cancel() stops the server and settles the result as cancelled', async () => {
-    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 60_000 })
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 60_000, ports: [0] })
     await handle.cancel()
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
     // Note: we intentionally do NOT assert that a subsequent fetch to the
