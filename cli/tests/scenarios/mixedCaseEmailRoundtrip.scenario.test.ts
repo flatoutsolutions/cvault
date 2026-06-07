@@ -47,6 +47,7 @@ vi.mock('../../src/credentials', () => ({
   addAccountInteractive: vi.fn().mockResolvedValue(undefined),
   exportAccount: vi.fn(),
   getActiveAccount: vi.fn(),
+  importEnvelope: vi.fn().mockResolvedValue(undefined),
   removeAccount: vi.fn().mockResolvedValue(undefined),
 }))
 

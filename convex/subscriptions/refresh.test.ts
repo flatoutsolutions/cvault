@@ -325,69 +325,6 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     expect(pullRow?.userId).not.toEqual(inserted.userId)
   })
 
-  /**
-   * refreshSub's machineActivity row attributes the ACTING user, not the
-   * sub owner. Mirrors the actor-truth rule in pullForSwitch /
-   * requestRefresh.
-   */
-  it('refreshSub audits the acting user, not the sub owner', async () => {
-    const t = vault()
-    await seedUser(t)
-    const { encrypt } = await import('./crypto')
-    const futureExpiry = Date.now() + 60 * 60 * 1000
-    const plaintext = JSON.stringify({
-      claudeAiOauth: {
-        accessToken: 'sk-ant-oat01-RFACTOR-AAAAAAAAAAAAAAAAA',
-        refreshToken: 'sk-ant-ort01-RFACTOR-BBBBBBBBBBBBBBBBB',
-        expiresAt: futureExpiry,
-        scopes: ['user:inference'],
-      },
-    })
-    const { ciphertext, nonce, keyVersion } = encrypt(plaintext)
-    const inserted = await t.withIdentity(TEST_IDENTITY).mutation(api.subscriptions.mutations.upsert, {
-      email: 'actor-refresh@example.com',
-      ciphertext,
-      nonce,
-      keyVersion,
-      expiresAt: futureExpiry,
-      subscriptionType: 'max',
-      rateLimitTier: 'tier1',
-    })
-
-    const bob = {
-      subject: 'user_test_bob',
-      issuer: 'https://clear-redbird-6.clerk.accounts.dev',
-      tokenIdentifier: 'https://clear-redbird-6.clerk.accounts.dev|user_test_bob',
-      name: 'Bob',
-      email: 'bob@flatout.solutions',
-    }
-    const bobId = await t.run(async (ctx) => {
-      return await ctx.db.insert('users', {
-        externalId: bob.subject,
-        name: bob.name,
-        primaryEmail: bob.email,
-        otherEmails: [],
-      })
-    })
-
-    // localState matches alice's seeded plaintext, so the action takes
-    // the inSync branch (no Anthropic refresh required).
-    const localState = plaintext
-
-    // Slot 1 resolves to alice's row via FCFS rank-ordinal — see
-    // internalReadsUnscoped.test.ts.
-    await t.withIdentity(bob).action(api.subscriptions.actions.refreshSub, {
-      slot: 1,
-      localState,
-    })
-
-    const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
-    const refreshRow = rows.find((r) => r.action === 'refresh' && r.subscriptionId === inserted.subId)
-    expect(refreshRow).toBeDefined()
-    expect(refreshRow?.userId).toEqual(bobId)
-    expect(refreshRow?.userId).not.toEqual(inserted.userId)
-  })
-
   it("requestRefresh inserts a machineActivity row with action='refresh' on success", async () => {
     const t = vault()
     const inserted = await seedSubscription(t)

@@ -12,6 +12,7 @@ import { v } from 'convex/values'
 
 import { internal } from '../_generated/api'
 import { internalAction } from '../_generated/server'
+import { REFRESH_PROACTIVE_MS } from './actions'
 
 /**
  * Fan out usage fetches across every active sub. Failures are silent
@@ -38,6 +39,43 @@ export const pollUsage = internalAction({
         const subId = active[idx]?.subId ?? 'unknown'
         const reason = r.reason instanceof Error ? r.reason.message : String(r.reason)
         console.error(`[cvault] pollUsage: sub ${String(subId)} threw unhandled: ${reason}`)
+      }
+    }
+    return null
+  },
+})
+
+/**
+ * Proactively refresh subs whose OAuth token is near expiry. This makes the
+ * VAULT the sole refresher — clients (which carry a neutered refresh token)
+ * never rotate the shared grant.
+ *
+ * We fan out ONLY over subs within `REFRESH_PROACTIVE_MS` of expiry, not over
+ * every active sub. `refreshOAuthToken` acquires the refresh lease (two DB
+ * writes) before it checks expiry, so handing it a far-from-expiry sub would
+ * thrash the lease for a guaranteed no-op. Narrowing the fanout in the query
+ * keeps the cron's cost proportional to the work that actually needs doing.
+ */
+export const refreshExpiringSubs = internalAction({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    const expiring = await ctx.runQuery(internal.subscriptions.internalReads.listSubsExpiringWithin, {
+      withinMs: REFRESH_PROACTIVE_MS,
+    })
+    const results = await Promise.allSettled(
+      expiring.map((row) =>
+        ctx.runAction(internal.subscriptions.actions.refreshOAuthToken, {
+          subId: row.subId,
+          triggeredBy: 'onUse',
+        })
+      )
+    )
+    for (const [idx, r] of results.entries()) {
+      if (r.status === 'rejected') {
+        const subId = expiring[idx]?.subId ?? 'unknown'
+        const reason = r.reason instanceof Error ? r.reason.message : String(r.reason)
+        console.error(`[cvault] refreshExpiringSubs: sub ${String(subId)} threw unhandled: ${reason}`)
       }
     }
     return null

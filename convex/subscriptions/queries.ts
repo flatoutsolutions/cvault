@@ -121,8 +121,7 @@ export const getMetaByEmail = authenticatedQuery({
 // actionable hint when the row needs re-capture (refreshExpiresAt
 // clamped).
 //
-// Read-only by design: this is the surface the CLI hits before deciding
-// whether to call `refreshSub` (which mutates).
+// Read-only by design.
 // ---------------------------------------------------------------------------
 
 const refreshLogEntryValidator = v.object({

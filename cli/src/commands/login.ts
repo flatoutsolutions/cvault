@@ -32,6 +32,7 @@ import { codeChallengeS256, generateCodeVerifier } from '../auth/pkce'
 import { type SessionState, writeSession } from '../auth/session'
 import { resolveConfig } from '../config'
 import { VaultClient } from '../convex/vaultClient'
+import { installPullHook } from '../native/claudeSettings'
 
 export interface RunLoginOptions {
   /** Convex deployment URL. */
@@ -61,6 +62,18 @@ function resolveMachineLabel(override?: string): string {
     if (trimmed.length > 0) return trimmed
   }
   return hostname()
+}
+
+/**
+ * The command the `UserPromptSubmit` hook runs. We invoke `cvault` by name
+ * (resolved on PATH), NOT `process.execPath` — the Homebrew distribution ships
+ * `cvault` as a bash shim that execs `bun cvault.bundle.js`, so inside the
+ * bundle `process.execPath` is `bun`, and `${process.execPath} pull` would run
+ * `bun pull` (a no-op). PATH-based invocation matches the other hooks Claude
+ * Code users install (e.g. `codegraph mark-dirty`).
+ */
+export function pullHookCommand(): string {
+  return 'cvault pull'
 }
 
 export async function runLogin(opts: RunLoginOptions): Promise<void> {
@@ -120,6 +133,15 @@ export async function runLogin(opts: RunLoginOptions): Promise<void> {
     machineLabel,
   }
   await writeSession(session)
+
+  // Install the UserPromptSubmit hook so every `claude` prompt keeps the
+  // keychain fresh. Best-effort: a settings.json write failure must not fail
+  // an otherwise-successful login.
+  try {
+    await installPullHook(pullHookCommand())
+  } catch (err) {
+    console.warn('Login succeeded but installing the claude hook failed:', err instanceof Error ? err.message : err)
+  }
 
   // Audit: record this CLI machine in devices + machineActivity. Best-effort —
   // login already succeeded, so we don't fail the command if the audit row

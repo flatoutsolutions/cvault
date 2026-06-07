@@ -85,3 +85,45 @@ describe('subscriptions.internalReads.listAllActiveSubIds', () => {
     expect(ids).toEqual([alive, noRefreshExp].sort())
   })
 })
+
+describe('subscriptions.internalReads.listSubsExpiringWithin', () => {
+  it('returns only active, RT-alive subs whose token expires within the window', async () => {
+    const t = vault()
+    const now = Date.now()
+    const within = 5 * 60 * 1000
+
+    // Inside the window → included.
+    const nearA = await seedSub(t, {
+      email: 'near-a@example.com',
+      expiresAt: now + 60 * 1000,
+      refreshExpiresAt: now + 30 * 24 * 60 * 60 * 1000,
+    })
+    const nearB = await seedSub(t, {
+      email: 'near-b@example.com',
+      expiresAt: now + 4 * 60 * 1000,
+      refreshExpiresAt: now + 30 * 24 * 60 * 60 * 1000,
+    })
+    // Outside the window → excluded (this is the whole point: the cron must
+    // NOT acquire a lease on far-from-expiry subs every tick).
+    await seedSub(t, {
+      email: 'far@example.com',
+      expiresAt: now + 60 * 60 * 1000,
+      refreshExpiresAt: now + 30 * 24 * 60 * 60 * 1000,
+    })
+    // Tombstoned → excluded even though near expiry.
+    await seedSub(t, { email: 'gone@example.com', expiresAt: now + 60 * 1000, removedAt: now - 1000 })
+    // RT dead → excluded (re-driving Anthropic would just earn another
+    // invalid_grant; recovery is user re-capture).
+    await seedSub(t, {
+      email: 'dead@example.com',
+      expiresAt: now + 60 * 1000,
+      refreshExpiresAt: now - 60 * 1000,
+    })
+
+    const result = await t.query(internal.subscriptions.internalReads.listSubsExpiringWithin, {
+      withinMs: within,
+    })
+    const ids = result.map((r) => r.subId).sort()
+    expect(ids).toEqual([nearA, nearB].sort())
+  })
+})

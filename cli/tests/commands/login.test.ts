@@ -88,6 +88,12 @@ vi.mock('../../src/auth/machineId', () => ({
   loadOrCreateMachineId: vi.fn().mockResolvedValue('machine-uuid-test-1234'),
 }))
 
+// Mock the claude settings module so login NEVER writes to the real
+// ~/.claude/settings.json during tests (installPullHook does real disk IO).
+vi.mock('../../src/native/claudeSettings', () => ({
+  installPullHook: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../src/auth/session', () => ({
   writeSession: vi.fn().mockResolvedValue(undefined),
   NotLoggedInError: class extends Error {},

@@ -116,6 +116,53 @@ describe('runStatus', () => {
     expect(out.toLowerCase()).toMatch(/none|in sync|matches/)
   })
 
+  it('masks the neutered sentinel in the RT prefix line', async () => {
+    // After switch/pull the local RT is the vault-managed sentinel. Printing
+    // `RT prefix: cvault-neutered-no-refresh...` reads like a corrupt token;
+    // show a friendly marker instead.
+    vi.mocked(getActiveAccount).mockReturnValue({ email: 'neutered@example.com' })
+    vi.mocked(readCredentials).mockReturnValue(
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: 'sk-ant-oat01-LOCAL-AAAAAAAAAAAAAAAA',
+          refreshToken: 'cvault-neutered-no-refresh',
+          expiresAt: NOW,
+          scopes: ['user:inference'],
+        },
+      })
+    )
+    const client = { query: vi.fn() }
+    client.query.mockResolvedValueOnce([{ _id: 'sub_n', slot: 1, email: 'neutered@example.com' }])
+    client.query.mockResolvedValueOnce({
+      sub: {
+        _id: 'sub_n',
+        slot: 1,
+        email: 'neutered@example.com',
+        expiresAt: NOW,
+        lastRefreshedAt: NOW - 60_000,
+        subscriptionType: 'max',
+        rateLimitTier: 'tier1',
+      },
+      refreshLog: [],
+      lastMachineActivity: null,
+    })
+    vi.mocked(makeVaultClient).mockResolvedValue({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withMeta: noopWithMeta,
+    } as never)
+
+    const captured: string[] = []
+    vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runStatus({})
+    const out = captured.join('\n')
+    expect(out).not.toContain('cvault-neutered-no-refresh')
+    expect(out.toLowerCase()).toContain('vault-managed')
+  })
+
   it('reports "vault newer" when vault expiresAt is greater than local', async () => {
     vi.mocked(getActiveAccount).mockReturnValue({ email: 'drift@example.com' })
     // Local blob with expiresAt = NOW.

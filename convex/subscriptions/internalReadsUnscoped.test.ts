@@ -1,6 +1,6 @@
 /**
  * Shared-vault contract for the two internal lookup queries used by the
- * authenticated `pullForSwitch` / `refreshSub` / `requestRefresh` actions.
+ * authenticated `pullForSwitch` / `requestRefresh` actions.
  *
  * Spec: `convex/utils/users.ts:3-7` — any authenticated allowed-domain
  * identity reads/writes any row. The previous queries

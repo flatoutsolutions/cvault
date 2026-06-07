@@ -148,8 +148,9 @@ export function buildEnvelope(opts: BuildEnvelopeOptions): ClaudeSwapEnvelope {
  * MUST be called under the cvault credentials lock (`withFileLock`).
  *
  * Exposed as a separate function so callers that already hold the lock
- * (e.g. `cvault refresh` which keeps the lock across read-vault-write)
- * can invoke the inner write logic without re-entering `withFileLock`
+ * (e.g. `cvault sync`, which keeps the lock across read-vault-write while
+ * importing each sub) can invoke the inner write logic without re-entering
+ * `withFileLock`
  * — proper-lockfile is not reentrant; double-locking from the same
  * process would deadlock waiting for self.
  *

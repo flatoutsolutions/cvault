@@ -24,12 +24,22 @@ import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
 import { makeVaultClient } from '../convex/vaultClient'
-import { exportAccount, getActiveAccount } from '../credentials'
+import { type ClaudeSwapEnvelope, exportAccount, getActiveAccount, importEnvelope } from '../credentials'
 
 export interface RunAddOptions {
   /** Optional human label to assign to the new sub. */
   label?: string
 }
+
+/**
+ * Sentinel the vault writes in place of a usable refresh token on
+ * `switch`/`pull`/`sync` so clients can never rotate the shared grant. Kept
+ * in sync with `NEUTERED_REFRESH_TOKEN` in `convex/subscriptions/actions.ts`
+ * (not imported, to keep server modules out of the CLI bundle). The vault
+ * rejects a neutered upsert authoritatively; this is the fail-fast client
+ * guard so we never even make the round-trip.
+ */
+const NEUTERED_REFRESH_TOKEN = 'cvault-neutered-no-refresh'
 
 export async function runAdd(opts: RunAddOptions): Promise<void> {
   // Verify there IS an active credential to capture. If not, bail with a
@@ -55,6 +65,13 @@ export async function runAdd(opts: RunAddOptions): Promise<void> {
   }
 
   const oauth = account.credentials.claudeAiOauth
+  if (oauth.refreshToken === NEUTERED_REFRESH_TOKEN) {
+    throw new Error(
+      `The active credential for ${active.email} is a neutered (vault-managed) token, not a real login.\n` +
+        'This happens after `cvault switch`/`pull`. The vault already owns this account — there is nothing to capture.\n' +
+        'To re-capture, run `cvault add` on a machine where you signed in to claude directly.'
+    )
+  }
   // Round-trip ALL fields legacy `claude-swap --import` required.
   // Specifically, `credentials` and `config` must be JSON objects on
   // import. We capture the source `config.oauthAccount` (and the
@@ -84,7 +101,27 @@ export async function runAdd(opts: RunAddOptions): Promise<void> {
     })
   )
 
-  console.log(`\nAdded ${account.email} to the vault.`)
+  // Neuter the LOCAL refresh token now that the vault has the real one. The
+  // vault is the SOLE refresher; the adder's machine must end up in the same
+  // state as every machine that received the sub via switch/sync/pull —
+  // holding the (still-valid) access token plus a DEAD refresh token. Without
+  // this, this machine's `claude` would autonomously rotate the real token at
+  // expiry and invalidate the vault's copy for everyone else.
+  const neutered: ClaudeSwapEnvelope = {
+    ...envelope,
+    accounts: [{ ...account, credentials: { claudeAiOauth: { ...oauth, refreshToken: NEUTERED_REFRESH_TOKEN } } }],
+  }
+  try {
+    await importEnvelope(neutered, true)
+  } catch (err) {
+    throw new Error(
+      `Uploaded ${account.email} to the vault, but FAILED to neuter the local refresh token: ` +
+        `${err instanceof Error ? err.message : String(err)}\n` +
+        `Run \`cvault switch ${account.email}\` to neuter it — until then this machine may rotate the shared token.`
+    )
+  }
+
+  console.log(`\nAdded ${account.email} to the vault. This machine's local token is now neutered.`)
 }
 
 export const addCommand = defineCommand({
