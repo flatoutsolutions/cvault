@@ -13,6 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SubsPage } from '../../routes/dashboard/index.lazy'
 
 const useQueryMock = vi.fn()
+// Separate stub for the `listAssignments` query so the subs query and the
+// who's-using query can return different shapes from the single useQuery mock.
+const assignmentsMock = vi.fn<() => unknown>(() => [])
 const mutationsByName = new Map<string, ReturnType<typeof vi.fn>>()
 const actionsByName = new Map<string, ReturnType<typeof vi.fn>>()
 
@@ -48,7 +51,8 @@ function refToName(ref: unknown): string {
 }
 
 vi.mock('convex/react', () => ({
-  useQuery: (...args: unknown[]) => useQueryMock(...args),
+  useQuery: (ref: unknown, ...args: unknown[]) =>
+    refToName(ref).includes('assignments') ? assignmentsMock() : useQueryMock(ref, ...args),
   useMutation: (ref: unknown) => getMutationMock(refToName(ref)),
   useAction: (ref: unknown) => getActionMock(refToName(ref)),
 }))
@@ -84,6 +88,8 @@ function makeSub(overrides: Record<string, unknown> = {}) {
 describe('/dashboard sub list', () => {
   beforeEach(() => {
     useQueryMock.mockReset()
+    assignmentsMock.mockReset()
+    assignmentsMock.mockReturnValue([])
     for (const m of mutationsByName.values()) m.mockClear()
     for (const m of actionsByName.values()) m.mockClear()
   })
@@ -130,6 +136,27 @@ describe('/dashboard sub list', () => {
     ])
     render(<SubsPage />)
     expect(screen.getByText(/3 active subscriptions/i)).toBeTruthy()
+  })
+
+  it('passes each subscription its people from listAssignments to the matching card', () => {
+    useQueryMock.mockReturnValue([makeSub({ _id: 'sub_1', email: 'a@x.com' })])
+    assignmentsMock.mockReturnValue([
+      {
+        subscriptionId: 'sub_1',
+        users: [
+          {
+            userId: 'user_alice',
+            name: 'Alice Tester',
+            email: 'alice@x.com',
+            machines: [{ machineId: 'mac-1', label: 'Laptop', lastUsedAt: Date.now() - 60_000 }],
+            lastUsedAt: Date.now() - 60_000,
+          },
+        ],
+      },
+    ])
+    render(<SubsPage />)
+    // Initials fallback proves the card received the assignment for sub_1.
+    expect(screen.getByText('AT')).toBeTruthy()
   })
 
   it('dispatches api.subscriptions.actions.requestRefresh when Force Refresh is clicked', async () => {
