@@ -24,7 +24,7 @@ import { api } from '@cvault/convex/api'
 import { defineCommand } from 'citty'
 
 import { makeVaultClient } from '../convex/vaultClient'
-import { exportAccount, getActiveAccount } from '../credentials'
+import { type ClaudeSwapEnvelope, exportAccount, getActiveAccount, importEnvelope } from '../credentials'
 
 export interface RunAddOptions {
   /** Optional human label to assign to the new sub. */
@@ -101,7 +101,27 @@ export async function runAdd(opts: RunAddOptions): Promise<void> {
     })
   )
 
-  console.log(`\nAdded ${account.email} to the vault.`)
+  // Neuter the LOCAL refresh token now that the vault has the real one. The
+  // vault is the SOLE refresher; the adder's machine must end up in the same
+  // state as every machine that received the sub via switch/sync/pull —
+  // holding the (still-valid) access token plus a DEAD refresh token. Without
+  // this, this machine's `claude` would autonomously rotate the real token at
+  // expiry and invalidate the vault's copy for everyone else.
+  const neutered: ClaudeSwapEnvelope = {
+    ...envelope,
+    accounts: [{ ...account, credentials: { claudeAiOauth: { ...oauth, refreshToken: NEUTERED_REFRESH_TOKEN } } }],
+  }
+  try {
+    await importEnvelope(neutered, true)
+  } catch (err) {
+    throw new Error(
+      `Uploaded ${account.email} to the vault, but FAILED to neuter the local refresh token: ` +
+        `${err instanceof Error ? err.message : String(err)}\n` +
+        `Run \`cvault switch ${account.email}\` to neuter it — until then this machine may rotate the shared token.`
+    )
+  }
+
+  console.log(`\nAdded ${account.email} to the vault. This machine's local token is now neutered.`)
 }
 
 export const addCommand = defineCommand({
