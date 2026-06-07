@@ -7,9 +7,10 @@
  *   - activity rows gain the actor user (name/avatar) + machine label
  *   - both kinds gain the affected subscription's email
  *
- * Shared vault — no userId scoping (see convex/utils/users.ts). Because the
- * window is fully materialised (bounded, not cursor-paginated), client-side
- * filtering over it is correct — no rows hide beyond an unloaded page.
+ * Shared vault — no userId scoping (see convex/utils/users.ts). Filtering is
+ * server-side: each source is scanned newest-first across all history for
+ * matches, so a matching row can't hide beyond an unloaded page or window.
+ * `feedSummary` answers "is the vault healthy?" independently of those filters.
  */
 import { describe, expect, it } from 'vitest'
 
@@ -21,7 +22,7 @@ type Vault = ReturnType<typeof vault>
 
 async function seedSubRow(
   t: Vault,
-  args: { userId: Id<'users'>; email: string; slot: number }
+  args: { userId: Id<'users'>; email: string; slot: number; refreshExpiresAt?: number; removedAt?: number }
 ): Promise<Id<'subscriptions'>> {
   return await t.run(async (ctx) =>
     ctx.db.insert('subscriptions', {
@@ -34,6 +35,8 @@ async function seedSubRow(
       subscriptionType: 'max',
       rateLimitTier: 'tier1',
       lastRefreshedAt: Date.now(),
+      ...(args.refreshExpiresAt !== undefined ? { refreshExpiresAt: args.refreshExpiresAt } : {}),
+      ...(args.removedAt !== undefined ? { removedAt: args.removedAt } : {}),
     })
   )
 }
@@ -245,5 +248,222 @@ describe('audit.feed.recentFeed', () => {
     const ev = res.events[0]
     if (ev?.kind !== 'activity') throw new Error('expected an activity event')
     expect(ev.subEmail).toBeUndefined()
+  })
+
+  describe('server-side filtering', () => {
+    it('hides routine events (successful refresh, bulk pull) when includeRoutine is false', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      const subId = await seedSubRow(t, { userId: aliceId, email: 'team@acme.com', slot: 1 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subId, at: 9000 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'pull', subscriptionId: subId, at: 8000 })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'success',
+        triggeredBy: 'onUse',
+        at: 7000,
+      })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'failure',
+        triggeredBy: 'onUse',
+        at: 6000,
+      })
+
+      const res = await asAlice(t).query(api.audit.feed.recentFeed, { includeRoutine: false })
+      // Only the switch (activity) and the failure (refresh) survive.
+      expect(res.events.map((e) => e.at)).toEqual([9000, 6000])
+    })
+
+    it('filters to a single subscription email across both sources', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      const subA = await seedSubRow(t, { userId: aliceId, email: 'a@acme.com', slot: 1 })
+      const subB = await seedSubRow(t, { userId: aliceId, email: 'b@acme.com', slot: 2 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subA, at: 9000 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subB, at: 8000 })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subA,
+        outcome: 'failure',
+        triggeredBy: 'onUse',
+        at: 7000,
+      })
+
+      const res = await asAlice(t).query(api.audit.feed.recentFeed, { sub: 'a@acme.com' })
+      expect(res.events.map((e) => e.at)).toEqual([9000, 7000])
+      expect(res.events.every((e) => e.subEmail === 'a@acme.com')).toBe(true)
+    })
+
+    it('filters to a single machine and excludes refresh events (no machine dimension)', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      const subId = await seedSubRow(t, { userId: aliceId, email: 'team@acme.com', slot: 1 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subId, at: 9000 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-2', action: 'switch', subscriptionId: subId, at: 8000 })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'failure',
+        triggeredBy: 'onUse',
+        at: 7000,
+      })
+
+      const res = await asAlice(t).query(api.audit.feed.recentFeed, { machine: 'mac-1' })
+      expect(res.events).toHaveLength(1)
+      const ev = res.events[0]
+      if (ev?.kind !== 'activity') throw new Error('expected an activity event')
+      expect(ev.machineId).toBe('mac-1')
+    })
+
+    it('filters by status tier (failed / attention)', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      const subId = await seedSubRow(t, { userId: aliceId, email: 'team@acme.com', slot: 1 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subId, at: 9000 })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'failure',
+        triggeredBy: 'onUse',
+        at: 8000,
+      })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'reloginRequired',
+        triggeredBy: 'onUse',
+        at: 7000,
+      })
+
+      const failed = await asAlice(t).query(api.audit.feed.recentFeed, { status: 'failed' })
+      expect(failed.events.map((e) => e.at)).toEqual([8000])
+      const attention = await asAlice(t).query(api.audit.feed.recentFeed, { status: 'attention' })
+      expect(attention.events.map((e) => e.at)).toEqual([7000])
+    })
+
+    it('finds a matching event older than the most recent window (no longer leaks)', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      const subId = await seedSubRow(t, { userId: aliceId, email: 'team@acme.com', slot: 1 })
+      // One old failure buried under a pile of newer successful refreshes.
+      await seedRefresh(t, { userId: aliceId, subscriptionId: subId, outcome: 'failure', triggeredBy: 'onUse', at: 1 })
+      for (let i = 0; i < 50; i += 1) {
+        await seedRefresh(t, {
+          userId: aliceId,
+          subscriptionId: subId,
+          outcome: 'success',
+          triggeredBy: 'onUse',
+          at: 1000 + i,
+        })
+      }
+
+      const res = await asAlice(t).query(api.audit.feed.recentFeed, { status: 'failed' })
+      expect(res.events.map((e) => e.at)).toEqual([1])
+    })
+  })
+
+  describe('feedSummary', () => {
+    it('counts a sub with a lapsed refresh grant as needing attention', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      await seedSubRow(t, { userId: aliceId, email: 'team@acme.com', slot: 1, refreshExpiresAt: Date.now() - 1000 })
+
+      const res = await asAlice(t).query(api.audit.feed.feedSummary, {})
+      expect(res.needsAttention).toBe(1)
+    })
+
+    it('counts a sub whose latest refresh failed even though its grant is valid', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      const subId = await seedSubRow(t, {
+        userId: aliceId,
+        email: 'team@acme.com',
+        slot: 1,
+        refreshExpiresAt: Date.now() + 86_400_000,
+      })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'success',
+        triggeredBy: 'onUse',
+        at: 1000,
+      })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'failure',
+        triggeredBy: 'onUse',
+        at: 2000,
+      })
+
+      const res = await asAlice(t).query(api.audit.feed.feedSummary, {})
+      expect(res.needsAttention).toBe(1)
+    })
+
+    it('stays healthy when the latest refresh succeeded and the grant is valid', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      const subId = await seedSubRow(t, {
+        userId: aliceId,
+        email: 'team@acme.com',
+        slot: 1,
+        refreshExpiresAt: Date.now() + 86_400_000,
+      })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'failure',
+        triggeredBy: 'onUse',
+        at: 1000,
+      })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'success',
+        triggeredBy: 'onUse',
+        at: 2000,
+      })
+
+      const res = await asAlice(t).query(api.audit.feed.feedSummary, {})
+      expect(res.needsAttention).toBe(0)
+    })
+
+    it('reports the authoritative last refresh time and distinct active machines', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      const subId = await seedSubRow(t, { userId: aliceId, email: 'team@acme.com', slot: 1 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'switch', subscriptionId: subId, at: 9000 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-2', action: 'switch', subscriptionId: subId, at: 8000 })
+      await seedActivity(t, { userId: aliceId, machineId: 'mac-1', action: 'pull', subscriptionId: subId, at: 7000 })
+      await seedRefresh(t, {
+        userId: aliceId,
+        subscriptionId: subId,
+        outcome: 'success',
+        triggeredBy: 'onUse',
+        at: 6000,
+      })
+
+      const res = await asAlice(t).query(api.audit.feed.feedSummary, {})
+      expect(res.lastRefreshAt).toBe(6000)
+      expect(res.activeMachines).toBe(2)
+    })
+
+    it('ignores removed subscriptions when counting attention', async () => {
+      const t = vault()
+      const aliceId = await seedUser(t)
+      await seedSubRow(t, {
+        userId: aliceId,
+        email: 'gone@acme.com',
+        slot: 1,
+        refreshExpiresAt: Date.now() - 1000,
+        removedAt: Date.now(),
+      })
+
+      const res = await asAlice(t).query(api.audit.feed.feedSummary, {})
+      expect(res.needsAttention).toBe(0)
+    })
   })
 })

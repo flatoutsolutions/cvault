@@ -20,7 +20,7 @@ import { createLazyFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
 import { useMemo, useState } from 'react'
 
-import { describeEvent, eventStatus, isRoutine } from '@/components/dashboard/auditEvent'
+import { describeEvent, eventStatus } from '@/components/dashboard/auditEvent'
 import type { AuditEvent, EventStatus } from '@/components/dashboard/auditEvent'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -43,9 +43,6 @@ export const Route = createLazyFileRoute('/dashboard/audit')({
 
 /** Exported for tests. Wired into TanStack Router via `Route` above. */
 export function AuditPage() {
-  const feed = useQuery(api.audit.feed.recentFeed, {})
-  const subs = useQuery(api.subscriptions.queries.listForUser, {})
-
   const [subFilter, setSubFilter] = useState('all')
   const [machineFilter, setMachineFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -53,57 +50,35 @@ export function AuditPage() {
   const [pageIndex, setPageIndex] = useState(0)
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
 
+  // Filtering happens SERVER-SIDE: the feed scans the whole history for matches
+  // (see convex/audit/feed.ts), so a matching event can't hide beyond a window.
+  // The page only paginates the returned matches client-side.
+  const feed = useQuery(api.audit.feed.recentFeed, {
+    ...(subFilter !== 'all' ? { sub: subFilter } : {}),
+    ...(machineFilter !== 'all' ? { machine: machineFilter } : {}),
+    ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+    includeRoutine: showRoutine,
+  })
+  // The health strip reads its own filter-independent summary, so a feed filter
+  // never changes the answer to "is the vault healthy?".
+  const summary = useQuery(api.audit.feed.feedSummary, {})
+  const subs = useQuery(api.subscriptions.queries.listForUser, {})
+  const devices = useQuery(api.devices.queries.listForUser, {})
+
   const events = useMemo(() => feed?.events ?? [], [feed])
 
-  // Distinct machines present in the feed, for the Machine filter. Labels
-  // come from the enriched event; fall back to a shortened id.
+  // Machine filter options come from the full device registry, not the (now
+  // server-filtered) feed — otherwise selecting a machine would empty its own
+  // dropdown. Labels fall back to a shortened id.
   const machines = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const e of events) {
-      if (e.kind === 'activity') map.set(e.machineId, e.machineLabel ?? `${e.machineId.slice(0, 8)}…`)
-    }
-    return Array.from(map, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label))
-  }, [events])
+    return (devices ?? [])
+      .map((d) => ({ id: d.machineId, label: d.label ?? `${d.machineId.slice(0, 8)}…` }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [devices])
 
-  const filtered = useMemo(() => {
-    return events.filter((e) => {
-      if (!showRoutine && isRoutine(e)) return false
-      if (subFilter !== 'all' && e.subEmail !== subFilter) return false
-      if (machineFilter !== 'all' && (e.kind !== 'activity' || e.machineId !== machineFilter)) return false
-      if (statusFilter !== 'all' && eventStatus(e) !== statusFilter) return false
-      return true
-    })
-  }, [events, showRoutine, subFilter, machineFilter, statusFilter])
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const totalPages = Math.max(1, Math.ceil(events.length / pageSize))
   const safePageIndex = Math.min(pageIndex, totalPages - 1)
-  const pageRows = filtered.slice(safePageIndex * pageSize, safePageIndex * pageSize + pageSize)
-
-  // Health summary. A sub "needs attention" if its refresh grant has lapsed, OR
-  // its most-recent refresh attempt in the window did not succeed (failure /
-  // reloginRequired). Folding in the latest in-window outcome keeps the strip
-  // honest — it can no longer read "✓ Vault healthy" while the feed below shows
-  // that same sub's refresh failing. `activeMachines` reuses the `machines`
-  // derivation rather than re-scanning events for the same distinct set.
-  const summary = useMemo(() => {
-    const now = Date.now()
-    const liveEmails = new Set((subs ?? []).map((s) => s.email))
-    const problem = new Set<string>()
-    const latestSeen = new Set<string>()
-    for (const e of events) {
-      if (e.kind !== 'refresh' || e.subEmail === undefined || latestSeen.has(e.subEmail)) continue
-      latestSeen.add(e.subEmail)
-      if (e.outcome !== 'success' && liveEmails.has(e.subEmail)) problem.add(e.subEmail)
-    }
-    for (const s of subs ?? []) {
-      if (s.refreshExpiresAt !== undefined && s.refreshExpiresAt <= now) problem.add(s.email)
-    }
-    const lastRefreshAt = events.reduce<number | undefined>(
-      (acc, e) => (e.kind === 'refresh' ? Math.max(acc ?? 0, e.at) : acc),
-      undefined
-    )
-    return { needsAttention: problem.size, lastRefreshAt, activeMachines: machines.length }
-  }, [subs, events, machines])
+  const pageRows = events.slice(safePageIndex * pageSize, safePageIndex * pageSize + pageSize)
 
   function resetToFirstPage() {
     setPageIndex(0)
@@ -118,10 +93,9 @@ export function AuditPage() {
     )
   }
 
-  // `filtered` is empty while the feed has events only because some filter (or
-  // the default routine-hide) removed them all, so this is always a
-  // filters-active state — no separate guard needed.
-  const nothingMatches = events.length > 0 && filtered.length === 0
+  // An explicit filter (sub / machine / status) is set, vs. only the default
+  // routine-hide. This decides which empty-state copy to show.
+  const explicitFilters = subFilter !== 'all' || machineFilter !== 'all' || statusFilter !== 'all'
 
   return (
     <div className="flex flex-col gap-4">
@@ -133,9 +107,9 @@ export function AuditPage() {
       </div>
 
       <HealthStrip
-        needsAttention={summary.needsAttention}
-        lastRefreshAt={summary.lastRefreshAt}
-        activeMachines={summary.activeMachines}
+        needsAttention={summary?.needsAttention ?? 0}
+        lastRefreshAt={summary?.lastRefreshAt}
+        activeMachines={summary?.activeMachines ?? 0}
       />
 
       <div className="border-border bg-card flex flex-wrap items-center gap-2 rounded-lg border p-3">
@@ -190,7 +164,7 @@ export function AuditPage() {
           {showRoutine ? 'Hiding nothing' : 'Show routine events'}
         </Button>
         <span className="text-muted-foreground ml-auto text-xs tabular-nums">
-          {filtered.length.toString()} {filtered.length === 1 ? 'event' : 'events'}
+          {events.length.toString()} {events.length === 1 ? 'event' : 'events'}
           {feed.capped ? ' · showing the most recent 500' : ''}
         </span>
       </div>
@@ -211,11 +185,13 @@ export function AuditPage() {
             {pageRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-muted-foreground p-8 text-center text-sm">
-                  {!nothingMatches
-                    ? 'No activity yet.'
-                    : feed.capped
-                      ? 'No matching events in the most recent 500. Older history is not searched here — try widening the filters or showing routine events.'
-                      : 'No events match the current filters. Try widening them or showing routine events.'}
+                  {explicitFilters
+                    ? feed.capped
+                      ? 'No matching events found. Older history was not fully searched — try widening the filters.'
+                      : 'No events match the current filters. Try widening them.'
+                    : showRoutine
+                      ? 'No activity yet.'
+                      : 'No activity to show — routine events (auto-refreshes, syncs) are hidden. Use “Show routine events” to include them.'}
                 </TableCell>
               </TableRow>
             ) : (

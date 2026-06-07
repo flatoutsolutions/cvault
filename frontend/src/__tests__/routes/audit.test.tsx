@@ -1,13 +1,17 @@
 /**
  * /dashboard/audit — human-readable activity feed tests.
  *
- * The page makes two Convex queries (routed by ref name in the mock):
- *   - api.audit.feed.recentFeed          → { events, capped }
- *   - api.subscriptions.queries.listForUser → sub list (health strip + filter)
+ * The page makes four Convex queries (routed by ref name in the mock):
+ *   - api.audit.feed.recentFeed          → { events, capped }  (FILTERED server-side)
+ *   - api.audit.feed.feedSummary         → health strip (filter-independent)
+ *   - api.subscriptions.queries.listForUser → Sub filter options
+ *   - api.devices.queries.listForUser    → Machine filter options
  *
- * Verifies: loading + empty states, plain-language rows with actor/machine,
- * routine-hiding default + toggle, status filtering, the health strip, the
- * capped note, and client-side pagination over the bounded window.
+ * Because filtering now happens on the server, these tests verify that the page
+ * (a) passes the selected filters to recentFeed as query args, (b) renders
+ * whatever rows the server returns, (c) drives the health strip from
+ * feedSummary, and (d) shows the right empty-state copy. The filtering logic
+ * itself is covered in convex/audit/feed.test.ts.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -23,10 +27,22 @@ function refToName(ref: unknown): string {
 }
 
 let feedResult: unknown = { events: [], capped: false }
+let summaryResult: unknown = { needsAttention: 0, activeMachines: 0, lastRefreshAt: undefined }
 let subsResult: unknown = []
+let devicesResult: unknown = []
+let lastFeedArgs: Record<string, unknown> | undefined
 
 vi.mock('convex/react', () => ({
-  useQuery: (ref: unknown) => (refToName(ref).includes('recentFeed') ? feedResult : subsResult),
+  useQuery: (ref: unknown, args: unknown) => {
+    const name = refToName(ref)
+    if (name.includes('recentFeed')) {
+      lastFeedArgs = args as Record<string, unknown>
+      return feedResult
+    }
+    if (name.includes('feedSummary')) return summaryResult
+    if (name.includes('devices')) return devicesResult
+    return subsResult
+  },
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -59,7 +75,10 @@ function setFeed(events: unknown[], capped = false) {
 describe('/dashboard/audit', () => {
   beforeEach(() => {
     feedResult = { events: [], capped: false }
+    summaryResult = { needsAttention: 0, activeMachines: 0, lastRefreshAt: undefined }
     subsResult = []
+    devicesResult = []
+    lastFeedArgs = undefined
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -71,13 +90,7 @@ describe('/dashboard/audit', () => {
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
   })
 
-  it('renders an empty-state when there is no activity', () => {
-    setFeed([])
-    render(<AuditPage />)
-    expect(screen.getByText(/no activity yet/i)).toBeTruthy()
-  })
-
-  it('renders a plain-language row with actor, sub, and machine label', () => {
+  it('renders the rows the server returns', () => {
     setFeed([
       activity({
         action: 'switch',
@@ -94,76 +107,59 @@ describe('/dashboard/audit', () => {
     expect(screen.getByText("Alice's MacBook")).toBeTruthy()
   })
 
-  it('hides routine events (successful refresh, bulk pull) by default and reveals them on toggle', () => {
-    setFeed([
-      activity({ id: 'sw', action: 'switch', actor: { userId: 'u1', name: 'Alice Tester' } }),
-      refresh({ id: 'ok', outcome: 'success' }),
-      activity({ id: 'pl', action: 'pull', actor: { userId: 'u1', name: 'Alice Tester' } }),
-    ])
-    const { container } = render(<AuditPage />)
-    // Only the switch (non-routine) shows by default.
-    expect(container.querySelectorAll('[data-slot="audit-row"]')).toHaveLength(1)
-    expect(screen.getByText('Switched subscription')).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: /show routine events/i }))
-    expect(container.querySelectorAll('[data-slot="audit-row"]')).toHaveLength(3)
-    expect(screen.getByText('Token refreshed')).toBeTruthy()
-    expect(screen.getByText('Synced credentials')).toBeTruthy()
+  it('renders System as the actor for automatic refresh events', () => {
+    setFeed([refresh({ outcome: 'failure', error: 'boom', subEmail: 'team@acme.com' })])
+    render(<AuditPage />)
+    expect(screen.getByText(/system/i)).toBeTruthy()
   })
 
-  it('filters to failed events via the Status filter', () => {
-    setFeed([
-      activity({ id: 'sw', action: 'switch', actor: { userId: 'u1', name: 'Alice Tester' } }),
-      refresh({ id: 'bad', outcome: 'failure', error: 'Anthropic 500', subEmail: 'team@acme.com' }),
-    ])
-    const { container } = render(<AuditPage />)
-    // Failure is non-routine, so both rows show initially.
-    expect(container.querySelectorAll('[data-slot="audit-row"]')).toHaveLength(2)
+  it('hides routine events by default by asking the server (includeRoutine: false)', () => {
+    render(<AuditPage />)
+    expect(lastFeedArgs?.includeRoutine).toBe(false)
+  })
 
+  it('asks the server to include routine events when the toggle is pressed', () => {
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('button', { name: /show routine events/i }))
+    expect(lastFeedArgs?.includeRoutine).toBe(true)
+  })
+
+  it('passes the chosen status filter to the server query', () => {
+    render(<AuditPage />)
     fireEvent.click(screen.getByRole('combobox', { name: /filter by status/i }))
     fireEvent.click(screen.getByRole('option', { name: 'Failed' }))
-
-    const rows = container.querySelectorAll('[data-slot="audit-row"]')
-    expect(rows).toHaveLength(1)
-    expect(screen.getByText('Token refresh failed')).toBeTruthy()
-    expect(screen.getByText('Anthropic 500')).toBeTruthy()
+    expect(lastFeedArgs?.status).toBe('failed')
   })
 
-  it('shows a healthy summary strip when no subscription needs attention', () => {
-    setFeed([refresh({ outcome: 'success', subEmail: 'team@acme.com' })])
-    // refreshExpiresAt must be in the real future — the page compares against
-    // Date.now(), not the test's fixed NOW.
-    subsResult = [{ _id: 's1', email: 'team@acme.com', refreshExpiresAt: Date.now() + 86_400_000 }]
+  it('passes the chosen subscription filter to the server query', () => {
+    subsResult = [{ _id: 's1', email: 'team@acme.com' }]
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by subscription/i }))
+    fireEvent.click(screen.getByRole('option', { name: 'team@acme.com' }))
+    expect(lastFeedArgs?.sub).toBe('team@acme.com')
+  })
+
+  it('builds Machine filter options from the device registry, not the feed', () => {
+    devicesResult = [{ machineId: 'mac-1', label: "Alice's MacBook", lastSeenAt: 1 }]
+    setFeed([]) // empty feed — the option must still come from devices
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by machine/i }))
+    fireEvent.click(screen.getByRole('option', { name: "Alice's MacBook" }))
+    expect(lastFeedArgs?.machine).toBe('mac-1')
+  })
+
+  it('shows a healthy summary strip when feedSummary reports no attention needed', () => {
+    summaryResult = { needsAttention: 0, activeMachines: 2, lastRefreshAt: Date.now() }
     render(<AuditPage />)
     expect(screen.getByText(/vault healthy/i)).toBeTruthy()
+    expect(screen.getByText(/2 machines active/i)).toBeTruthy()
+    expect(screen.getByText(/last refresh/i)).toBeTruthy()
   })
 
-  it('warns in the summary strip when a subscription grant has lapsed', () => {
-    setFeed([activity({ actor: { userId: 'u1', name: 'Alice Tester' } })])
-    subsResult = [{ _id: 's1', email: 'team@acme.com', refreshExpiresAt: NOW - 1000 }]
+  it('warns in the summary strip when feedSummary reports subs needing attention', () => {
+    summaryResult = { needsAttention: 2, activeMachines: 1, lastRefreshAt: undefined }
     render(<AuditPage />)
-    expect(screen.getByText(/needs attention/i)).toBeTruthy()
-  })
-
-  it('warns when a sub’s latest refresh failed even though its grant has not lapsed', () => {
-    // The strip must not contradict the feed: a failing refresh below should
-    // never coexist with a green "healthy" strip just because the stored
-    // grant timestamp is still in the future.
-    setFeed([refresh({ id: 'bad', outcome: 'failure', error: 'boom', subEmail: 'team@acme.com' })])
-    subsResult = [{ _id: 's1', email: 'team@acme.com', refreshExpiresAt: Date.now() + 86_400_000 }]
-    render(<AuditPage />)
-    expect(screen.getByText(/needs attention/i)).toBeTruthy()
-  })
-
-  it('stays healthy when a later success supersedes an earlier failure for the same sub', () => {
-    // Events are newest-first; the most-recent outcome per sub decides health.
-    setFeed([
-      refresh({ id: 'ok', at: NOW - 1000, outcome: 'success', subEmail: 'team@acme.com' }),
-      refresh({ id: 'bad', at: NOW - 5000, outcome: 'failure', error: 'boom', subEmail: 'team@acme.com' }),
-    ])
-    subsResult = [{ _id: 's1', email: 'team@acme.com', refreshExpiresAt: Date.now() + 86_400_000 }]
-    render(<AuditPage />)
-    expect(screen.getByText(/vault healthy/i)).toBeTruthy()
+    expect(screen.getByText(/2 subscriptions need attention/i)).toBeTruthy()
   })
 
   it('notes when the feed is capped at the recent window', () => {
@@ -172,22 +168,36 @@ describe('/dashboard/audit', () => {
     expect(screen.getByText(/most recent 500/i)).toBeTruthy()
   })
 
-  it('tells the user older history is not searched when a filter empties a capped window', () => {
-    // Only a routine pull is in-window, hidden by default → filtered view is
-    // empty. Because the window is capped, the empty state must not imply
-    // nothing exists; it should say older history was not searched.
-    setFeed([activity({ id: 'pl', action: 'pull', actor: { userId: 'u1', name: 'Alice Tester' } })], true)
+  it('points at the routine toggle when the unfiltered feed is empty', () => {
+    setFeed([])
     render(<AuditPage />)
-    expect(screen.getByText(/older history is not searched/i)).toBeTruthy()
+    expect(screen.getByText(/routine events.*are hidden/i)).toBeTruthy()
   })
 
-  it('uses the plain filters empty-state when the window is not capped', () => {
-    setFeed([activity({ id: 'pl', action: 'pull', actor: { userId: 'u1', name: 'Alice Tester' } })], false)
+  it('shows a plain empty-state when routine events are also shown', () => {
+    setFeed([])
     render(<AuditPage />)
+    fireEvent.click(screen.getByRole('button', { name: /show routine events/i }))
+    expect(screen.getByText(/no activity yet/i)).toBeTruthy()
+  })
+
+  it('tells the user older history was not fully searched when a filter empties a capped feed', () => {
+    setFeed([], true)
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by status/i }))
+    fireEvent.click(screen.getByRole('option', { name: 'Failed' }))
+    expect(screen.getByText(/older history was not fully searched/i)).toBeTruthy()
+  })
+
+  it('shows the plain no-match copy when a filter empties an uncapped feed', () => {
+    setFeed([], false)
+    render(<AuditPage />)
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by status/i }))
+    fireEvent.click(screen.getByRole('option', { name: 'Failed' }))
     expect(screen.getByText(/no events match the current filters/i)).toBeTruthy()
   })
 
-  it('paginates the window at 25 rows per page by default', () => {
+  it('paginates the returned matches at 25 rows per page by default', () => {
     const events = Array.from({ length: 30 }, (_, i) =>
       activity({ id: `a${i.toString()}`, at: NOW - i * 60_000, actor: { userId: 'u1', name: 'Alice Tester' } })
     )
@@ -199,11 +209,5 @@ describe('/dashboard/audit', () => {
     fireEvent.click(screen.getByRole('button', { name: /next page/i }))
     expect(container.querySelectorAll('[data-slot="audit-row"]')).toHaveLength(5)
     expect(screen.getByText(/page\s+2\s+of\s+2/i)).toBeTruthy()
-  })
-
-  it('renders System as the actor for automatic refresh events', () => {
-    setFeed([refresh({ outcome: 'failure', error: 'boom', subEmail: 'team@acme.com' })])
-    render(<AuditPage />)
-    expect(screen.getByText(/system/i)).toBeTruthy()
   })
 })

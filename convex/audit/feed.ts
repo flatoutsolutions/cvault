@@ -11,16 +11,18 @@
  *   - refresh  → outcome + trigger + sub email (no human actor — it's the
  *                vault's automatic refresh, surfaced as "System" in the UI)
  *
- * WINDOW (not cursor pagination). The feed returns the most-recent
- * `WINDOW_LIMIT` events as one fully-materialised array. The previous design
- * paginated each source independently and merged client-side, which made
- * client-side filters LEAKY across page boundaries — a filtered row could sit
- * on an unloaded page and silently never appear. A bounded window makes
- * filtering correct WITHIN the window: every in-window row the filter could
- * match is already in hand, so no match hides on an unloaded page. Matches
- * older than the window are not searched; `capped` tells the UI it is showing
- * a truncated window so the page says so honestly (see the audit page's
- * empty-state copy) rather than implying the filtered result is exhaustive.
+ * SERVER-SIDE FILTERING. The page's sub / machine / status / routine filters
+ * are passed as query args and applied here, while scanning each source from
+ * newest backwards. This searches the WHOLE history for matches — not just a
+ * recent slice — so a matching event can never hide behind an unloaded page or
+ * outside a materialised window (the bug the previous client-filtered designs
+ * both had). We stop a source once it has yielded `WINDOW_LIMIT` matches or we
+ * have examined `SCAN_LIMIT` rows; `capped` then tells the UI that older
+ * matches may exist beyond what was returned so it can say so honestly.
+ *
+ * The health summary strip does NOT read this filtered feed — a filter must not
+ * change "is the vault healthy?". It reads {@link feedSummary}, which is
+ * computed over unfiltered, authoritative state.
  *
  * Shared vault — no `userId` scoping (see convex/utils/users.ts:3-7), matching
  * the rest of the dashboard reads.
@@ -32,11 +34,24 @@ import { authenticatedQuery } from '../utils/auth'
 import { coalesceMachineId } from '../utils/identity'
 
 /**
- * Most-recent events returned in one shot. Taken from EACH source before the
- * merge, so the merged top-`WINDOW_LIMIT` is the true most-recent window. For
- * an internal vault this is a generous bound; `capped` flags when it's hit.
+ * Max matching events returned in one shot, taken from EACH source before the
+ * merge, so the merged top-`WINDOW_LIMIT` is the true most-recent matching
+ * window. For an internal vault this is a generous bound; `capped` flags it.
  */
 const WINDOW_LIMIT = 500
+
+/**
+ * Safety bound on how many rows a single filtered scan examines per source
+ * before giving up and flagging `capped`. Keeps query cost predictable when a
+ * restrictive filter (e.g. a rare failure) would otherwise walk the entire
+ * append-only history. Generous enough that an internal vault scans everything
+ * in practice.
+ */
+const SCAN_LIMIT = 5000
+
+/** Distinct machines counted as "active" for the summary strip — over the most
+ * recent activity, not all history. */
+const SUMMARY_ACTIVITY_WINDOW = 500
 
 const actionValidator = v.union(
   v.literal('switch'),
@@ -50,6 +65,8 @@ const actionValidator = v.union(
   v.literal('import'),
   v.literal('rotate')
 )
+
+const statusValidator = v.union(v.literal('ok'), v.literal('failed'), v.literal('attention'))
 
 const actorValidator = v.object({
   userId: v.id('users'),
@@ -80,23 +97,102 @@ const refreshEventValidator = v.object({
 })
 
 type Actor = { userId: Id<'users'>; name: string; imageUrl?: string }
+type FeedEvent = ActivityEvent | RefreshEvent
+type EventStatus = 'ok' | 'failed' | 'attention'
+
+type Filters = {
+  sub?: string
+  machine?: string
+  status?: EventStatus
+  /** When false, routine events (successful auto-refreshes, bulk pulls) are
+   * dropped — the page's default. Omitted on the wire means "include". */
+  includeRoutine: boolean
+}
+
+/**
+ * Status tier of an event. Mirror of the frontend's `eventStatus`
+ * (frontend/src/components/dashboard/auditEvent.ts) — keep the two in sync so
+ * server-side filtering matches what the badge renders.
+ */
+function statusOf(e: FeedEvent): EventStatus {
+  if (e.kind === 'activity') return 'ok'
+  if (e.outcome === 'success') return 'ok'
+  if (e.outcome === 'reloginRequired') return 'attention'
+  return 'failed'
+}
+
+/**
+ * Routine = high-volume, low-signal events: successful automatic refreshes and
+ * whole-bundle credential syncs (`pull`). Hidden by default so meaningful
+ * events stand out; the page's "Show routine events" toggle flips
+ * `includeRoutine`.
+ */
+function isRoutineEvent(e: FeedEvent): boolean {
+  if (e.kind === 'refresh') return e.outcome === 'success'
+  return e.action === 'pull'
+}
+
+function matchesFilters(e: FeedEvent, f: Filters): boolean {
+  if (!f.includeRoutine && isRoutineEvent(e)) return false
+  if (f.sub !== undefined && e.subEmail !== f.sub) return false
+  // Machine is an activity-only dimension; a machine filter excludes refreshes.
+  if (f.machine !== undefined && (e.kind !== 'activity' || e.machineId !== f.machine)) return false
+  if (f.status !== undefined && statusOf(e) !== f.status) return false
+  return true
+}
+
+/**
+ * Scan one source newest-first, enriching and filtering each row, until it has
+ * yielded `WINDOW_LIMIT` matches or examined `SCAN_LIMIT` rows. `more` is true
+ * when the scan stopped early — i.e. older matching rows may exist unsearched.
+ */
+async function collectFiltered<TDoc>(
+  rows: AsyncIterable<TDoc>,
+  toEvent: (row: TDoc) => FeedEvent,
+  filters: Filters
+): Promise<{ events: FeedEvent[]; more: boolean }> {
+  const events: FeedEvent[] = []
+  let scanned = 0
+  for await (const row of rows) {
+    scanned += 1
+    const e = toEvent(row)
+    if (matchesFilters(e, filters)) {
+      events.push(e)
+      if (events.length >= WINDOW_LIMIT) return { events, more: true }
+    }
+    if (scanned >= SCAN_LIMIT) return { events, more: true }
+  }
+  return { events, more: false }
+}
 
 export const recentFeed = authenticatedQuery({
-  args: {},
+  args: {
+    /** Filter to one subscription email. */
+    sub: v.optional(v.string()),
+    /** Filter to one machine id (activity-only dimension). */
+    machine: v.optional(v.string()),
+    /** Filter to one status tier. */
+    status: v.optional(statusValidator),
+    /** Include routine events (successful refreshes, bulk pulls). Omitted means
+     * include — the page sends `false` to hide them by default. */
+    includeRoutine: v.optional(v.boolean()),
+  },
   returns: v.object({
     events: v.array(v.union(activityEventValidator, refreshEventValidator)),
-    /** True when older events exist beyond the returned window. */
+    /** True when older matching events may exist beyond what was returned. */
     capped: v.boolean(),
   }),
-  handler: async (ctx) => {
-    // These five reads are independent — the window rows and the three
-    // enrichment tables. Issue them concurrently so the query pays one
-    // round-trip's latency, not five sequential ones. Each enrichment table
-    // is small for this deployment; collect once and resolve in-memory rather
-    // than per-row queries.
-    const [activityRows, refreshRows, subscriptions, devices, users] = await Promise.all([
-      ctx.db.query('machineActivity').withIndex('byAt').order('desc').take(WINDOW_LIMIT),
-      ctx.db.query('refreshLog').withIndex('byAt').order('desc').take(WINDOW_LIMIT),
+  handler: async (ctx, args) => {
+    const filters: Filters = {
+      ...(args.sub !== undefined ? { sub: args.sub } : {}),
+      ...(args.machine !== undefined ? { machine: args.machine } : {}),
+      ...(args.status !== undefined ? { status: args.status } : {}),
+      includeRoutine: args.includeRoutine ?? true,
+    }
+
+    // Enrichment lookups. Each table is small for this deployment; collect once
+    // and resolve in-memory rather than per-row queries.
+    const [subscriptions, devices, users] = await Promise.all([
       ctx.db.query('subscriptions').collect(),
       ctx.db.query('devices').collect(),
       ctx.db.query('users').collect(),
@@ -119,20 +215,79 @@ export const recentFeed = authenticatedQuery({
       })
     }
 
-    const activityEvents = activityRows.map((row) =>
-      toActivityEvent(row, subEmailById, deviceLabelByMachine, actorById)
-    )
-    const refreshEvents = refreshRows.map((row) => toRefreshEvent(row, subEmailById))
+    // Scan both sources concurrently, newest-first, applying the filters.
+    const [activity, refresh] = await Promise.all([
+      collectFiltered(
+        ctx.db.query('machineActivity').withIndex('byAt').order('desc'),
+        (row) => toActivityEvent(row, subEmailById, deviceLabelByMachine, actorById),
+        filters
+      ),
+      collectFiltered(
+        ctx.db.query('refreshLog').withIndex('byAt').order('desc'),
+        (row) => toRefreshEvent(row, subEmailById),
+        filters
+      ),
+    ])
 
-    const merged = [...activityEvents, ...refreshEvents].sort((a, b) => b.at - a.at)
+    const merged = [...activity.events, ...refresh.events].sort((a, b) => b.at - a.at)
     const events = merged.slice(0, WINDOW_LIMIT)
-
-    // Older rows exist beyond the window if either source filled its own cap,
-    // or the merge itself overflowed the window.
-    const capped =
-      activityRows.length === WINDOW_LIMIT || refreshRows.length === WINDOW_LIMIT || merged.length > WINDOW_LIMIT
+    const capped = activity.more || refresh.more || merged.length > WINDOW_LIMIT
 
     return { events, capped }
+  },
+})
+
+/**
+ * Health summary for the page's strip — "is the vault fine?" answered
+ * independently of the feed's filters. A sub "needs attention" if its refresh
+ * grant has lapsed OR its most-recent refresh attempt did not succeed, so the
+ * strip can never read healthy while a sub is failing. `lastRefreshAt` and the
+ * active-machine count come from authoritative reads, not the filtered window.
+ */
+export const feedSummary = authenticatedQuery({
+  args: {},
+  returns: v.object({
+    needsAttention: v.number(),
+    activeMachines: v.number(),
+    lastRefreshAt: v.optional(v.number()),
+  }),
+  handler: async (ctx) => {
+    const [subscriptions, recentActivity, lastRefresh] = await Promise.all([
+      ctx.db.query('subscriptions').collect(),
+      ctx.db.query('machineActivity').withIndex('byAt').order('desc').take(SUMMARY_ACTIVITY_WINDOW),
+      ctx.db.query('refreshLog').withIndex('byAt').order('desc').first(),
+    ])
+
+    const liveSubs = subscriptions.filter((s) => s.removedAt === undefined)
+    // Latest refresh outcome per live sub, via the per-sub index (cheap point
+    // reads — the vault has a small number of subs).
+    const latestOutcomes = await Promise.all(
+      liveSubs.map((s) =>
+        ctx.db
+          .query('refreshLog')
+          .withIndex('bySubscriptionAndAt', (q) => q.eq('subscriptionId', s._id))
+          .order('desc')
+          .first()
+      )
+    )
+
+    const now = Date.now()
+    let needsAttention = 0
+    liveSubs.forEach((s, i) => {
+      const lapsed = s.refreshExpiresAt !== undefined && s.refreshExpiresAt <= now
+      const latest = latestOutcomes[i]
+      const failing = latest !== null && latest.outcome !== 'success'
+      if (lapsed || failing) needsAttention += 1
+    })
+
+    const machines = new Set<string>()
+    for (const row of recentActivity) machines.add(coalesceMachineId(row))
+
+    return {
+      needsAttention,
+      activeMachines: machines.size,
+      ...(lastRefresh !== null ? { lastRefreshAt: lastRefresh.at } : {}),
+    }
   },
 })
 

@@ -1,12 +1,13 @@
 /**
  * auditEvent — presentation helpers that turn a raw audit feed event into the
- * plain-language label, status, and routine-classification the audit page
- * renders. Pure functions, unit-tested here.
+ * plain-language label and status the audit page renders. Pure functions,
+ * unit-tested here. (Routine classification + filtering now live server-side
+ * in convex/audit/feed.ts.)
  */
 import { describe, expect, it } from 'vitest'
 
 import type { ActivityEvent, AuditEvent } from './auditEvent'
-import { describeEvent, eventStatus, isRoutine } from './auditEvent'
+import { describeEvent, eventStatus } from './auditEvent'
 
 function activity(action: ActivityEvent['action']): AuditEvent {
   return { kind: 'activity', id: 'a', at: 1, action, machineId: 'm' }
@@ -46,20 +47,5 @@ describe('eventStatus', () => {
     expect(eventStatus(refresh('success'))).toBe('ok')
     expect(eventStatus(refresh('failure'))).toBe('failed')
     expect(eventStatus(refresh('reloginRequired'))).toBe('attention')
-  })
-})
-
-describe('isRoutine', () => {
-  it('treats successful auto-refreshes and bulk syncs as routine noise', () => {
-    expect(isRoutine(refresh('success'))).toBe(true)
-    expect(isRoutine(activity('pull'))).toBe(true)
-  })
-
-  it('treats failures, relogin, and meaningful CLI actions as non-routine', () => {
-    expect(isRoutine(refresh('failure'))).toBe(false)
-    expect(isRoutine(refresh('reloginRequired'))).toBe(false)
-    expect(isRoutine(activity('switch'))).toBe(false)
-    expect(isRoutine(activity('add'))).toBe(false)
-    expect(isRoutine(activity('login'))).toBe(false)
   })
 })

@@ -46,20 +46,14 @@ export function describeEvent(event: AuditEvent): string {
   return event.kind === 'activity' ? ACTIVITY_LABELS[event.action] : REFRESH_LABELS[event.outcome]
 }
 
-/** Health classification used for the status badge + row tint. */
+/**
+ * Health classification used for the status badge + row tint. The server
+ * mirrors this in `statusOf` (convex/audit/feed.ts) for status filtering —
+ * keep the two in sync.
+ */
 export function eventStatus(event: AuditEvent): EventStatus {
   if (event.kind === 'activity') return 'ok'
   if (event.outcome === 'success') return 'ok'
   if (event.outcome === 'reloginRequired') return 'attention'
   return 'failed'
-}
-
-/**
- * Routine = high-volume, low-signal events that bury the meaningful ones:
- * successful automatic token refreshes and whole-bundle credential syncs.
- * The page hides these by default behind a "show routine events" toggle.
- */
-export function isRoutine(event: AuditEvent): boolean {
-  if (event.kind === 'refresh') return event.outcome === 'success'
-  return event.action === 'pull'
 }
