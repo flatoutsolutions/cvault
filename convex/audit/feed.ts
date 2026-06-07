@@ -276,7 +276,10 @@ export const feedSummary = authenticatedQuery({
     liveSubs.forEach((s, i) => {
       const lapsed = s.refreshExpiresAt !== undefined && s.refreshExpiresAt <= now
       const latest = latestOutcomes[i]
-      const failing = latest !== null && latest.outcome !== 'success'
+      // `latestOutcomes[i]` is `T | null | undefined` under
+      // noUncheckedIndexedAccess (`.first()` yields null; the index yields
+      // undefined). `!= null` excludes BOTH so `.outcome` is safe.
+      const failing = latest != null && latest.outcome !== 'success'
       if (lapsed || failing) needsAttention += 1
     })
 
