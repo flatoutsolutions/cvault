@@ -13,7 +13,7 @@
  * disappears from the table.
  *
  * Cross-tenant note: local-reviewer-2026-05-02.md §C1 flagged that the
- * shipped `cli.actions.revokeSession` doesn't verify session ownership.
+ * shipped `cli.actions.revokeDevice` doesn't verify session ownership.
  * That is a backend-side concern; this scenario covers the frontend
  * dispatch contract and is independent of the C1 fix. (The frontend's
  * behavior is identical regardless of whether the backend rejects: in the
@@ -30,7 +30,7 @@ let sessionsResult: unknown = undefined
 const revokeMock = vi.fn()
 
 // Track the action ref the route registered so the test can defend
-// against future renames of `cli.actions.revokeSession`.
+// against future renames of `cli.actions.revokeDevice`.
 const actionRefsSeen: Array<{ name: string }> = []
 
 /**
@@ -63,10 +63,9 @@ vi.mock('@tanstack/react-router', () => ({
 function makeSession(overrides: Record<string, unknown> = {}) {
   const now = Date.now()
   return {
-    clerkSessionId: 'sess_111aaa222bbb',
+    machineId: 'm_111aaa222bbb',
+    label: 'air',
     lastSeenAt: now - 60_000,
-    lastIpHash: 'a1b2c3d4',
-    revocable: true,
     ...overrides,
   }
 }
@@ -83,8 +82,8 @@ describe('scenario / revoke machine', () => {
     vi.unstubAllGlobals()
   })
 
-  it('dispatches api.cli.actions.revokeSession with the clicked clerkSessionId', async () => {
-    sessionsResult = [makeSession({ clerkSessionId: 'sess_target_xyz' })]
+  it('dispatches api.cli.actions.revokeDevice with the clicked machineId', async () => {
+    sessionsResult = [makeSession({ machineId: 'm_target_xyz' })]
 
     render(<MachinesPage />)
 
@@ -94,20 +93,20 @@ describe('scenario / revoke machine', () => {
       expect(revokeMock).toHaveBeenCalledTimes(1)
     })
 
-    expect(revokeMock.mock.calls[0]?.[0]).toEqual({ clerkSessionId: 'sess_target_xyz' })
+    expect(revokeMock.mock.calls[0]?.[0]).toEqual({ machineId: 'm_target_xyz' })
   })
 
-  it('passes the api.cli.actions.revokeSession action reference to useAction', () => {
+  it('passes the api.cli.actions.revokeDevice action reference to useAction', () => {
     sessionsResult = [makeSession()]
     render(<MachinesPage />)
 
     // Defends against a rename to e.g. `cli.actions.revoke` or moving the
     // action to a different module.
-    expect(actionRefsSeen.some((r) => r.name.includes('revokeSession'))).toBe(true)
+    expect(actionRefsSeen.some((r) => r.name.includes('revokeDevice'))).toBe(true)
   })
 
   it('disables the Revoke button while the action is in-flight', async () => {
-    sessionsResult = [makeSession({ clerkSessionId: 'sess_inflight' })]
+    sessionsResult = [makeSession({ machineId: 'sess_inflight' })]
 
     let resolveRevoke: (() => void) | undefined
     revokeMock.mockImplementation(
@@ -133,8 +132,8 @@ describe('scenario / revoke machine', () => {
   it('removes the row from the list after the live query reflects the revoke', async () => {
     // Phase 1: two sessions, both visible.
     sessionsResult = [
-      makeSession({ clerkSessionId: 'sess_target_aaa', lastIpHash: 'ip_a' }),
-      makeSession({ clerkSessionId: 'sess_other_bbb', lastIpHash: 'ip_b' }),
+      makeSession({ machineId: 'sess_target_aaa', lastIpHash: 'ip_a' }),
+      makeSession({ machineId: 'sess_other_bbb', lastIpHash: 'ip_b' }),
     ]
 
     const { container, rerender } = render(<MachinesPage />)
@@ -146,7 +145,7 @@ describe('scenario / revoke machine', () => {
     fireEvent.click(revokeBtns[0])
 
     await waitFor(() => {
-      expect(revokeMock).toHaveBeenCalledWith({ clerkSessionId: 'sess_target_aaa' })
+      expect(revokeMock).toHaveBeenCalledWith({ machineId: 'sess_target_aaa' })
     })
 
     // Phase 2: backend has revoked + the audit/distinct-sessions query
@@ -157,14 +156,14 @@ describe('scenario / revoke machine', () => {
     // exact semantics it may or may not still appear in the list. This
     // scenario asserts the realistic post-revoke snapshot: the row is
     // gone.)
-    sessionsResult = [makeSession({ clerkSessionId: 'sess_other_bbb', lastIpHash: 'ip_b' })]
+    sessionsResult = [makeSession({ machineId: 'sess_other_bbb', lastIpHash: 'ip_b' })]
     rerender(<MachinesPage />)
 
     expect(container.querySelectorAll('[data-slot="machine-row"]').length).toBe(1)
   })
 
-  it('renders the inline error block when revokeSession throws', async () => {
-    sessionsResult = [makeSession({ clerkSessionId: 'sess_will_fail' })]
+  it('renders the inline error block when revokeDevice throws', async () => {
+    sessionsResult = [makeSession({ machineId: 'sess_will_fail' })]
     revokeMock.mockRejectedValueOnce(new Error('CLERK_BACKEND_ERROR: 429 too many requests'))
 
     render(<MachinesPage />)
@@ -181,9 +180,9 @@ describe('scenario / revoke machine', () => {
 
   it('only revokes the clicked session when multiple sessions are present', async () => {
     sessionsResult = [
-      makeSession({ clerkSessionId: 'sess_keep_111' }),
-      makeSession({ clerkSessionId: 'sess_doomed_222' }),
-      makeSession({ clerkSessionId: 'sess_also_keep_333' }),
+      makeSession({ machineId: 'sess_keep_111' }),
+      makeSession({ machineId: 'sess_doomed_222' }),
+      makeSession({ machineId: 'sess_also_keep_333' }),
     ]
 
     render(<MachinesPage />)
@@ -197,6 +196,6 @@ describe('scenario / revoke machine', () => {
     await waitFor(() => {
       expect(revokeMock).toHaveBeenCalledTimes(1)
     })
-    expect(revokeMock.mock.calls[0]?.[0]).toEqual({ clerkSessionId: 'sess_doomed_222' })
+    expect(revokeMock.mock.calls[0]?.[0]).toEqual({ machineId: 'sess_doomed_222' })
   })
 })

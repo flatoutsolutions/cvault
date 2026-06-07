@@ -1,0 +1,75 @@
+/**
+ * Spec: CVLT-3 — devices upsert + markRevoked mutations.
+ *
+ * Verifies:
+ *  - upsert creates a device row on first sight
+ *  - upsert bumps lastSeenAt + clears revokedAt on subsequent calls
+ *  - upsert stores sid when provided; updates it on subsequent upsert
+ *  - markRevoked sets revokedAt on the matching (user, machine) row
+ *  - a subsequent upsert after markRevoked clears revokedAt
+ */
+import { describe, expect, it } from 'vitest'
+
+import { seedUser, vault } from '../__tests__/helpers'
+import { internal } from '../_generated/api'
+
+describe('devices mutations', () => {
+  it('upsert creates then updates lastSeenAt for the same (user, machine)', async () => {
+    const t = vault()
+    const userId = await seedUser(t)
+    await t.mutation(internal.devices.mutations.upsert, { userId, machineId: 'm-1', label: 'air', at: 1000 })
+    await t.mutation(internal.devices.mutations.upsert, { userId, machineId: 'm-1', label: 'air', at: 2000 })
+    const rows = await t.run(async (ctx) => ctx.db.query('devices').collect())
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.lastSeenAt).toBe(2000)
+    expect(rows[0]?.createdAt).toBe(1000)
+  })
+
+  it('upsert stores sid on insert and patches it on update', async () => {
+    const t = vault()
+    const userId = await seedUser(t)
+    await t.mutation(internal.devices.mutations.upsert, {
+      userId,
+      machineId: 'm-sid',
+      at: 1000,
+      sid: 'sess_initial',
+    })
+    let row = await t.run(async (ctx) => ctx.db.query('devices').unique())
+    expect(row?.sid).toBe('sess_initial')
+
+    // Re-login produces a new sid (new Clerk session).
+    await t.mutation(internal.devices.mutations.upsert, {
+      userId,
+      machineId: 'm-sid',
+      at: 2000,
+      sid: 'sess_renewed',
+    })
+    row = await t.run(async (ctx) => ctx.db.query('devices').unique())
+    expect(row?.sid).toBe('sess_renewed')
+    // Still one row.
+    const rows = await t.run(async (ctx) => ctx.db.query('devices').collect())
+    expect(rows).toHaveLength(1)
+  })
+
+  it('markRevoked sets revokedAt; a later upsert clears it', async () => {
+    const t = vault()
+    const userId = await seedUser(t)
+    await t.mutation(internal.devices.mutations.upsert, { userId, machineId: 'm-1', label: 'air', at: 1000 })
+    await t.mutation(internal.devices.mutations.markRevoked, { userId, machineId: 'm-1', at: 5000 })
+    let row = await t.run(async (ctx) =>
+      ctx.db
+        .query('devices')
+        .withIndex('byUserAndMachine', (q) => q.eq('userId', userId).eq('machineId', 'm-1'))
+        .unique()
+    )
+    expect(row?.revokedAt).toBe(5000)
+    await t.mutation(internal.devices.mutations.upsert, { userId, machineId: 'm-1', label: 'air', at: 6000 })
+    row = await t.run(async (ctx) =>
+      ctx.db
+        .query('devices')
+        .withIndex('byUserAndMachine', (q) => q.eq('userId', userId).eq('machineId', 'm-1'))
+        .unique()
+    )
+    expect(row?.revokedAt).toBeUndefined()
+  })
+})

@@ -6,32 +6,24 @@
  *
  * Exercises the full flow through the in-memory Convex test harness:
  *  1. Bootstrap fallback — empty allowedEmailDomains table → flatout.solutions
- *     allowed; webhook upserts; query succeeds; mint succeeds.
- *  2. Disallowed → webhook deletes via stubbed Clerk BAPI; query rejects;
- *     mint rejects.
+ *     allowed; webhook upserts; authed query succeeds.
+ *  2. Disallowed → webhook deletes via stubbed Clerk BAPI; query rejects.
  *  3. Dynamic round-trip — alice adds acme.com → bob signs in; alice removes
  *     acme.com → bob blocked.
  *  4. Self-removal blocked — alice cannot remove flatout.solutions while
  *     it's the row containing her own email.
  *
- * Hermetic — no real network, no real Clerk. Mocks @clerk/backend.verifyToken
- * via the same hoisted-factory pattern as convex/cli/mintAction.test.ts.
+ * Note: the CLI mint path (internal.cli.mintAction.mintConvexJwt) was
+ * removed in Task 19 (hard cutover to OAuth PKCE). The mint-coverage cases
+ * have been dropped from this scenario; domain-gate enforcement for the new
+ * OAuth path is covered by the revokedUsers denylist (Task 5).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TEST_IDENTITY, vault } from '../__tests__/helpers'
-import { api, internal } from '../_generated/api'
+import { api } from '../_generated/api'
 import type { Id } from '../_generated/dataModel'
 import { __setClerkFetch } from '../cli/clerk'
-
-const verifyTokenMock = vi.hoisted(() => vi.fn())
-vi.mock('@clerk/backend', async () => {
-  const actual = await vi.importActual<typeof import('@clerk/backend')>('@clerk/backend')
-  return {
-    ...actual,
-    verifyToken: verifyTokenMock,
-  }
-})
 
 const ORIGINAL_KEY = process.env.CLERK_SECRET_KEY
 const ORIGINAL_HOOK = process.env.CLERK_WEBHOOK_SECRET
@@ -39,7 +31,6 @@ const ORIGINAL_HOOK = process.env.CLERK_WEBHOOK_SECRET
 beforeEach(() => {
   process.env.CLERK_SECRET_KEY = 'sk_test_dummy'
   process.env.CLERK_WEBHOOK_SECRET = 'whsec_dummy'
-  verifyTokenMock.mockReset()
 })
 
 afterEach(() => {
@@ -71,12 +62,8 @@ async function mockValidate(event: object) {
   vi.spyOn(mod, 'validateRequest').mockResolvedValue(event as never)
 }
 
-function mockVerify(payload: object) {
-  verifyTokenMock.mockResolvedValue(payload as never)
-}
-
 describe('scenario — runtime allowlist', () => {
-  it('full happy path with bootstrap fallback', async () => {
+  it('full happy path with bootstrap fallback: webhook upserts, authed query succeeds', async () => {
     const t = vault()
     const event = userEvent({ type: 'user.created', userId: 'user_alice', email: 'alice@flatout.solutions' })
     await mockValidate(event)
@@ -92,18 +79,9 @@ describe('scenario — runtime allowlist', () => {
 
     const subs = await t.withIdentity(TEST_IDENTITY).query(api.subscriptions.queries.listForUser, {})
     expect(Array.isArray(subs)).toBe(true)
-
-    mockVerify({ sid: 'sess', sub: 'user_alice', email: 'alice@flatout.solutions' })
-    __setClerkFetch(
-      vi.fn(() =>
-        Promise.resolve(new Response(JSON.stringify({ jwt: 'jwt-ok' }), { status: 200 }))
-      ) as unknown as typeof fetch
-    )
-    const m = await t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })
-    expect(m.jwt).toBe('jwt-ok')
   })
 
-  it('disallowed flow: webhook BAPI-deletes, query rejects, mint rejects', async () => {
+  it('disallowed flow: webhook BAPI-deletes, authed query rejects', async () => {
     const t = vault()
     const event = userEvent({ type: 'user.created', userId: 'user_bob', email: 'bob@gmail.com' })
     await mockValidate(event)
@@ -129,11 +107,6 @@ describe('scenario — runtime allowlist', () => {
       email: 'bob@gmail.com',
     } as const
     await expect(t.withIdentity(bobIdentity).query(api.subscriptions.queries.listForUser, {})).rejects.toThrow(
-      /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
-    )
-
-    mockVerify({ sid: 'sess', sub: 'user_bob', email: 'bob@gmail.com' })
-    await expect(t.action(internal.cli.mintAction.mintConvexJwt, { clerkSessionToken: 'tok' })).rejects.toThrow(
       /EMAIL_DOMAIN_NOT_ALLOWED|domain/i
     )
   })

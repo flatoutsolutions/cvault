@@ -46,17 +46,16 @@ const triggerResultValidator = v.object({
 export const triggerKeyRotation = authenticatedAction({
   args: {
     /**
-     * Explicit Clerk session id forwarded by the CLI. BAPI-minted JWTs
-     * lack the `sid` claim, so the server prefers `identity.sid` (FAPI)
-     * and falls back to this arg via `resolveCallerSession`.
+     * Machine id forwarded by the CLI (CVLT-3: replaces clerkSessionId).
+     * Falls back to the resolved Clerk session id for dashboard callers.
      */
-    clerkSessionId: v.optional(v.string()),
+    machineId: v.optional(v.string()),
     machineLabel: v.optional(v.string()),
   },
   returns: triggerResultValidator,
   handler: async (
     ctx,
-    { clerkSessionId, machineLabel }
+    { machineId, machineLabel }
   ): Promise<{ jobId: Id<'keyRotationJobs'>; totalRows: number; alreadyRunning: boolean }> => {
     const identity = getIdentity(ctx)
     const userId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
@@ -86,7 +85,7 @@ export const triggerKeyRotation = authenticatedAction({
     // ACTING caller's _id (already resolved via getIdByExternalId).
     await ctx.runMutation(internal.machineActivity.mutations.record, {
       userId,
-      clerkSessionId: resolveCallerSession(identity, clerkSessionId),
+      machineId: machineId ?? resolveCallerSession(identity),
       action: 'rotate',
       at: Date.now(),
       ...(machineLabel !== undefined ? { machineLabel } : {}),

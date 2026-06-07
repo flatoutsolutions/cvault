@@ -102,8 +102,7 @@ function createRefreshFake(initial: FakeSubscription[]): {
   state: Map<string, FakeSubscription>
   // Mirrors VaultClient.withMachineLabel — refresh's command code calls it.
   withMachineLabel: <T extends Record<string, unknown>>(args: T) => T & { machineLabel?: string }
-  withSessionId: <T extends Record<string, unknown>>(args: T) => T & { clerkSessionId: string }
-  withMeta: <T extends Record<string, unknown>>(args: T) => T & { machineLabel?: string; clerkSessionId: string }
+  withMeta: <T extends Record<string, unknown>>(args: T) => T & { machineId: string; machineLabel?: string }
 } {
   const state = new Map(initial.map((s) => [s._id as string, s]))
 
@@ -185,14 +184,11 @@ function createRefreshFake(initial: FakeSubscription[]): {
     // Identity passthrough — these scenarios don't assert label propagation.
     return args
   }
-  function withSessionId<T extends Record<string, unknown>>(args: T): T & { clerkSessionId: string } {
-    return { ...args, clerkSessionId: 'fake-session' }
-  }
-  function withMeta<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string; clerkSessionId: string } {
-    return withSessionId(withMachineLabel(args))
+  function withMeta<T extends Record<string, unknown>>(args: T): T & { machineId: string; machineLabel?: string } {
+    return { ...withMachineLabel(args), machineId: 'fake-machine-id' }
   }
 
-  return { query, action, state, withMachineLabel, withSessionId, withMeta }
+  return { query, action, state, withMachineLabel, withMeta }
 }
 
 describe('Scenario — cvault refresh adopts local when local is newer', () => {

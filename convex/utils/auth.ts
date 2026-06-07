@@ -20,6 +20,7 @@ import {
 } from 'convex/server'
 import { ConvexError, type PropertyValidators } from 'convex/values'
 
+import { internal } from '../_generated/api'
 import type { DataModel } from '../_generated/dataModel'
 import { action, mutation, query } from '../_generated/server'
 import { DOMAIN_REJECTION_ERROR_CODE, DOMAIN_REJECTION_MESSAGE, isAllowedEmail } from './domainGate'
@@ -75,9 +76,71 @@ function rejectDomain(): never {
   })
 }
 
+function rejectRevoked(): never {
+  throw new ConvexError({ code: 'USER_REVOKED', message: 'Access revoked. Contact an administrator.' })
+}
+
+function rejectDeviceRevoked(): never {
+  throw new ConvexError({
+    code: 'DEVICE_REVOKED',
+    message: "This machine's access was revoked. Run `cvault login` to sign in again.",
+  })
+}
+
+/**
+ * Single denylist check covering both the user ban and session (device) ban
+ * tables.
+ *
+ * For ACTION ctx (has `runQuery`): one `runQuery` round-trip to
+ * `internal.denylist.queries.check` — cheaper than two separate round-trips.
+ *
+ * For QUERY/MUTATION ctx: two direct `ctx.db` indexed reads inline (no
+ * round-trip overhead; both are cheap point lookups).
+ */
+async function assertDenylist(
+  ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel> | GenericActionCtx<DataModel>,
+  identity: UserIdentity
+): Promise<void> {
+  const externalId = identity.subject
+  const rawSid = (identity as { sid?: unknown }).sid
+  const sid = typeof rawSid === 'string' && rawSid.length > 0 ? rawSid : undefined
+
+  let userRevoked: boolean
+  let sessionRevoked: boolean
+
+  if ('runQuery' in ctx) {
+    const result = await (ctx as GenericActionCtx<DataModel>).runQuery(internal.denylist.queries.check, {
+      externalId,
+      ...(sid !== undefined ? { sid } : {}),
+    })
+    userRevoked = result.userRevoked
+    sessionRevoked = result.sessionRevoked
+  } else {
+    const db = (ctx as GenericQueryCtx<DataModel>).db
+    const userRow = await db
+      .query('revokedUsers')
+      .withIndex('byExternalId', (q) => q.eq('externalId', externalId))
+      .unique()
+    userRevoked = userRow !== null
+
+    const sessionRow =
+      sid !== undefined
+        ? await db
+            .query('revokedSessions')
+            .withIndex('bySid', (q) => q.eq('sid', sid))
+            .unique()
+        : null
+    sessionRevoked = sessionRow !== null
+  }
+
+  if (userRevoked) rejectRevoked()
+  if (sessionRevoked) rejectDeviceRevoked()
+}
+
 async function resolveServer(ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>): Promise<UserIdentity> {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) throw notAuthenticatedError()
+  await assertDenylist(ctx, identity)
   // Load both lists in parallel — they hit independent tables and the
   // gate only needs both to make a decision.
   const [domains, emails] = await Promise.all([loadAllowedDomains(ctx), loadAllowedEmails(ctx)])
@@ -90,6 +153,7 @@ async function resolveServer(ctx: GenericQueryCtx<DataModel> | GenericMutationCt
 async function resolveAction(ctx: GenericActionCtx<DataModel>): Promise<UserIdentity> {
   const identity = await ctx.auth.getUserIdentity()
   if (!identity) throw notAuthenticatedError()
+  await assertDenylist(ctx, identity)
   const [domains, emails] = await Promise.all([loadAllowedDomainsFromAction(ctx), loadAllowedEmailsFromAction(ctx)])
   if (!isAllowedEmail(typeof identity.email === 'string' ? identity.email : null, domains, emails)) {
     rejectDomain()

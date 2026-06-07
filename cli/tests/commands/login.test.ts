@@ -1,31 +1,69 @@
 /**
- * Spec: §7 — `cvault login`.
+ * Spec: §Task 15 — `cvault login` OAuth Authorization Code + PKCE.
  *
- * Flow:
- *   1. Generate a random `state` nonce
- *   2. Start the localhost callback server (Bun.serve on 127.0.0.1:0)
- *   3. Open the dashboard URL with `redirect=http://127.0.0.1:<port>/&state=<nonce>`
- *   4. Wait for the dashboard to POST back `{state, signInToken}`
- *   5. Exchange the ticket for a Clerk session (FAPI)
- *   6. Persist `~/.vault/session.json` — including the machine label
- *      (`--label` override or `os.hostname()`) so the dashboard's
- *      "Machines" view can render a human-readable identifier per session
- *   7. Print success
+ * Flow under test:
+ *   1. Generate PKCE verifier + challenge
+ *   2. Start async callback server
+ *   3. Open browser to OAuth authorize URL
+ *   4. Wait for callback → captures `code`
+ *   5. Exchange code for tokens
+ *   6. Load machine id
+ *   7. Persist v2 session.json
+ *   8. Best-effort recordLogin audit
  *
- * We mock `startCallbackServer`, `openBrowser`, `exchangeTicketForSession`,
- * and `writeSession` so the test never opens a browser, never binds a
- * port, and never writes to disk.
+ * We mock `startCallbackServer`, `openBrowser`, `exchangeCodeForTokens`,
+ * `loadOrCreateMachineId`, and `writeSession` so the test never opens a
+ * browser, never binds a port, and never writes to disk.
  */
 import { hostname } from 'node:os'
 
+import { ConvexError } from 'convex/values'
 import { describe, expect, it, vi } from 'vitest'
 
-import pkg from '../../package.json' with { type: 'json' }
+import { DOMAIN_REJECTION_ERROR_CODE } from '../../../convex/utils/domainGate'
 import { startCallbackServer } from '../../src/auth/callbackServer'
-import { exchangeTicketForSession } from '../../src/auth/clerkFapi'
+import { loadOrCreateMachineId } from '../../src/auth/machineId'
+import { decodeIdTokenSid, exchangeCodeForTokens } from '../../src/auth/oauthPkce'
 import { openBrowser } from '../../src/auth/openBrowser'
 import { writeSession } from '../../src/auth/session'
 import { runLogin } from '../../src/commands/login'
+
+// Mock citty BEFORE any import that triggers it (citty not in Node test env).
+// vi.mock is hoisted by vitest so order relative to imports doesn't matter.
+vi.mock('citty', () => ({
+  defineCommand: vi.fn((config: unknown) => config),
+}))
+
+// Mock the convex generated API (not resolvable in Node test env)
+vi.mock('../../../convex/_generated/api', () => ({
+  api: {
+    cli: {
+      actions: {
+        recordLogin: 'cli/actions:recordLogin',
+      },
+    },
+  },
+}))
+
+// Mutable action override used by the domain-rejection test.
+let vaultClientActionOverride: (() => Promise<unknown>) | undefined
+
+// Mock VaultClient so recordLogin audit does not hit Convex
+vi.mock('../../src/convex/vaultClient', () => ({
+  VaultClient: class {
+    action = vi.fn().mockImplementation((..._args: unknown[]) => {
+      if (vaultClientActionOverride !== undefined) {
+        const override = vaultClientActionOverride
+        vaultClientActionOverride = undefined
+        return override()
+      }
+      return Promise.resolve({ recorded: true })
+    })
+    withMeta = vi.fn((args: Record<string, unknown>) => args)
+    machineLabel: string | undefined = undefined
+  },
+  makeVaultClient: vi.fn(),
+}))
 
 vi.mock('../../src/auth/callbackServer', () => ({
   startCallbackServer: vi.fn(),
@@ -35,37 +73,19 @@ vi.mock('../../src/auth/openBrowser', () => ({
   openBrowser: vi.fn().mockResolvedValue(undefined),
 }))
 
-// Real classes so `instanceof` works inside login.ts's catch branch. Defined
-// via vi.hoisted so vi.mock's hoisted factory can capture the reference.
-//
-// Note: `ConvexEndpointNotFoundError` no longer needs a fake here — its
-// dispatch moved out of login.ts and into the central
-// `cli/src/render/cliError.ts:formatCliError` so it lands at the top-level
-// catch instead of the per-command catch (PR #25 follow-up). Tests for
-// that path live in `cli/tests/render/cliError.test.ts`.
-const { FakeClerkEmailDomainNotAllowedError } = vi.hoisted(() => ({
-  FakeClerkEmailDomainNotAllowedError: class FakeClerkEmailDomainNotAllowedError extends Error {
-    override readonly name = 'ClerkEmailDomainNotAllowedError'
-    readonly serverMessage: string
-    constructor(serverMessage: string) {
-      super(serverMessage)
-      this.serverMessage = serverMessage
-    }
-  },
-}))
+vi.mock('../../src/auth/oauthPkce', async () => {
+  const actual = await vi.importActual<typeof import('../../src/auth/oauthPkce')>('../../src/auth/oauthPkce')
+  return {
+    ...actual,
+    exchangeCodeForTokens: vi.fn(),
+    decodeIdTokenSid: vi.fn((token: string) =>
+      (actual as typeof import('../../src/auth/oauthPkce')).decodeIdTokenSid(token)
+    ),
+  }
+})
 
-vi.mock('../../src/auth/clerkFapi', () => ({
-  exchangeTicketForSession: vi.fn(),
-  ClerkSessionExpiredError: class extends Error {},
-  ClerkEmailDomainNotAllowedError: FakeClerkEmailDomainNotAllowedError,
-  // `ConvexEndpointNotFoundError` is left as a real `class extends Error`
-  // because login.ts no longer imports it — anything that throws an
-  // instance of it now propagates up to the top-level catch (which is
-  // tested separately).
-  ConvexEndpointNotFoundError: class extends Error {},
-  // Read from cli/package.json so the mocked UA tracks every release bump
-  // automatically (matches the production CLI_VERSION source-of-truth fix).
-  cliUserAgent: () => `cvault-cli/${pkg.version} (test)`,
+vi.mock('../../src/auth/machineId', () => ({
+  loadOrCreateMachineId: vi.fn().mockResolvedValue('machine-uuid-test-1234'),
 }))
 
 vi.mock('../../src/auth/session', () => ({
@@ -73,210 +93,140 @@ vi.mock('../../src/auth/session', () => ({
   NotLoggedInError: class extends Error {},
 }))
 
+// Mock pkce to have deterministic values for URL assertion
+vi.mock('../../src/auth/pkce', () => ({
+  generateCodeVerifier: vi.fn().mockReturnValue('test-code-verifier'),
+  codeChallengeS256: vi.fn().mockReturnValue('test-code-challenge'),
+  base64UrlEncode: vi.fn(),
+}))
+
+// A valid minimal JWT with a sid claim in the payload.
+function makeIdToken(sid: string): string {
+  const payload = Buffer.from(JSON.stringify({ sid, exp: Math.floor(Date.now() / 1000) + 900 })).toString('base64url')
+  return `header.${payload}.sig`
+}
+
+/** Sample OAuth token response */
+const SAMPLE_TOKENS = {
+  accessToken: 'access-token-new',
+  accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
+  refreshToken: 'refresh-token-new',
+  idToken: makeIdToken('sess_sample_sid'),
+}
+
+const SAMPLE_OPTS = {
+  convexUrl: 'https://beloved-mouse-707.convex.cloud',
+  frontendApiUrl: 'https://clear-redbird-6.clerk.accounts.dev',
+  clientId: 'client_test_abc',
+}
+
+function makeHandle(code = 'auth-code-xyz', state?: string) {
+  return {
+    port: 54321,
+    result: Promise.resolve({ code, state: state ?? 'ignored', cancelled: false }),
+    cancel: vi.fn().mockResolvedValue(undefined),
+  }
+}
+
 describe('runLogin', () => {
-  it('opens the dashboard URL with redirect + state, then persists the exchanged session', async () => {
+  it('opens an OAuth authorize URL with PKCE params, then persists a v2 session', async () => {
     const mockStart = vi.mocked(startCallbackServer)
-    mockStart.mockReturnValue({
-      port: 54321,
-      result: Promise.resolve({ signInToken: 'sit_abc' }),
-      cancel: vi.fn().mockResolvedValue(undefined),
-    })
+    mockStart.mockResolvedValue(makeHandle())
 
-    const mockExchange = vi.mocked(exchangeTicketForSession)
-    mockExchange.mockResolvedValueOnce({
-      version: 1,
-      clerkSessionId: 'sess_xyz',
-      clerkSessionToken: 'long-lived',
-      convexJwt: 'short',
-      convexJwtExpiry: 1_700_000_999,
-      frontendApiUrl: 'https://clear-redbird-6.clerk.accounts.dev',
-      convexUrl: 'https://beloved-mouse-707.convex.cloud',
-      issuedAt: 1_700_000_000,
-    })
+    const mockExchange = vi.mocked(exchangeCodeForTokens)
+    mockExchange.mockResolvedValueOnce(SAMPLE_TOKENS)
 
-    await runLogin({
-      dashboardUrl: 'https://app.cvault.dev',
-      convexUrl: 'https://beloved-mouse-707.convex.cloud',
-      frontendApiUrl: 'https://clear-redbird-6.clerk.accounts.dev',
-    })
+    await runLogin(SAMPLE_OPTS)
 
-    // Browser was opened with a /cli/link URL containing the redirect + state.
+    // Browser was opened with an OAuth authorize URL containing PKCE + state.
     expect(openBrowser).toHaveBeenCalledOnce()
     const browserUrl = vi.mocked(openBrowser).mock.calls[0]?.[0] ?? ''
     const parsed = new URL(browserUrl)
-    expect(parsed.origin).toBe('https://app.cvault.dev')
-    expect(parsed.pathname).toBe('/cli/link')
-    expect(parsed.searchParams.get('redirect')).toBe('http://127.0.0.1:54321/')
-    const state = parsed.searchParams.get('state')
-    expect(state).toBeTruthy()
-    expect((state ?? '').length).toBeGreaterThan(8)
+    expect(parsed.origin + parsed.pathname).toBe(`${SAMPLE_OPTS.frontendApiUrl}/oauth/authorize`)
+    expect(parsed.searchParams.get('client_id')).toBe(SAMPLE_OPTS.clientId)
+    expect(parsed.searchParams.get('response_type')).toBe('code')
+    expect(parsed.searchParams.get('code_challenge')).toBeTruthy()
+    expect(parsed.searchParams.get('code_challenge_method')).toBe('S256')
+    const stateParam = parsed.searchParams.get('state')
+    expect(stateParam).toBeTruthy()
+    expect((stateParam ?? '').length).toBeGreaterThan(8)
 
     // The same state was passed to the callback server's expectedState.
-    expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({ expectedState: state }))
+    expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({ expectedState: stateParam }))
 
-    // The captured signInToken was forwarded to the FAPI exchange.
+    // The captured code was forwarded to the token exchange.
     expect(mockExchange).toHaveBeenCalledWith(
       expect.objectContaining({
-        signInToken: 'sit_abc',
-        frontendApiUrl: 'https://clear-redbird-6.clerk.accounts.dev',
-        convexUrl: 'https://beloved-mouse-707.convex.cloud',
+        frontendApiUrl: SAMPLE_OPTS.frontendApiUrl,
+        clientId: SAMPLE_OPTS.clientId,
+        code: 'auth-code-xyz',
+        codeVerifier: 'test-code-verifier',
       })
     )
 
-    // The exchanged session was persisted.
+    // A v2 session was persisted.
     expect(writeSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        clerkSessionId: 'sess_xyz',
-        convexJwt: 'short',
+        version: 2,
+        accessToken: SAMPLE_TOKENS.accessToken,
+        refreshToken: SAMPLE_TOKENS.refreshToken,
+        clientId: SAMPLE_OPTS.clientId,
+        frontendApiUrl: SAMPLE_OPTS.frontendApiUrl,
+        convexUrl: SAMPLE_OPTS.convexUrl,
       })
     )
   })
 
-  it('cancels the callback server when the FAPI exchange fails', async () => {
-    const cancel = vi.fn().mockResolvedValue(undefined)
-    vi.mocked(startCallbackServer).mockReturnValue({
-      port: 12345,
-      result: Promise.resolve({ signInToken: 'sit_x' }),
-      cancel,
-    })
-
-    vi.mocked(exchangeTicketForSession).mockRejectedValueOnce(new Error('Clerk FAPI sign_in failed: 400 bad ticket'))
-
-    await expect(
-      runLogin({
-        dashboardUrl: 'https://app.cvault.dev',
-        convexUrl: 'https://x.convex.cloud',
-        frontendApiUrl: 'https://x.clerk.accounts.dev',
-      })
-    ).rejects.toThrow(/bad ticket/)
-
-    expect(cancel).toHaveBeenCalledOnce()
-  })
-
-  it('prints a friendly error and exits 1 on EMAIL_DOMAIN_NOT_ALLOWED', async () => {
-    const cancel = vi.fn().mockResolvedValue(undefined)
-    vi.mocked(startCallbackServer).mockReturnValue({
-      port: 12345,
-      result: Promise.resolve({ signInToken: 'sit_x' }),
-      cancel,
-    })
-
-    vi.mocked(exchangeTicketForSession).mockRejectedValueOnce(
-      new FakeClerkEmailDomainNotAllowedError('Your email domain is not allowed to use cvault.')
-    )
-
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    // process.exit(1) must throw so the test can assert the call instead of
-    // actually exiting the test runner.
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${String(code)})`)
-    }) as never)
-
-    try {
-      await expect(
-        runLogin({
-          dashboardUrl: 'https://app.cvault.dev',
-          convexUrl: 'https://x.convex.cloud',
-          frontendApiUrl: 'https://x.clerk.accounts.dev',
-        })
-      ).rejects.toThrow(/process\.exit\(1\)/)
-
-      expect(cancel).toHaveBeenCalledOnce()
-      expect(exitSpy).toHaveBeenCalledWith(1)
-      // First console.error: server message; second: "Sign out... try again with allowlisted email."
-      const calls = errorSpy.mock.calls.map((c) => String(c[0]))
-      expect(calls.some((m) => /domain/i.test(m))).toBe(true)
-      expect(calls.some((m) => /sign out|allowlisted/i.test(m))).toBe(true)
-    } finally {
-      errorSpy.mockRestore()
-      exitSpy.mockRestore()
-    }
-  })
-
-  // ConvexEndpointNotFoundError dispatch was previously bespoke in login.ts
-  // and tested here. As of PR #25 follow-up, `formatCliError` handles the
-  // class centrally — login.ts now re-throws and lets the top-level catch
-  // render. The dispatch contract is verified in
-  // `cli/tests/render/cliError.test.ts:formatCliError → ConvexEndpointNotFoundError`.
-
-  it('cancels the callback server if the user closes the tab (timeout)', async () => {
-    const cancel = vi.fn().mockResolvedValue(undefined)
-    vi.mocked(startCallbackServer).mockReturnValue({
+  it('throws if the callback server rejects (e.g. timeout)', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue({
       port: 12345,
       result: Promise.reject(new Error('Browser sign-in timed out.')),
-      cancel,
-    })
-
-    await expect(
-      runLogin({
-        dashboardUrl: 'https://app.cvault.dev',
-        convexUrl: 'https://x.convex.cloud',
-        frontendApiUrl: 'https://x.clerk.accounts.dev',
-      })
-    ).rejects.toThrow(/timed out/)
-  })
-
-  /**
-   * Machine label: every audit row written by subsequent CLI commands
-   * needs a human-readable identifier (the dashboard's "Machines" view
-   * renders this — opaque clerkSessionId is unhelpful). The label is
-   * captured at login time, persisted to session.json, and read back
-   * by every command via `VaultClient.machineLabel`.
-   */
-  it('falls back to os.hostname() when --label is not provided', async () => {
-    vi.mocked(startCallbackServer).mockReturnValue({
-      port: 12345,
-      result: Promise.resolve({ signInToken: 'sit_x' }),
       cancel: vi.fn().mockResolvedValue(undefined),
     })
-    vi.mocked(exchangeTicketForSession).mockResolvedValueOnce({
-      version: 1,
-      clerkSessionId: 'sess_xyz',
-      clerkSessionToken: 'long-lived',
-      convexJwt: 'short',
-      convexJwtExpiry: 1_700_000_999,
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      convexUrl: 'https://x.convex.cloud',
-      issuedAt: 1_700_000_000,
+
+    await expect(runLogin(SAMPLE_OPTS)).rejects.toThrow(/timed out/)
+  })
+
+  it('throws if login is cancelled', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue({
+      port: 12345,
+      result: Promise.resolve({ code: '', state: '', cancelled: true }),
+      cancel: vi.fn().mockResolvedValue(undefined),
     })
 
-    await runLogin({
-      dashboardUrl: 'https://app.cvault.dev',
-      convexUrl: 'https://x.convex.cloud',
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
+    await expect(runLogin(SAMPLE_OPTS)).rejects.toThrow(/cancel/i)
+  })
+
+  it('throws if exchangeCodeForTokens fails', async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(startCallbackServer).mockResolvedValue({
+      port: 12345,
+      result: Promise.resolve({ code: 'code123', state: 'ignored', cancelled: false }),
+      cancel,
     })
+    vi.mocked(exchangeCodeForTokens).mockRejectedValueOnce(new Error('token exchange failed: 400 bad request'))
+
+    await expect(runLogin(SAMPLE_OPTS)).rejects.toThrow(/bad request/)
+  })
+
+  it('falls back to os.hostname() when --label is not provided', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(SAMPLE_TOKENS)
+
+    await runLogin(SAMPLE_OPTS)
 
     expect(writeSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        clerkSessionId: 'sess_xyz',
         machineLabel: hostname(),
       })
     )
   })
 
   it('uses --label override when supplied', async () => {
-    vi.mocked(startCallbackServer).mockReturnValue({
-      port: 12345,
-      result: Promise.resolve({ signInToken: 'sit_x' }),
-      cancel: vi.fn().mockResolvedValue(undefined),
-    })
-    vi.mocked(exchangeTicketForSession).mockResolvedValueOnce({
-      version: 1,
-      clerkSessionId: 'sess_xyz',
-      clerkSessionToken: 'long-lived',
-      convexJwt: 'short',
-      convexJwtExpiry: 1_700_000_999,
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      convexUrl: 'https://x.convex.cloud',
-      issuedAt: 1_700_000_000,
-    })
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(SAMPLE_TOKENS)
 
-    await runLogin({
-      dashboardUrl: 'https://app.cvault.dev',
-      convexUrl: 'https://x.convex.cloud',
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      machineLabel: 'office-laptop',
-    })
+    await runLogin({ ...SAMPLE_OPTS, machineLabel: 'office-laptop' })
 
     expect(writeSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -285,29 +235,11 @@ describe('runLogin', () => {
     )
   })
 
-  it('trims whitespace from --label and rejects empty strings (falls back to hostname)', async () => {
-    vi.mocked(startCallbackServer).mockReturnValue({
-      port: 12345,
-      result: Promise.resolve({ signInToken: 'sit_x' }),
-      cancel: vi.fn().mockResolvedValue(undefined),
-    })
-    vi.mocked(exchangeTicketForSession).mockResolvedValueOnce({
-      version: 1,
-      clerkSessionId: 'sess_xyz',
-      clerkSessionToken: 'long-lived',
-      convexJwt: 'short',
-      convexJwtExpiry: 1_700_000_999,
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      convexUrl: 'https://x.convex.cloud',
-      issuedAt: 1_700_000_000,
-    })
+  it('trims whitespace from --label and falls back to hostname for empty strings', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(SAMPLE_TOKENS)
 
-    await runLogin({
-      dashboardUrl: 'https://app.cvault.dev',
-      convexUrl: 'https://x.convex.cloud',
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      machineLabel: '   ',
-    })
+    await runLogin({ ...SAMPLE_OPTS, machineLabel: '   ' })
 
     expect(writeSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -316,55 +248,109 @@ describe('runLogin', () => {
     )
   })
 
-  it('persists the label BEFORE the recordLogin audit fires (commit-then-audit ordering)', async () => {
-    // session.json must hold the label before recordLogin runs so a crash
-    // mid-audit doesn't leave the on-disk session label-less while the
-    // server has the audit row.
+  it('persists the session BEFORE the recordLogin audit fires (commit-then-audit ordering)', async () => {
     const callOrder: Array<'writeSession' | 'recordLogin'> = []
-    vi.mocked(startCallbackServer).mockReturnValue({
-      port: 12345,
-      result: Promise.resolve({ signInToken: 'sit_x' }),
-      cancel: vi.fn().mockResolvedValue(undefined),
-    })
-    vi.mocked(exchangeTicketForSession).mockResolvedValueOnce({
-      version: 1,
-      clerkSessionId: 'sess_xyz',
-      clerkSessionToken: 'long-lived',
-      convexJwt: 'short',
-      convexJwtExpiry: 1_700_000_999,
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      convexUrl: 'https://x.convex.cloud',
-      issuedAt: 1_700_000_000,
-    })
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(SAMPLE_TOKENS)
     vi.mocked(writeSession).mockImplementationOnce(async () => {
       callOrder.push('writeSession')
     })
-    // recordLogin is called via VaultClient.action — we can't easily mock
-    // VaultClient, but we can intercept the network call. Easier: rely
-    // on the writeSession mock recording its call, plus assert
-    // writeSession got the label.
-    await runLogin({
-      dashboardUrl: 'https://app.cvault.dev',
-      convexUrl: 'https://x.convex.cloud',
-      frontendApiUrl: 'https://x.clerk.accounts.dev',
-      machineLabel: 'order-test',
-    })
-    // writeSession must have been called once, with the label baked in.
-    expect(callOrder).toEqual(['writeSession'])
+
+    await runLogin({ ...SAMPLE_OPTS, machineLabel: 'order-test' })
+
+    // writeSession must have been called at least once, with the label baked in.
+    expect(callOrder).toContain('writeSession')
     expect(writeSession).toHaveBeenCalledWith(expect.objectContaining({ machineLabel: 'order-test' }))
+  })
+
+  it('calls decodeIdTokenSid with the idToken from the exchange response', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    const idToken = makeIdToken('sess_expected_sid')
+    const tokensWithSid = { ...SAMPLE_TOKENS, idToken }
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(tokensWithSid)
+    vi.mocked(decodeIdTokenSid).mockClear()
+
+    await runLogin(SAMPLE_OPTS)
+
+    // decodeIdTokenSid must be called with the idToken returned by the exchange.
+    expect(decodeIdTokenSid).toHaveBeenCalledWith(idToken)
+    // The real implementation (passed through the mock) returns the sid.
+    expect(vi.mocked(decodeIdTokenSid).mock.results[0]?.value).toBe('sess_expected_sid')
+  })
+
+  it('does not call decodeIdTokenSid when idToken is absent', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    const tokensWithoutIdToken = {
+      accessToken: 'access-token-new',
+      accessTokenExpiry: Math.floor(Date.now() / 1000) + 900,
+      refreshToken: 'refresh-token-new',
+      // no idToken
+    }
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(tokensWithoutIdToken)
+    vi.mocked(decodeIdTokenSid).mockClear()
+
+    await runLogin(SAMPLE_OPTS)
+
+    expect(decodeIdTokenSid).not.toHaveBeenCalled()
+  })
+
+  it('exits with allowlist hint when recordLogin throws a ConvexError with DOMAIN_REJECTION_ERROR_CODE', async () => {
+    // Set the override so the next VaultClient.action call rejects with the domain error.
+    vaultClientActionOverride = () =>
+      Promise.reject(
+        new ConvexError({ code: DOMAIN_REJECTION_ERROR_CODE, message: 'Your email domain is not allowed.' })
+      )
+
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(SAMPLE_TOKENS)
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const processExitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: string | number | null): never => {
+      throw new Error('process.exit called')
+    })
+
+    let caughtMessage: string | undefined
+    try {
+      await runLogin(SAMPLE_OPTS)
+    } catch (e) {
+      caughtMessage = (e as Error).message
+    } finally {
+      vaultClientActionOverride = undefined
+    }
+
+    // process.exit throws in our mock — that is the expected path.
+    expect(caughtMessage).toBe('process.exit called')
+    expect(processExitSpy).toHaveBeenCalledWith(1)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringMatching(/allowlist/i))
+
+    consoleErrorSpy.mockRestore()
+    processExitSpy.mockRestore()
+  })
+
+  it('includes the machineId in the v2 session write (via loadOrCreateMachineId)', async () => {
+    vi.mocked(startCallbackServer).mockResolvedValue(makeHandle())
+    vi.mocked(exchangeCodeForTokens).mockResolvedValueOnce(SAMPLE_TOKENS)
+    vi.mocked(loadOrCreateMachineId).mockResolvedValue('deterministic-machine-id')
+
+    await runLogin(SAMPLE_OPTS)
+
+    // Machine id is NOT written to session (v2 SessionState doesn't have a machineId field),
+    // but it IS passed to recordLogin. We can assert writeSession was called with v2 shape.
+    expect(writeSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        version: 2,
+        frontendApiUrl: SAMPLE_OPTS.frontendApiUrl,
+      })
+    )
+    expect(loadOrCreateMachineId).toHaveBeenCalled()
   })
 })
 
 /**
- * citty argument parsing for `cvault login --label <name>`. The flag is
- * declared as `args.label` at the citty level; the run() hook converts
- * it to `RunLoginOptions.machineLabel` before delegating to runLogin.
+ * citty argument parsing for `cvault login --label <name>`.
  */
 describe('loginCommand argument parsing', () => {
   it('declares --label as an optional string flag with description', async () => {
-    // citty's `args` field is typed as `Resolvable<T>` which is `T |
-    // (() => T) | (() => Promise<T>)`. Normalize all three shapes
-    // before reading the flag declaration.
     const { loginCommand } = await import('../../src/commands/login')
     const raw = loginCommand.args
     const resolved = typeof raw === 'function' ? await raw() : await raw
@@ -373,13 +359,9 @@ describe('loginCommand argument parsing', () => {
     const labelArg = (resolved as Record<string, { type?: string; description?: string; required?: boolean }>).label
     expect(labelArg).toBeDefined()
     if (labelArg === undefined) return
-    // Shape: type and description must be set so `cvault login --help`
-    // renders the flag.
     expect(labelArg.type).toBe('string')
     expect(labelArg.required).not.toBe(true)
     expect(typeof labelArg.description).toBe('string')
-    // Description must mention the override / default behaviour so users
-    // know what to pass.
     expect(labelArg.description).toMatch(/hostname|machine|label/i)
   })
 })

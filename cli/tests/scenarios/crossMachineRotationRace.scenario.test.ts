@@ -81,7 +81,7 @@ describe('Scenario #11 — Cross-machine rotation race during cvault switch', ()
     const preRotationHash = sub.contentHash
     const fake = createFakeVaultClient({
       subscriptions: [sub],
-      clerkSessionId: 'sess_machine_A',
+      machineId: 'machine-A',
     })
     vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
 
@@ -156,7 +156,7 @@ describe('Scenario #11 — Cross-machine rotation race during cvault switch', ()
       })
       const fake = createFakeVaultClient({
         subscriptions: [sub],
-        clerkSessionId: 'sess_machine_A',
+        machineId: 'machine-A',
       })
       vi.mocked(makeVaultClient).mockResolvedValueOnce(fake as never)
 

@@ -1,117 +1,138 @@
 /**
- * Spec: §7 + clerk-convex-tanstack-integration.md §7.
+ * Tests for the OAuth loopback callback server.
  *
- * The CLI binds 127.0.0.1 on a random free port, accepts ONE valid POST
- * (state + signInToken), then shuts down. State validation is constant-time
- * to defeat timing oracles. We use a real `Bun.serve` in tests — the local
- * socket is free and we get end-to-end coverage of JSON parsing, state
- * checks, and shutdown.
+ * The browser is redirected to `http://127.0.0.1:<port>/?code=…&state=…`
+ * by the Clerk authorization endpoint. We drive the server with real HTTP
+ * GETs so we get end-to-end coverage of URL parsing, state validation, and
+ * shutdown without any Bun-specific globals.
+ *
+ * All tests run under Node (no Bun required) because the server uses
+ * node:http internally.
  */
+import { type AddressInfo, createServer as createNetServer } from 'node:net'
+
 import { describe, expect, it } from 'vitest'
 
-import { startCallbackServer } from '../../src/auth/callbackServer'
+import { OAUTH_REDIRECT_PORTS, startCallbackServer } from '../../src/auth/callbackServer'
+import { OAuthAuthorizationDeniedError } from '../../src/auth/oauthPkce'
+
+/** Occupy an OS-assigned loopback port; returns the port + a closer. */
+async function occupyPort(): Promise<{ port: number; close: () => Promise<void> }> {
+  const blocker = createNetServer()
+  await new Promise<void>((resolve) => {
+    blocker.listen(0, '127.0.0.1', () => {
+      resolve()
+    })
+  })
+  const port = (blocker.address() as AddressInfo).port
+  return {
+    port,
+    close: () =>
+      new Promise<void>((resolve) => {
+        blocker.close(() => {
+          resolve()
+        })
+      }),
+  }
+}
 
 describe('startCallbackServer', () => {
-  it('binds 127.0.0.1 on a random free port', async () => {
-    const handle = startCallbackServer({ expectedState: 'st1', timeoutMs: 1_000 })
+  it('binds one of the registered fixed ports by default', async () => {
+    const handle = await startCallbackServer({ expectedState: 'st1', timeoutMs: 1_000 })
+    expect(OAUTH_REDIRECT_PORTS).toContain(handle.port)
+    await handle.cancel()
+    await expect(handle.result).resolves.toMatchObject({ cancelled: true })
+  })
+
+  it('falls back to the next port when the first is in use', async () => {
+    const blocker = await occupyPort()
+    // First port busy → must fall through to the second (0 = OS-assigned, free).
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 500, ports: [blocker.port, 0] })
+    expect(handle.port).not.toBe(blocker.port)
     expect(handle.port).toBeGreaterThan(0)
     await handle.cancel()
-    await expect(handle.result).resolves.toMatchObject({ cancelled: true })
+    await blocker.close()
   })
 
-  it('resolves with signInToken on a valid POST and returns 200', async () => {
-    const handle = startCallbackServer({ expectedState: 'st-abc', timeoutMs: 5_000 })
-    const url = `http://127.0.0.1:${String(handle.port)}/`
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state: 'st-abc', signInToken: 'sit_xyz' }),
-    })
+  it('rejects when every candidate port is in use', async () => {
+    const blocker = await occupyPort()
+    await expect(startCallbackServer({ expectedState: 'st', timeoutMs: 500, ports: [blocker.port] })).rejects.toThrow(
+      /in use/i
+    )
+    await blocker.close()
+  })
+
+  it('resolves with code + state on a valid GET redirect and returns 200 HTML', async () => {
+    const handle = await startCallbackServer({ expectedState: 'st-abc', timeoutMs: 5_000 })
+    const url = `http://127.0.0.1:${String(handle.port)}/?code=abc123&state=st-abc`
+    const resp = await fetch(url)
     expect(resp.status).toBe(200)
+    const body = await resp.text()
+    expect(body).toContain('You can close this tab')
     const result = await handle.result
-    expect(result).toEqual({ signInToken: 'sit_xyz' })
+    expect(result).toEqual({ code: 'abc123', state: 'st-abc' })
   })
 
-  it('returns 400 on mismatched state and times out without resolving', async () => {
-    const handle = startCallbackServer({ expectedState: 'real-state', timeoutMs: 100 })
-    const url = `http://127.0.0.1:${String(handle.port)}/`
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state: 'wrong', signInToken: 'sit_xyz' }),
-    })
+  it('returns 400 on mismatched state and does not settle the result', async () => {
+    const handle = await startCallbackServer({ expectedState: 'real-state', timeoutMs: 200 })
+    const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?code=x&state=wrong`)
     expect(resp.status).toBe(400)
-    // Observe the timeout rejection so it doesn't leak as "unhandled".
-    await expect(handle.result).rejects.toThrow(/timed out/i)
+    const text = await resp.text()
+    expect(text).toBe('state mismatch')
+    // Result should NOT be settled yet — send a correct request to clean up.
+    await fetch(`http://127.0.0.1:${String(handle.port)}/?code=good&state=real-state`)
+    await expect(handle.result).resolves.toMatchObject({ code: 'good', state: 'real-state' })
   })
 
-  it('returns 400 on missing fields', async () => {
-    const handle = startCallbackServer({ expectedState: 'st', timeoutMs: 200 })
-    const url = `http://127.0.0.1:${String(handle.port)}/`
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state: 'st' }), // no signInToken
-    })
+  it('returns 400 on missing code or state', async () => {
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 200 })
+    // Only state, no code
+    const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?state=st`)
     expect(resp.status).toBe(400)
+    const text = await resp.text()
+    expect(text).toBe('missing code or state')
     await handle.cancel()
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
   })
 
-  it('returns 400 on invalid JSON', async () => {
-    const handle = startCallbackServer({ expectedState: 'st', timeoutMs: 200 })
-    const url = `http://127.0.0.1:${String(handle.port)}/`
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: 'not-json',
-    })
-    expect(resp.status).toBe(400)
-    await handle.cancel()
-    await expect(handle.result).resolves.toMatchObject({ cancelled: true })
-  })
-
-  it('returns 405 on non-POST methods', async () => {
-    const handle = startCallbackServer({ expectedState: 'st', timeoutMs: 200 })
-    const url = `http://127.0.0.1:${String(handle.port)}/`
-    const resp = await fetch(url, { method: 'GET' })
+  it('returns 405 on non-GET methods', async () => {
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 200 })
+    const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/`, { method: 'POST' })
     expect(resp.status).toBe(405)
     await handle.cancel()
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
   })
 
+  it('rejects with OAuthAuthorizationDeniedError when ?error param is present', async () => {
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 5_000 })
+    const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?error=access_denied`)
+    expect(resp.status).toBe(200)
+    const body = await resp.text()
+    expect(body).toContain('You can close this tab')
+    await expect(handle.result).rejects.toBeInstanceOf(OAuthAuthorizationDeniedError)
+    await expect(handle.result).rejects.toThrow(/access_denied/)
+  })
+
   it('rejects with a timeout error after the configured window', async () => {
-    const handle = startCallbackServer({ expectedState: 'st', timeoutMs: 50 })
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 50 })
     await expect(handle.result).rejects.toThrow(/timed out/i)
   })
 
   it('rejects state values of a different length without throwing', async () => {
     // timingSafeEqual only works on equal-length buffers; the wrapper must
     // short-circuit length mismatches first.
-    const handle = startCallbackServer({ expectedState: 'longer-state', timeoutMs: 200 })
-    const url = `http://127.0.0.1:${String(handle.port)}/`
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state: 'short', signInToken: 'sit_xyz' }),
-    })
+    const handle = await startCallbackServer({ expectedState: 'longer-state', timeoutMs: 200 })
+    const resp = await fetch(`http://127.0.0.1:${String(handle.port)}/?code=x&state=short`)
     expect(resp.status).toBe(400)
     await handle.cancel()
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
   })
 
   it('cancel() stops the server, settles the result, and refuses further connections', async () => {
-    const handle = startCallbackServer({ expectedState: 'st', timeoutMs: 60_000 })
+    const handle = await startCallbackServer({ expectedState: 'st', timeoutMs: 60_000 })
     await handle.cancel()
     await expect(handle.result).resolves.toMatchObject({ cancelled: true })
     // After cancel, fetching should fail (connection refused).
-    const url = `http://127.0.0.1:${String(handle.port)}/`
-    await expect(
-      fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: 'st', signInToken: 'x' }),
-      })
-    ).rejects.toThrow()
+    await expect(fetch(`http://127.0.0.1:${String(handle.port)}/?code=x&state=st`)).rejects.toThrow()
   })
 })

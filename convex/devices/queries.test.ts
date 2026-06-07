@@ -1,0 +1,123 @@
+/**
+ * Spec: CVLT-3 — devices listForUser query.
+ *
+ * Verifies:
+ *  - listForUser returns an empty array when no devices exist
+ *  - listForUser returns the seeded device row with correct fields
+ *  - revokedAt is included when set; omitted when not set
+ */
+import { describe, expect, it } from 'vitest'
+
+import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { api, internal } from '../_generated/api'
+
+describe('devices queries', () => {
+  describe('getByMachine', () => {
+    it('returns null when the machine does not exist', async () => {
+      const t = vault()
+      const result = await t.query(internal.devices.queries.getByMachine, { machineId: 'no-such-machine' })
+      expect(result).toBeNull()
+    })
+
+    it('returns the device row with userId and sid after upsert', async () => {
+      const t = vault()
+      const userId = await seedUser(t)
+      await t.mutation(internal.devices.mutations.upsert, {
+        userId,
+        machineId: 'mach-global',
+        at: 1000,
+        sid: 'sess_abc',
+      })
+      const result = await t.query(internal.devices.queries.getByMachine, { machineId: 'mach-global' })
+      expect(result).not.toBeNull()
+      expect(result?.userId).toStrictEqual(userId)
+      expect(result?.sid).toBe('sess_abc')
+    })
+
+    it('returns grantRef when present', async () => {
+      const t = vault()
+      const userId = await seedUser(t)
+      await t.mutation(internal.devices.mutations.upsert, {
+        userId,
+        machineId: 'mach-grant',
+        at: 1000,
+        grantRef: 'grant_xyz',
+      })
+      const result = await t.query(internal.devices.queries.getByMachine, { machineId: 'mach-grant' })
+      expect(result?.grantRef).toBe('grant_xyz')
+    })
+  })
+  describe('listForUser', () => {
+    it('returns an empty array when no devices exist', async () => {
+      const t = vault()
+      await seedUser(t)
+      const asUser = t.withIdentity(TEST_IDENTITY)
+      const rows = await asUser.query(api.devices.queries.listForUser, {})
+      expect(rows).toEqual([])
+    })
+
+    it('returns the device row after upsert', async () => {
+      const t = vault()
+      const userId = await seedUser(t)
+      await t.mutation(internal.devices.mutations.upsert, {
+        userId,
+        machineId: 'mach-abc',
+        label: 'work-laptop',
+        at: 1000,
+      })
+      const asUser = t.withIdentity(TEST_IDENTITY)
+      const rows = await asUser.query(api.devices.queries.listForUser, {})
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.machineId).toBe('mach-abc')
+      expect(rows[0]?.label).toBe('work-laptop')
+      expect(rows[0]?.lastSeenAt).toBe(1000)
+      expect(rows[0]?.revokedAt).toBeUndefined()
+    })
+
+    it('includes revokedAt when the device is revoked', async () => {
+      const t = vault()
+      const userId = await seedUser(t)
+      await t.mutation(internal.devices.mutations.upsert, {
+        userId,
+        machineId: 'mach-xyz',
+        label: 'old-machine',
+        at: 1000,
+      })
+      await t.mutation(internal.devices.mutations.markRevoked, {
+        userId,
+        machineId: 'mach-xyz',
+        at: 9000,
+      })
+      const asUser = t.withIdentity(TEST_IDENTITY)
+      const rows = await asUser.query(api.devices.queries.listForUser, {})
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.revokedAt).toBe(9000)
+    })
+
+    it('joins the latest machineActivity ipHash (by device sid) into lastIpHash', async () => {
+      const t = vault()
+      const userId = await seedUser(t)
+      await t.mutation(internal.devices.mutations.upsert, {
+        userId,
+        machineId: 'mach-ip',
+        at: 1000,
+        sid: 'sess_ip',
+      })
+      // IP is captured by /api/cli/sync, keyed by the Clerk sid (not the
+      // device UUID). The newest sid-keyed row carrying an ipHash should win.
+      await t.run(async (ctx) => {
+        await ctx.db.insert('machineActivity', {
+          userId,
+          machineId: 'sess_ip',
+          action: 'pull',
+          at: 2000,
+          ipHash: 'a1b2c3d4',
+        })
+      })
+      const asUser = t.withIdentity(TEST_IDENTITY)
+      const rows = await asUser.query(api.devices.queries.listForUser, {})
+      const row = rows.find((r) => r.machineId === 'mach-ip')
+      expect(row?.lastIpHash).toBe('a1b2c3d4')
+    })
+  })
+})

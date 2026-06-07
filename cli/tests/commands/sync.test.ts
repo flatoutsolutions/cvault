@@ -20,7 +20,7 @@ import { runSync } from '../../src/commands/sync'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { importEnvelope, importEnvelopeUnlocked } from '../../src/credentials'
 import { withFileLock } from '../../src/native/lock'
-import { noopWithMachineLabel, noopWithMeta, noopWithSessionId } from '../scenarios/_helpers'
+import { noopWithMachineLabel, noopWithMeta } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
   importEnvelope: vi.fn(),
@@ -85,7 +85,6 @@ describe('runSync', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -121,7 +120,6 @@ describe('runSync', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -151,7 +149,6 @@ describe('runSync', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -187,7 +184,6 @@ describe('runSync', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -213,7 +209,6 @@ describe('runSync', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 

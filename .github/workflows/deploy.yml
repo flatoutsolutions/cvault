@@ -98,6 +98,7 @@ jobs:
           CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
           CLERK_WEBHOOK_SECRET: ${{ secrets.CLERK_WEBHOOK_SECRET }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          CLERK_OAUTH_CLIENT_ID: ${{ secrets.CLERK_OAUTH_CLIENT_ID }}
         run: |
           set_convex_env() {
             local key=$1
@@ -127,6 +128,7 @@ jobs:
           set_convex_env "CLERK_WEBHOOK_SECRET" "$CLERK_WEBHOOK_SECRET"
           set_convex_env "CLERK_SECRET_KEY" "$CLERK_SECRET_KEY"
           set_convex_env "CLERK_PUBLISHABLE_KEY" "$CLERK_PUBLISHABLE_KEY"
+          set_convex_env "CLERK_OAUTH_CLIENT_ID" "$CLERK_OAUTH_CLIENT_ID"
 
   # ============================================
   # Phase II — Detect which components have changes

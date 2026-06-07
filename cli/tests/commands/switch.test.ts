@@ -26,7 +26,7 @@ import { runSwitch } from '../../src/commands/switch'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { getActiveAccount, importEnvelope, switchTo } from '../../src/credentials'
 import { ensureVaultDir, lastHashPath } from '../../src/paths'
-import { noopWithMachineLabel, noopWithMeta, noopWithSessionId } from '../scenarios/_helpers'
+import { noopWithMachineLabel, noopWithMeta } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
   getActiveAccount: vi.fn(),
@@ -76,7 +76,6 @@ function setupClientReturning(blob: string, contentHash: string): FakeClient {
   vi.mocked(makeVaultClient).mockResolvedValueOnce({
     ...client,
     withMachineLabel: noopWithMachineLabel,
-    withSessionId: noopWithSessionId,
     withMeta: noopWithMeta,
   } as never)
   return client
@@ -149,7 +148,6 @@ describe('runSwitch — already-active no-op (hash match + email already active)
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     // Match the hash on disk under the server-canonical (lowercase) email.
@@ -188,7 +186,6 @@ describe('runSwitch — cross-user switch with hash collision (Bug 1 fix)', () =
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
     // Samuel is the locally active account — different from `pull.email`.
@@ -255,7 +252,6 @@ describe('runSwitch — offline behavior (fail loud — M6)', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -270,7 +266,6 @@ describe('runSwitch — offline behavior (fail loud — M6)', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 

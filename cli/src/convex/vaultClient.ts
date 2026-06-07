@@ -1,19 +1,18 @@
 /**
- * Convex client wrapper with auto-JWT-refresh on 401.
+ * Convex client wrapper with auto-access-token-refresh on 401.
  *
  * Wraps `ConvexHttpClient` with:
  *  - Type-safe `query`/`mutation`/`action` calls via the generated `api`
- *  - One-shot retry on auth errors: refresh the convex JWT, then retry
+ *  - One-shot retry on auth errors: refresh the OAuth access token, then retry
  *  - Dependency injection for testability — production code uses the real
  *    `ConvexHttpClient`, tests inject an in-memory fake
  *
- * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §7 +
- * docs/research/ts-bun-cli-tooling.md §4.5.
+ * Spec: docs/superpowers/plans/2026-06-03-cli-oauth-pkce.md §Task 14.
  */
 import { ConvexHttpClient } from 'convex/browser'
 import type { FunctionReference, OptionalRestArgs } from 'convex/server'
 
-import { type MintResult, mintConvexJwt } from '../auth/clerkFapi'
+import { type OAuthTokens, refreshAccessToken } from '../auth/oauthPkce'
 import { type SessionState, writeSession } from '../auth/session'
 import { isAuthError } from './isAuthError'
 
@@ -28,36 +27,57 @@ export interface ConvexHttpClientLike {
   setAuth(token: string): void
 }
 
-/** JWT refresher — abstracted so tests can stub it. */
-export type RefreshJwt = (session: SessionState) => Promise<MintResult>
+/** OAuth access token refresher — abstracted so tests can stub it. */
+export type RefreshAccessToken = (opts: {
+  frontendApiUrl: string
+  clientId: string
+  refreshToken: string
+}) => Promise<OAuthTokens>
 
 export interface VaultClientOptions {
-  /** Override the default `mintConvexJwt` for tests / dependency injection. */
-  refreshJwt?: RefreshJwt
+  /** Override the default `refreshAccessToken` for tests / dependency injection. */
+  refreshAccessToken?: RefreshAccessToken
 }
 
 export class VaultClient {
   private readonly http: ConvexHttpClientLike
-  private readonly refresh: RefreshJwt
+  private readonly doRefresh: RefreshAccessToken
   private session: SessionState
+  private readonly machineId: string
 
-  constructor(session: SessionState, httpClient?: ConvexHttpClientLike, options: VaultClientOptions = {}) {
+  constructor(
+    session: SessionState,
+    machineId: string,
+    httpClient?: ConvexHttpClientLike,
+    options: VaultClientOptions = {}
+  ) {
     this.session = session
+    this.machineId = machineId
     this.http = httpClient ?? this.buildDefaultClient(session)
-    this.refresh = options.refreshJwt ?? mintConvexJwt
+    this.doRefresh = options.refreshAccessToken ?? refreshAccessToken
   }
 
-  /** Build the production `ConvexHttpClient`. Test code overrides via the ctor arg. */
+  /**
+   * Build the production `ConvexHttpClient`. Test code overrides via the ctor arg.
+   *
+   * Convex is authenticated with the **ID token**, not the OAuth access token.
+   * Clerk's OAuth access-token JWT carries `client_id`/`scope` but NO `aud`
+   * claim, so Convex's provider matching (which keys on `aud == applicationID`)
+   * rejects it. The OIDC ID token carries `aud == <OAuth Client ID>` (matching
+   * the `auth.config.ts` provider) plus `email`/`sub`, so it's the token Convex
+   * can verify. Falls back to the access token only to satisfy the string type
+   * when no id token is present (which shouldn't happen — we request `openid`).
+   */
   private buildDefaultClient(session: SessionState): ConvexHttpClientLike {
     const client = new ConvexHttpClient(session.convexUrl)
-    client.setAuth(session.convexJwt)
+    client.setAuth(session.idToken ?? session.accessToken)
     return client
   }
 
   /**
    * The user-visible machine label captured at `cvault login` time. Read
-   * from the persisted session. May be `undefined` for legacy sessions
-   * created before the label was tracked.
+   * from the persisted session. May be `undefined` for sessions created
+   * before the label was tracked.
    */
   get machineLabel(): string | undefined {
     return this.session.machineLabel
@@ -67,20 +87,12 @@ export class VaultClient {
    * Merge the session's `machineLabel` into the supplied args object. Used
    * by every command call site whose Convex action writes to
    * `machineActivity`, so the dashboard's "Machines" view can render a
-   * human-readable label per Clerk session instead of the opaque
-   * `clerkSessionId`.
+   * human-readable label per machine instead of the opaque `machineId`.
    *
    * Centralizing this keeps the spread + optional-undefined dance in one
    * place — adding a new action call site only has to call
-   * `client.withMachineLabel({...})` rather than re-implementing the
-   * conditional spread (and risking forgetting it, which was the bug
-   * this PR fixes).
-   *
-   * The type-parameter T is unconstrained so the inferred shape includes
-   * every key the caller passed in. The return type intersects an
-   * optional `machineLabel` to keep the result structurally compatible
-   * with any Convex validator that includes
-   * `machineLabel: v.optional(v.string())`.
+   * `client.withMeta({...})` rather than re-implementing the
+   * conditional spread.
    */
   withMachineLabel<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string } {
     if (this.session.machineLabel === undefined) return args
@@ -88,29 +100,13 @@ export class VaultClient {
   }
 
   /**
-   * Inject `clerkSessionId` from the persisted session into args.
-   *
-   * Why: Convex's BAPI-minted JWTs (the path the CLI uses) do not carry
-   * a `sid` claim — Clerk reserves the claim and only auto-injects it
-   * for FAPI-minted tokens. Without an explicit arg, every CLI-origin
-   * audit row would write the `unknown-session` sentinel and the
-   * dashboard's "Machines" view would filter it out, hiding all CLI
-   * activity. See `convex/utils/identity.ts` for the server-side
-   * resolution rule.
-   *
-   * Combine with `withMachineLabel` for any action that writes a
-   * `machineActivity` row.
+   * Convenience: inject both `machineId` and optional `machineLabel` into
+   * args. Every CLI action that writes a `machineActivity` row uses this.
+   * The Convex actions accept `machineId: v.optional(v.string())` and fall
+   * back to `resolveCallerSession(identity)` when absent.
    */
-  withSessionId<T extends Record<string, unknown>>(args: T): T & { clerkSessionId: string } {
-    return { ...args, clerkSessionId: this.session.clerkSessionId }
-  }
-
-  /**
-   * Convenience: inject both `machineLabel` (when set) and
-   * `clerkSessionId`. Most CLI call sites want both.
-   */
-  withMeta<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string; clerkSessionId: string } {
-    return this.withSessionId(this.withMachineLabel(args))
+  withMeta<T extends Record<string, unknown>>(args: T): T & { machineId: string; machineLabel?: string } {
+    return this.withMachineLabel({ ...args, machineId: this.machineId })
   }
 
   async query<Q extends FunctionReference<'query'>>(fn: Q, ...args: OptionalRestArgs<Q>): Promise<Q['_returnType']> {
@@ -129,22 +125,36 @@ export class VaultClient {
   }
 
   /**
-   * Refresh the session JWT, persist the new state, and update the underlying
-   * client's auth header. Used internally by callWithRetry; exposed for
-   * proactive refresh paths (e.g. when the cached JWT's `exp` is < 10s away).
+   * Refresh the OAuth access token, persist the updated session, and update
+   * the underlying client's auth header. Used internally by callWithRetry;
+   * exposed for proactive refresh paths (e.g. when the cached token's `exp`
+   * is < 10s away).
    */
   async refreshAuth(): Promise<void> {
-    const fresh = await this.refresh(this.session)
+    const fresh = await this.doRefresh({
+      frontendApiUrl: this.session.frontendApiUrl,
+      clientId: this.session.clientId,
+      refreshToken: this.session.refreshToken,
+    })
     this.session = {
       ...this.session,
-      convexJwt: fresh.convexJwt,
-      convexJwtExpiry: fresh.convexJwtExpiry,
+      accessToken: fresh.accessToken,
+      accessTokenExpiry: fresh.accessTokenExpiry,
+      refreshToken: fresh.refreshToken,
+      ...(fresh.idToken !== undefined ? { idToken: fresh.idToken } : {}),
     }
-    this.http.setAuth(fresh.convexJwt)
+    // Re-auth Convex with the refreshed ID token (see buildDefaultClient for
+    // why the access token can't be used). The refresh_token grant returns a
+    // fresh id_token because `openid` was granted at login.
+    this.http.setAuth(fresh.idToken ?? this.session.idToken ?? fresh.accessToken)
     // Persist asynchronously — we don't want to block the in-flight call on
-    // disk I/O if the OS is busy. Errors are swallowed: persistence failure
-    // is logged elsewhere; the in-memory state is still correct.
-    void writeSession(this.session).catch(() => undefined)
+    // disk I/O if the OS is busy. A persistence failure is non-fatal: the
+    // in-memory session is already updated, so this call succeeds and the next
+    // process start just refreshes again. We emit a warning (rather than
+    // silently swallowing) so the failure is at least visible.
+    void writeSession(this.session).catch((err: unknown) => {
+      console.warn('Warning: failed to persist refreshed session:', err instanceof Error ? err.message : err)
+    })
   }
 
   /**
@@ -163,9 +173,11 @@ export class VaultClient {
   }
 }
 
-/** Convenience: build a `VaultClient` from the on-disk session. */
+/** Convenience: build a `VaultClient` from the on-disk session + machine id. */
 export async function makeVaultClient(): Promise<VaultClient> {
   const { readSession } = await import('../auth/session')
+  const { loadOrCreateMachineId } = await import('../auth/machineId')
   const session = await readSession()
-  return new VaultClient(session)
+  const machineId = await loadOrCreateMachineId()
+  return new VaultClient(session, machineId)
 }

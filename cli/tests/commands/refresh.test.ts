@@ -24,7 +24,7 @@ import { makeVaultClient } from '../../src/convex/vaultClient'
 import { readCredentials } from '../../src/native/credentialStore'
 import { applyEnvelopeUnlocked } from '../../src/native/envelope'
 import { withFileLock } from '../../src/native/lock'
-import { noopWithMachineLabel, noopWithMeta, noopWithSessionId } from '../scenarios/_helpers'
+import { noopWithMachineLabel, noopWithMeta } from '../scenarios/_helpers'
 
 vi.mock('../../src/convex/vaultClient', () => ({
   makeVaultClient: vi.fn(),
@@ -112,7 +112,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -138,7 +137,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -166,7 +164,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -198,7 +195,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -224,7 +220,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -250,7 +245,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -276,7 +270,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -303,7 +296,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -326,7 +318,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -342,7 +333,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -371,7 +361,6 @@ describe('runRefresh', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -394,7 +383,6 @@ describe('runRefresh lock acquisition failure UX', () => {
       query: vi.fn(),
       action: vi.fn(),
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -413,7 +401,6 @@ describe('runRefresh lock acquisition failure UX', () => {
       query: vi.fn(),
       action: vi.fn(),
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -505,7 +492,6 @@ describe('runRefresh --all', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -541,7 +527,6 @@ describe('runRefresh --all', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -588,7 +573,6 @@ describe('runRefresh --all', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -620,7 +604,6 @@ describe('runRefresh --all', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -648,7 +631,6 @@ describe('runRefresh --all', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 

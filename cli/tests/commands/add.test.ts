@@ -12,7 +12,7 @@ import { runAdd } from '../../src/commands/add'
 import { makeVaultClient } from '../../src/convex/vaultClient'
 import { exportAccount, getActiveAccount } from '../../src/credentials'
 import { singleAccountEnvelope } from '../fixtures/envelopes/singleAccount'
-import { noopWithMachineLabel, noopWithMeta, noopWithSessionId } from '../scenarios/_helpers'
+import { noopWithMachineLabel, noopWithMeta } from '../scenarios/_helpers'
 
 vi.mock('../../src/credentials', () => ({
   exportAccount: vi.fn(),
@@ -49,7 +49,6 @@ describe('runAdd', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -75,7 +74,6 @@ describe('runAdd', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 
@@ -94,7 +92,6 @@ describe('runAdd', () => {
     vi.mocked(makeVaultClient).mockResolvedValueOnce({
       ...client,
       withMachineLabel: noopWithMachineLabel,
-      withSessionId: noopWithSessionId,
       withMeta: noopWithMeta,
     } as never)
 

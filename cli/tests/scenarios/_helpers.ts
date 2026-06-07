@@ -80,7 +80,7 @@ export interface FakeSubscription {
 
 export interface FakeMachineActivity {
   userId: Id<'users'>
-  clerkSessionId: string
+  machineId: string
   action: 'switch' | 'add' | 'pull' | 'remove' | 'refresh'
   subscriptionId?: Id<'subscriptions'>
   at: number
@@ -108,8 +108,8 @@ export interface FakeBackendState {
   machineActivity: FakeMachineActivity[]
   /** Append-only log of refresh attempts. */
   refreshLog: FakeRefreshLogEntry[]
-  /** Clerk session id stamped on every machineActivity row. */
-  clerkSessionId: string
+  /** Machine id stamped on every machineActivity row. */
+  machineId: string
 }
 
 /**
@@ -124,23 +124,13 @@ export function noopWithMachineLabel<T extends Record<string, unknown>>(args: T)
 }
 
 /**
- * Identity passthrough for `VaultClient.withSessionId` — see
- * `noopWithMachineLabel` for the rationale. Returns the args with a
- * synthetic session id so the action-arg shape passes server validators
- * that require `clerkSessionId`.
- */
-export function noopWithSessionId<T extends Record<string, unknown>>(args: T): T & { clerkSessionId: string } {
-  return { ...args, clerkSessionId: 'fake-session' }
-}
-
-/**
- * Identity passthrough for `VaultClient.withMeta`. Spreads the same
- * passthroughs as `noopWithMachineLabel` + `noopWithSessionId`.
+ * Identity passthrough for `VaultClient.withMeta`. Injects a synthetic
+ * machineId so action-arg shapes that require machineId are satisfied.
  */
 export function noopWithMeta<T extends Record<string, unknown>>(
   args: T
-): T & { machineLabel?: string; clerkSessionId: string } {
-  return noopWithSessionId(noopWithMachineLabel(args))
+): T & { machineId: string; machineLabel?: string } {
+  return { ...noopWithMachineLabel(args), machineId: 'fake-machine-id' }
 }
 
 /**
@@ -159,15 +149,13 @@ export interface FakeVaultClient {
   /**
    * Mirrors the real `VaultClient.withMachineLabel` helper. Used by every
    * command call site that writes to `machineActivity` so the dashboard's
-   * "Machines" view can render a human-readable label per Clerk session.
+   * "Machines" view can render a human-readable label per machine.
    * In the fake, returns the args unchanged unless the test injected a
    * label via `InstallBackendOptions.machineLabel`.
    */
   withMachineLabel: <T extends Record<string, unknown>>(args: T) => T & { machineLabel?: string }
-  /** Mirrors the real `VaultClient.withSessionId`. */
-  withSessionId: <T extends Record<string, unknown>>(args: T) => T & { clerkSessionId: string }
-  /** Mirrors the real `VaultClient.withMeta`. */
-  withMeta: <T extends Record<string, unknown>>(args: T) => T & { machineLabel?: string; clerkSessionId: string }
+  /** Mirrors the real `VaultClient.withMeta` — injects machineId + optional machineLabel. */
+  withMeta: <T extends Record<string, unknown>>(args: T) => T & { machineId: string; machineLabel?: string }
   /** The label this fake client returns from `withMachineLabel`. Read-only. */
   readonly machineLabel: string | undefined
   /** Underlying state — tests can mutate to simulate cron-driven changes. */
@@ -177,8 +165,8 @@ export interface FakeVaultClient {
 export interface InstallBackendOptions {
   /** Initial subscriptions to seed into the fake. */
   subscriptions?: FakeSubscription[]
-  /** Clerk session id to stamp on machineActivity rows. */
-  clerkSessionId?: string
+  /** Machine id to stamp on machineActivity rows. */
+  machineId?: string
   /**
    * Machine label the fake `withMachineLabel` injects. Defaults to
    * `undefined` (i.e. legacy session, args pass through unchanged).
@@ -300,7 +288,7 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
     subscriptions: new Map((opts.subscriptions ?? []).map((s) => [s._id as string, s])),
     machineActivity: [],
     refreshLog: [],
-    clerkSessionId: opts.clerkSessionId ?? 'sess_test_machine_1',
+    machineId: opts.machineId ?? 'machine-id-test-1',
   }
 
   function refName(ref: unknown): string {
@@ -369,7 +357,7 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
       // the optional machineLabel forwarded by the CLI.
       state.machineActivity.push({
         userId: touched.userId,
-        clerkSessionId: state.clerkSessionId,
+        machineId: state.machineId,
         action: 'remove',
         subscriptionId: touched._id,
         at: Date.now(),
@@ -404,7 +392,7 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
       const callerLabel = (args ?? {}).machineLabel
       state.machineActivity.push({
         userId: match.userId,
-        clerkSessionId: state.clerkSessionId,
+        machineId: state.machineId,
         action: 'pull',
         subscriptionId: match._id,
         at: Date.now(),
@@ -443,7 +431,7 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
         // Mirror real impl: insert an 'add' machineActivity row.
         state.machineActivity.push({
           userId: existing.userId,
-          clerkSessionId: state.clerkSessionId,
+          machineId: state.machineId,
           action: 'add',
           subscriptionId: existing._id,
           at: Date.now(),
@@ -479,7 +467,7 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
       // Mirror real impl: insert an 'add' machineActivity row.
       state.machineActivity.push({
         userId,
-        clerkSessionId: state.clerkSessionId,
+        machineId: state.machineId,
         action: 'add',
         subscriptionId: id,
         at: Date.now(),
@@ -499,12 +487,9 @@ export function createFakeVaultClient(opts: InstallBackendOptions = {}): FakeVau
     if (machineLabel === undefined) return args
     return { ...args, machineLabel }
   }
-  function withSessionId<T extends Record<string, unknown>>(args: T): T & { clerkSessionId: string } {
-    return { ...args, clerkSessionId: state.clerkSessionId }
-  }
-  function withMeta<T extends Record<string, unknown>>(args: T): T & { machineLabel?: string; clerkSessionId: string } {
-    return withSessionId(withMachineLabel(args))
+  function withMeta<T extends Record<string, unknown>>(args: T): T & { machineId: string; machineLabel?: string } {
+    return { ...withMachineLabel(args), machineId: state.machineId }
   }
 
-  return { query, mutation, action, state, withMachineLabel, withSessionId, withMeta, machineLabel }
+  return { query, mutation, action, state, withMachineLabel, withMeta, machineLabel }
 }

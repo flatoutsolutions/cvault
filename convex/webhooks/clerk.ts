@@ -80,7 +80,7 @@ export const clerkUsersWebhook = httpAction(async (ctx, request) => {
         await ctx.runMutation(internal.machineActivity.mutations.record, {
           userId: userRow,
           // Sentinel — webhook events have no associated CLI session.
-          clerkSessionId: 'webhook',
+          machineId: 'webhook',
           action: 'remove',
           at: Date.now(),
         })

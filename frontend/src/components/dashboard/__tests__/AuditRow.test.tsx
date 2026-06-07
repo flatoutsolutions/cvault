@@ -88,7 +88,7 @@ describe('AuditRow', () => {
           subEmail: 'alice@example.com',
           action: 'switch',
           ipHash: '12345678',
-          clerkSessionId: 'sess_abc',
+          machineId: 'mach_abc',
         }}
       />
     )
@@ -106,7 +106,7 @@ describe('AuditRow', () => {
           subEmail: undefined,
           action: 'pull',
           ipHash: undefined,
-          clerkSessionId: 'sess_def',
+          machineId: 'mach_def',
         }}
       />
     )

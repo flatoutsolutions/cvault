@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
-import { api } from '../_generated/api'
+import { api, internal } from '../_generated/api'
 import { __setAnthropicFetch } from '../subscriptions/anthropic'
 
 const ORIGINAL_KEY = process.env.VAULT_AES_KEY
@@ -34,6 +34,27 @@ describe('GET /api/cli/sync', () => {
     const t = vault()
     const resp = await t.fetch('/api/cli/sync')
     expect(resp.status).toBe(401)
+  })
+
+  it('returns 403 for a banned user (revokedUsers sub-denylist) — does not leak the bundle', async () => {
+    const t = vault()
+    await seedUser(t)
+    await t.mutation(internal.revokedUsers.mutations.ban, { externalId: TEST_IDENTITY.subject, at: Date.now() })
+
+    const resp = await t.withIdentity(TEST_IDENTITY).fetch('/api/cli/sync')
+    expect(resp.status).toBe(403)
+    const body = (await resp.json()) as { error?: string }
+    expect(body.error).toMatch(/revoked/i)
+  })
+
+  it('returns 403 for a revoked device (revokedSessions sid-denylist)', async () => {
+    const t = vault()
+    await seedUser(t)
+    await t.mutation(internal.revokedSessions.mutations.revoke, { sid: 'sess_revoked_cli', at: Date.now() })
+
+    // The CLI authenticates Convex with the OIDC id-token, which carries `sid`.
+    const resp = await t.withIdentity({ ...TEST_IDENTITY, sid: 'sess_revoked_cli' }).fetch('/api/cli/sync')
+    expect(resp.status).toBe(403)
   })
 
   it("returns the caller's active subs as plaintext bundle when authenticated", async () => {

@@ -54,7 +54,7 @@ interface RefreshLogEntry {
 
 interface MachineActivityEntry {
   action: string
-  clerkSessionId: string
+  machineId: string
   at: number
 }
 

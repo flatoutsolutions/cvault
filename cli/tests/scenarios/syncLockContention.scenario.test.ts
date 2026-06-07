@@ -118,7 +118,7 @@ describe('Scenario — cvault sync lock contention (in-process)', () => {
     })
     const fake = createFakeVaultClient({
       subscriptions: [subA, subB],
-      clerkSessionId: 'sess_local_machine',
+      machineId: 'machine-local',
     })
     vi.mocked(makeVaultClient).mockResolvedValue(fake as never)
 

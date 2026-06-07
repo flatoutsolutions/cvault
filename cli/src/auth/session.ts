@@ -1,39 +1,41 @@
 /**
- * `~/.vault/session.json` — durable Clerk session state for the CLI.
+ * `~/.vault/session.json` — durable OAuth session state for the CLI.
  *
- * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §7 +
- * docs/research/clerk-convex-tanstack-integration.md §4-5.
+ * Spec: docs/superpowers/plans/2026-06-03-cli-oauth-pkce.md §Task 12.
  *
  * The file holds:
- *  - the long-lived Clerk session id + token (refreshes are minted from these)
- *  - the most recent short-lived Convex-template JWT + its exp claim
- *  - the deployment URLs the CLI is bound to
- *  - some metadata so the dashboard can label this machine
+ *  - OAuth access token + its expiry (JWT exp, unix seconds)
+ *  - Refresh token for silent renewal
+ *  - Optional OIDC id_token
+ *  - Clerk Frontend API URL + OAuth Client ID (needed for refresh)
+ *  - Convex deployment URL
+ *  - Optional human-readable machine label
  *
  * Permissions: file mode 0600, dir mode 0700. Loose perms are rejected on
  * read to defend against shared-system snooping.
+ *
+ * Version guard: `version !== 2` (i.e. the old Clerk-ticket v1 sessions)
+ * triggers a NotLoggedInError so the user re-authenticates via OAuth PKCE.
  */
 import { readSecret, vaultFile, writeSecret } from '../paths'
 
 export interface SessionState {
-  /** File-format version. Bumps require a migration. */
-  version: 1
-  /** Clerk user_id (e.g. user_2NxYZ…) — populated post-login. Optional. */
-  clerkUserId?: string
-  /** Clerk session id (sess_…) — long-lived. */
-  clerkSessionId: string
-  /** Long-lived Clerk session JWT. Used to mint short-lived convex JWTs. */
-  clerkSessionToken: string
-  /** Most recent short-lived convex-template JWT. */
-  convexJwt: string
-  /** `exp` claim from convexJwt, in unix seconds. */
-  convexJwtExpiry: number
-  /** Clerk Frontend API base URL (used for token mints + ticket exchange). */
+  /** File-format version. v2 = OAuth PKCE tokens. */
+  version: 2
+  /** Clerk OAuth access token (short-lived JWT). */
+  accessToken: string
+  /** `exp` claim from accessToken, in unix seconds. */
+  accessTokenExpiry: number
+  /** Clerk OAuth refresh token (long-lived). */
+  refreshToken: string
+  /** Optional OIDC id_token returned alongside the access token. */
+  idToken?: string
+  /** Clerk Frontend API base URL — used for token refresh calls. */
   frontendApiUrl: string
+  /** Clerk OAuth Client ID — needed for public-client token exchange/refresh. */
+  clientId: string
   /** Convex deployment URL (`https://<deployment>.convex.cloud`). */
   convexUrl: string
-  /** Unix seconds when this session was first issued. */
-  issuedAt: number
   /** Optional human label (defaults to hostname) for dashboard display. */
   machineLabel?: string
 }
@@ -55,7 +57,8 @@ export function sessionFilePath(): string {
 
 /**
  * Read the persisted session. Returns the parsed state or throws
- * `NotLoggedInError` if the file is missing.
+ * `NotLoggedInError` if the file is missing or the stored session is not
+ * the v2 OAuth shape (e.g. a leftover v1 Clerk-ticket session).
  *
  * Throws on loose perms (defense-in-depth — see `paths.readSecret`).
  */
@@ -72,6 +75,10 @@ export async function readSession(): Promise<SessionState> {
   } catch (err) {
     throw new Error(`Failed to parse session.json: ${err instanceof Error ? err.message : String(err)}`)
   }
+  const state = parsed as Partial<SessionState>
+  // v1 (Clerk ticket era) and any other non-v2 blobs are rejected; the user
+  // must re-authenticate so a fresh OAuth session is created.
+  if (state.version !== 2) throw new NotLoggedInError()
   return parsed as SessionState
 }
 

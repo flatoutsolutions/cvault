@@ -35,6 +35,11 @@ import { internal } from '../_generated/api'
 import { httpAction } from '../_generated/server'
 import { UNKNOWN_SESSION_SENTINEL } from '../utils/identity'
 
+// CVLT-3: httpSync has no machineId arg surface (HTTP endpoint). It uses
+// the Clerk sid claim when available, or the unknown-session sentinel.
+// Future: if this endpoint gains a proper CLI caller, switch to the
+// pullForSwitch action path which does have an explicit machineId arg.
+
 const SYNC_RATE_LIMIT_KEY = 'cliSync'
 const SYNC_RATE_LIMIT_CAPACITY = 10
 const SYNC_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000 // 1 hour
@@ -44,6 +49,26 @@ export const cliSyncHandler = httpAction(async (ctx, request) => {
   if (!identity) {
     return new Response(JSON.stringify({ error: 'unauthenticated' }), {
       status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // SECURITY: enforce the same revocation denylist the authenticated
+  // query/mutation/action wrappers apply (`convex/utils/auth.ts assertDenylist`).
+  // This HTTP route authenticates with a raw JWT and would otherwise BYPASS the
+  // denylist — letting a revoked device (denylisted `sid`) or banned user
+  // (denylisted `sub`) GET the full plaintext bundle for the token's lifetime,
+  // since the BAPI session-revoke in `revokeDevice` is only best-effort. Run the
+  // check up-front (before rate-limit / bundle work) and 403 on a hit. The
+  // combined `denylist.queries.check` is one round-trip.
+  const sidClaimForDenylist = (identity as { sid?: unknown }).sid
+  const denylist = await ctx.runQuery(internal.denylist.queries.check, {
+    externalId: identity.subject,
+    ...(typeof sidClaimForDenylist === 'string' && sidClaimForDenylist.length > 0 ? { sid: sidClaimForDenylist } : {}),
+  })
+  if (denylist.userRevoked || denylist.sessionRevoked) {
+    return new Response(JSON.stringify({ error: 'access revoked' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json' },
     })
   }
@@ -96,14 +121,17 @@ export const cliSyncHandler = httpAction(async (ctx, request) => {
   // because the action-path is the canonical CLI surface for explicit
   // session-id passing.
   const sidClaim = (identity as { sid?: unknown }).sid
-  const clerkSessionId = typeof sidClaim === 'string' && sidClaim.length > 0 ? sidClaim : UNKNOWN_SESSION_SENTINEL
+  // Use the Clerk session id as a fallback machineId for this HTTP endpoint
+  // (no CLI-generated UUID is available here). Sentinel for unauthenticated
+  // or pre-PKCE callers.
+  const machineId = typeof sidClaim === 'string' && sidClaim.length > 0 ? sidClaim : UNKNOWN_SESSION_SENTINEL
   // Standard reverse-proxy header for the originating client IP. We
   // take only the first hop (the rest are intermediaries we don't trust).
   const xff = request.headers.get('x-forwarded-for')
   const rawIp = xff !== null ? xff.split(',')[0]?.trim() : undefined
   await ctx.runMutation(internal.machineActivity.mutations.record, {
     userId,
-    clerkSessionId,
+    machineId,
     action: 'pull',
     at: Date.now(),
     rawIp: rawIp !== undefined && rawIp.length > 0 ? rawIp : undefined,

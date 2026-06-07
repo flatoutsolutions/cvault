@@ -302,9 +302,9 @@ describe('clerkUsersWebhook (user.deleted audit + null-id safety)', () => {
     expect(audit).toHaveLength(1)
     expect(audit[0]?.action).toBe('remove')
     expect(audit[0]?.userId).toEqual(seededId)
-    // Sentinel `clerkSessionId` for webhook-origin events: there is no
+    // Sentinel `machineId` for webhook-origin events: there is no
     // CLI session associated with a domain-gate / user.deleted event.
-    expect(audit[0]?.clerkSessionId).toBe('webhook')
+    expect(audit[0]?.machineId).toBe('webhook')
   })
 
   it('on user.deleted with no users row: returns 200 gracefully and writes no audit row', async () => {

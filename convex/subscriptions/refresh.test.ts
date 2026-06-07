@@ -665,7 +665,7 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
    * would lose per-machine attribution. Locking this here so a future
    * refactor can't silently break the contract.
    */
-  it('pullForSwitch writes the explicit clerkSessionId arg into the machineActivity row', async () => {
+  it('pullForSwitch writes the explicit machineId arg into the machineActivity row', async () => {
     const t = vault()
     await seedUser(t)
     const { encrypt } = await import('./crypto')
@@ -691,15 +691,15 @@ describe('subscriptions.actions.refreshOAuthToken', () => {
     })
 
     // TEST_IDENTITY has no `sid` claim (mirrors a CLI-origin BAPI JWT),
-    // so resolveCallerSession will fall through to the explicit arg.
+    // so the fallback machineId is used.
     await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.pullForSwitch, {
       slotOrEmail: 'sid-pull@example.com',
-      clerkSessionId: 'sess_x',
+      machineId: 'mach-x',
     })
 
     const rows = await t.run(async (ctx) => await ctx.db.query('machineActivity').collect())
     const pullRow = rows.find((r) => r.action === 'pull')
-    expect(pullRow?.clerkSessionId).toBe('sess_x')
+    expect(pullRow?.machineId).toBe('mach-x')
   })
 
   /**
