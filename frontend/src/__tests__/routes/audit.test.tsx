@@ -129,8 +129,8 @@ describe('/dashboard/audit', () => {
     expect(screen.getByText('Anthropic 500')).toBeTruthy()
   })
 
-  it('shows a healthy summary strip when no subscription needs a re-login', () => {
-    setFeed([refresh({ outcome: 'success' })])
+  it('shows a healthy summary strip when no subscription needs attention', () => {
+    setFeed([refresh({ outcome: 'success', subEmail: 'team@acme.com' })])
     // refreshExpiresAt must be in the real future — the page compares against
     // Date.now(), not the test's fixed NOW.
     subsResult = [{ _id: 's1', email: 'team@acme.com', refreshExpiresAt: Date.now() + 86_400_000 }]
@@ -138,17 +138,53 @@ describe('/dashboard/audit', () => {
     expect(screen.getByText(/vault healthy/i)).toBeTruthy()
   })
 
-  it('warns in the summary strip when a subscription needs a re-login', () => {
+  it('warns in the summary strip when a subscription grant has lapsed', () => {
     setFeed([activity({ actor: { userId: 'u1', name: 'Alice Tester' } })])
     subsResult = [{ _id: 's1', email: 'team@acme.com', refreshExpiresAt: NOW - 1000 }]
     render(<AuditPage />)
-    expect(screen.getByText(/needs a re-login/i)).toBeTruthy()
+    expect(screen.getByText(/needs attention/i)).toBeTruthy()
+  })
+
+  it('warns when a sub’s latest refresh failed even though its grant has not lapsed', () => {
+    // The strip must not contradict the feed: a failing refresh below should
+    // never coexist with a green "healthy" strip just because the stored
+    // grant timestamp is still in the future.
+    setFeed([refresh({ id: 'bad', outcome: 'failure', error: 'boom', subEmail: 'team@acme.com' })])
+    subsResult = [{ _id: 's1', email: 'team@acme.com', refreshExpiresAt: Date.now() + 86_400_000 }]
+    render(<AuditPage />)
+    expect(screen.getByText(/needs attention/i)).toBeTruthy()
+  })
+
+  it('stays healthy when a later success supersedes an earlier failure for the same sub', () => {
+    // Events are newest-first; the most-recent outcome per sub decides health.
+    setFeed([
+      refresh({ id: 'ok', at: NOW - 1000, outcome: 'success', subEmail: 'team@acme.com' }),
+      refresh({ id: 'bad', at: NOW - 5000, outcome: 'failure', error: 'boom', subEmail: 'team@acme.com' }),
+    ])
+    subsResult = [{ _id: 's1', email: 'team@acme.com', refreshExpiresAt: Date.now() + 86_400_000 }]
+    render(<AuditPage />)
+    expect(screen.getByText(/vault healthy/i)).toBeTruthy()
   })
 
   it('notes when the feed is capped at the recent window', () => {
     setFeed([activity({ actor: { userId: 'u1', name: 'Alice Tester' } })], true)
     render(<AuditPage />)
     expect(screen.getByText(/most recent 500/i)).toBeTruthy()
+  })
+
+  it('tells the user older history is not searched when a filter empties a capped window', () => {
+    // Only a routine pull is in-window, hidden by default → filtered view is
+    // empty. Because the window is capped, the empty state must not imply
+    // nothing exists; it should say older history was not searched.
+    setFeed([activity({ id: 'pl', action: 'pull', actor: { userId: 'u1', name: 'Alice Tester' } })], true)
+    render(<AuditPage />)
+    expect(screen.getByText(/older history is not searched/i)).toBeTruthy()
+  })
+
+  it('uses the plain filters empty-state when the window is not capped', () => {
+    setFeed([activity({ id: 'pl', action: 'pull', actor: { userId: 'u1', name: 'Alice Tester' } })], false)
+    render(<AuditPage />)
+    expect(screen.getByText(/no events match the current filters/i)).toBeTruthy()
   })
 
   it('paginates the window at 25 rows per page by default', () => {

@@ -16,7 +16,7 @@
 import type { UserIdentity } from 'convex/server'
 import { describe, expect, it } from 'vitest'
 
-import { UNKNOWN_SESSION_SENTINEL, isUnknownSession, resolveCallerSession } from './identity'
+import { UNKNOWN_SESSION_SENTINEL, coalesceMachineId, isUnknownSession, resolveCallerSession } from './identity'
 
 /**
  * Build a `UserIdentity`-shaped object with optional `sid`. The real type
@@ -78,6 +78,20 @@ describe('resolveCallerSession', () => {
   it('prefers identity.sid over argSid when both are present (FAPI precedence)', () => {
     const identity = makeIdentity('sess_from_fapi')
     expect(resolveCallerSession(identity, 'sess_from_arg')).toBe('sess_from_fapi')
+  })
+})
+
+describe('coalesceMachineId', () => {
+  it('prefers a real machineId when present (current CLI writes)', () => {
+    expect(coalesceMachineId({ machineId: 'machine-uuid', clerkSessionId: 'sess_legacy' })).toBe('machine-uuid')
+  })
+
+  it('falls back to clerkSessionId for legacy rows with no machineId', () => {
+    expect(coalesceMachineId({ clerkSessionId: 'sess_legacy' })).toBe('sess_legacy')
+  })
+
+  it('falls back to the sentinel when neither field is set (cron / server rows)', () => {
+    expect(coalesceMachineId({})).toBe(UNKNOWN_SESSION_SENTINEL)
   })
 })
 

@@ -79,19 +79,31 @@ export function AuditPage() {
   const safePageIndex = Math.min(pageIndex, totalPages - 1)
   const pageRows = filtered.slice(safePageIndex * pageSize, safePageIndex * pageSize + pageSize)
 
-  // Health summary. "Needs attention" reflects CURRENT sub health (a sub whose
-  // refresh grant has lapsed needs a re-login), not historical events.
+  // Health summary. A sub "needs attention" if its refresh grant has lapsed, OR
+  // its most-recent refresh attempt in the window did not succeed (failure /
+  // reloginRequired). Folding in the latest in-window outcome keeps the strip
+  // honest — it can no longer read "✓ Vault healthy" while the feed below shows
+  // that same sub's refresh failing. `activeMachines` reuses the `machines`
+  // derivation rather than re-scanning events for the same distinct set.
   const summary = useMemo(() => {
     const now = Date.now()
-    const subList = subs ?? []
-    const needsAttention = subList.filter((s) => s.refreshExpiresAt !== undefined && s.refreshExpiresAt <= now).length
+    const liveEmails = new Set((subs ?? []).map((s) => s.email))
+    const problem = new Set<string>()
+    const latestSeen = new Set<string>()
+    for (const e of events) {
+      if (e.kind !== 'refresh' || e.subEmail === undefined || latestSeen.has(e.subEmail)) continue
+      latestSeen.add(e.subEmail)
+      if (e.outcome !== 'success' && liveEmails.has(e.subEmail)) problem.add(e.subEmail)
+    }
+    for (const s of subs ?? []) {
+      if (s.refreshExpiresAt !== undefined && s.refreshExpiresAt <= now) problem.add(s.email)
+    }
     const lastRefreshAt = events.reduce<number | undefined>(
       (acc, e) => (e.kind === 'refresh' ? Math.max(acc ?? 0, e.at) : acc),
       undefined
     )
-    const activeMachines = new Set(events.flatMap((e) => (e.kind === 'activity' ? [e.machineId] : []))).size
-    return { needsAttention, lastRefreshAt, activeMachines }
-  }, [subs, events])
+    return { needsAttention: problem.size, lastRefreshAt, activeMachines: machines.length }
+  }, [subs, events, machines])
 
   function resetToFirstPage() {
     setPageIndex(0)
@@ -106,7 +118,9 @@ export function AuditPage() {
     )
   }
 
-  const filtersActive = subFilter !== 'all' || machineFilter !== 'all' || statusFilter !== 'all' || !showRoutine
+  // `filtered` is empty while the feed has events only because some filter (or
+  // the default routine-hide) removed them all, so this is always a
+  // filters-active state — no separate guard needed.
   const nothingMatches = events.length > 0 && filtered.length === 0
 
   return (
@@ -197,9 +211,11 @@ export function AuditPage() {
             {pageRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-muted-foreground p-8 text-center text-sm">
-                  {nothingMatches && filtersActive
-                    ? 'No events match the current filters. Try widening them or showing routine events.'
-                    : 'No activity yet.'}
+                  {!nothingMatches
+                    ? 'No activity yet.'
+                    : feed.capped
+                      ? 'No matching events in the most recent 500. Older history is not searched here — try widening the filters or showing routine events.'
+                      : 'No events match the current filters. Try widening them or showing routine events.'}
                 </TableCell>
               </TableRow>
             ) : (
@@ -300,7 +316,7 @@ function HealthStrip({
       <span className={cn('font-medium', healthy ? 'text-foreground' : 'text-destructive')}>
         {healthy
           ? '✓ Vault healthy'
-          : `⚠ ${needsAttention.toString()} ${needsAttention === 1 ? 'subscription needs' : 'subscriptions need'} a re-login`}
+          : `⚠ ${needsAttention.toString()} ${needsAttention === 1 ? 'subscription needs' : 'subscriptions need'} attention`}
       </span>
       <span className="text-muted-foreground">·</span>
       <span className="text-muted-foreground">

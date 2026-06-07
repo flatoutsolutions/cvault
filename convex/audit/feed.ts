@@ -14,10 +14,13 @@
  * WINDOW (not cursor pagination). The feed returns the most-recent
  * `WINDOW_LIMIT` events as one fully-materialised array. The previous design
  * paginated each source independently and merged client-side, which made
- * client-side filters LEAKY — a filtered row could sit on an unloaded page and
- * silently never appear. A bounded window makes filtering correct: every row
- * the filter could match is already in hand. `capped` tells the UI when older
- * events exist beyond the window so it can say so honestly.
+ * client-side filters LEAKY across page boundaries — a filtered row could sit
+ * on an unloaded page and silently never appear. A bounded window makes
+ * filtering correct WITHIN the window: every in-window row the filter could
+ * match is already in hand, so no match hides on an unloaded page. Matches
+ * older than the window are not searched; `capped` tells the UI it is showing
+ * a truncated window so the page says so honestly (see the audit page's
+ * empty-state copy) rather than implying the filtered result is exhaustive.
  *
  * Shared vault — no `userId` scoping (see convex/utils/users.ts:3-7), matching
  * the rest of the dashboard reads.
@@ -26,7 +29,7 @@ import { v } from 'convex/values'
 
 import type { Doc, Id } from '../_generated/dataModel'
 import { authenticatedQuery } from '../utils/auth'
-import { UNKNOWN_SESSION_SENTINEL } from '../utils/identity'
+import { coalesceMachineId } from '../utils/identity'
 
 /**
  * Most-recent events returned in one shot. Taken from EACH source before the
@@ -86,21 +89,29 @@ export const recentFeed = authenticatedQuery({
     capped: v.boolean(),
   }),
   handler: async (ctx) => {
-    const activityRows = await ctx.db.query('machineActivity').withIndex('byAt').order('desc').take(WINDOW_LIMIT)
-    const refreshRows = await ctx.db.query('refreshLog').withIndex('byAt').order('desc').take(WINDOW_LIMIT)
+    // These five reads are independent — the window rows and the three
+    // enrichment tables. Issue them concurrently so the query pays one
+    // round-trip's latency, not five sequential ones. Each enrichment table
+    // is small for this deployment; collect once and resolve in-memory rather
+    // than per-row queries.
+    const [activityRows, refreshRows, subscriptions, devices, users] = await Promise.all([
+      ctx.db.query('machineActivity').withIndex('byAt').order('desc').take(WINDOW_LIMIT),
+      ctx.db.query('refreshLog').withIndex('byAt').order('desc').take(WINDOW_LIMIT),
+      ctx.db.query('subscriptions').collect(),
+      ctx.db.query('devices').collect(),
+      ctx.db.query('users').collect(),
+    ])
 
-    // Enrichment lookups. Each table is small for this deployment; collect once
-    // and resolve in-memory rather than per-row queries.
     const subEmailById = new Map<Id<'subscriptions'>, string>()
-    for (const s of await ctx.db.query('subscriptions').collect()) subEmailById.set(s._id, s.email)
+    for (const s of subscriptions) subEmailById.set(s._id, s.email)
 
     const deviceLabelByMachine = new Map<string, string>()
-    for (const d of await ctx.db.query('devices').collect()) {
+    for (const d of devices) {
       if (d.label !== undefined) deviceLabelByMachine.set(d.machineId, d.label)
     }
 
     const actorById = new Map<Id<'users'>, Actor>()
-    for (const u of await ctx.db.query('users').collect()) {
+    for (const u of users) {
       actorById.set(u._id, {
         userId: u._id,
         name: u.name,
@@ -143,9 +154,9 @@ function toActivityEvent(
   deviceLabelByMachine: Map<string, string>,
   actorById: Map<Id<'users'>, Actor>
 ): ActivityEvent {
-  // CVLT-3 migration coalescing: legacy rows carry `clerkSessionId` with no
-  // `machineId`. Surface a stable, non-empty key so the validator holds.
-  const machineId = row.machineId ?? row.clerkSessionId ?? UNKNOWN_SESSION_SENTINEL
+  // CVLT-3 migration coalescing — see coalesceMachineId. Surfaces a stable,
+  // non-empty key so the `machineId: v.string()` validator holds.
+  const machineId = coalesceMachineId(row)
   // Device label is the canonical human name; fall back to the label stamped
   // on the activity row (legacy machines with no device registry row).
   const machineLabel = deviceLabelByMachine.get(machineId) ?? row.machineLabel
