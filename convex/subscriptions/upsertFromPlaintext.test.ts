@@ -9,7 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { SECOND_IDENTITY, TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api } from '../_generated/api'
 import { NEUTERED_REFRESH_TOKEN } from './actions'
 import { __setAnthropicFetch } from './anthropic'
@@ -115,6 +115,57 @@ describe('subscriptions.actions.upsertFromPlaintext', () => {
     const addRow = rows.find((r) => r.action === 'add')
     expect(addRow).toBeDefined()
     expect(addRow?.subscriptionId).toEqual(result.subId)
+  })
+
+  /**
+   * Shared-vault audit attribution. When a SECOND user re-captures a sub
+   * the FIRST user already claimed, `upsertSub` keeps the first-claimer as
+   * the row owner ("first claimer wins"). But the `add` audit row must
+   * attribute the action to the user who ACTUALLY ran it (the caller), not
+   * the sub owner — otherwise the dashboard shows impossible rows like
+   * "Saad added a subscription on Ammar's machine". Mirrors the actor-vs-owner
+   * fix already applied to pullForSwitch / requestRefresh / softRemove / rename.
+   */
+  it('attributes the add audit row to the acting caller, not the first-claimer owner', async () => {
+    const t = vault()
+    const aliceId = await seedUser(t, TEST_IDENTITY)
+    const bobId = await seedUser(t, SECOND_IDENTITY)
+
+    // Alice first-claims the account.
+    const first = await t.withIdentity(TEST_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'shared-account@example.com',
+      plaintextBlob: SAMPLE_BLOB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+    })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
+    // Bob re-captures the SAME account from his own machine.
+    const second = await t.withIdentity(SECOND_IDENTITY).action(api.subscriptions.actions.upsertFromPlaintext, {
+      email: 'shared-account@example.com',
+      plaintextBlob: SAMPLE_BLOB,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      subscriptionType: 'max',
+      rateLimitTier: 'tier1',
+      machineLabel: 'Bobs-MacBook-Pro.local',
+    })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+
+    // Ownership stays with the first claimer (Alice) — that's the
+    // documented shared-vault policy and must NOT change.
+    expect(second.created).toBe(false)
+    expect(second.subId).toEqual(first.subId)
+    expect(second.userId).toEqual(aliceId)
+
+    // But the audit row for Bob's re-capture must name BOB as the actor.
+    const addRows = await t.run(async (ctx) =>
+      (await ctx.db.query('machineActivity').collect()).filter((r) => r.action === 'add')
+    )
+    expect(addRows).toHaveLength(2)
+    const bobRow = addRows.find((r) => r.machineLabel === 'Bobs-MacBook-Pro.local')
+    expect(bobRow).toBeDefined()
+    expect(bobRow?.userId).toEqual(bobId)
   })
 
   /**

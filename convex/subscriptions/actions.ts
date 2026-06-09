@@ -274,8 +274,26 @@ export const upsertFromPlaintext = authenticatedAction({
     })
     // Audit: record the add. Per spec §4 + §12 every authenticated
     // state-changing action emits a `machineActivity` row.
+    //
+    // userId is the ACTING caller's `users._id` (resolved from the verified
+    // `identity.subject`), NOT `result.userId` (the sub owner). Under the
+    // shared-vault "first claimer wins" policy (`upsertSub`), re-capturing an
+    // account someone else already added returns the ORIGINAL owner's userId —
+    // so attributing the audit row to `result.userId` falsely logged the add
+    // against the first claimer while stamping the actual caller's machine,
+    // producing impossible "userX added on userY's machine" rows. Mirrors the
+    // actor-vs-owner fix in pullForSwitch / requestRefresh / softRemove / rename.
+    const actorUserId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
+      externalId: identity.subject,
+    })
+    if (!actorUserId) {
+      throw new ConvexError({
+        code: 'USER_NOT_FOUND',
+        message: 'No user row for caller. Sign in once to trigger the Clerk webhook, then retry.',
+      })
+    }
     await ctx.runMutation(internal.machineActivity.mutations.record, {
-      userId: result.userId,
+      userId: actorUserId,
       machineId: args.machineId ?? resolveCallerSession(identity),
       action: 'add',
       subscriptionId: result.subId,
