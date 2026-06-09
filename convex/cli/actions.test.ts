@@ -10,7 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
+import { SECOND_IDENTITY, TEST_IDENTITY, seedUser, vault } from '../__tests__/helpers'
 import { api, internal } from '../_generated/api'
 import { __setClerkFetch } from './clerk'
 
@@ -179,6 +179,40 @@ describe('cli.actions.revokeDevice', () => {
     expect(activity[0]?.action).toBe('remove')
     expect(activity[0]?.machineId).toBe('mach-1')
     expect(activity[0]?.userId).toStrictEqual(userId)
+  })
+
+  /**
+   * Shared-vault audit attribution: any authenticated user can revoke any
+   * machine. The `remove` audit row must name the user who ACTUALLY clicked
+   * Revoke (the caller), not the machine's owner — otherwise the dashboard
+   * shows "ownerX removed" for an action a different user performed. Mirrors
+   * the actor-vs-owner fix in upsertFromPlaintext / pullForSwitch / softRemove.
+   */
+  it('attributes the remove audit row to the revoking caller, not the device owner', async () => {
+    const t = vault()
+    const ownerId = await seedUser(t, TEST_IDENTITY) // Alice owns the machine
+    const revokerId = await seedUser(t, SECOND_IDENTITY) // Bob clicks Revoke
+
+    // Device belongs to Alice (no sid → no Clerk BAPI call).
+    await t.mutation(internal.devices.mutations.upsert, {
+      userId: ownerId,
+      machineId: 'mach-shared',
+      label: 'ammars-laptop',
+      at: 1000,
+    })
+
+    const result = await t.withIdentity(SECOND_IDENTITY).action(api.cli.actions.revokeDevice, {
+      machineId: 'mach-shared',
+    })
+    expect(result.revoked).toBe(true)
+
+    const activity = await t.run(async (ctx) =>
+      (await ctx.db.query('machineActivity').collect()).filter((r) => r.action === 'remove')
+    )
+    expect(activity).toHaveLength(1)
+    expect(activity[0]?.machineId).toBe('mach-shared')
+    // The actor is Bob (the revoker), NOT Alice (the device owner).
+    expect(activity[0]?.userId).toStrictEqual(revokerId)
   })
 
   it('denylists the sid in revokedSessions when sid is present', async () => {

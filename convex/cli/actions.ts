@@ -74,10 +74,26 @@ export const revokeDevice = authenticatedAction({
   args: { machineId: v.string() },
   returns: v.object({ revoked: v.boolean() }),
   handler: async (ctx, { machineId }): Promise<{ revoked: boolean }> => {
+    const identity = getIdentity(ctx)
     // Resolve device globally — the byMachine index makes machineId a
     // vault-wide unique key so any authenticated user can revoke any machine.
     const device = await ctx.runQuery(internal.devices.queries.getByMachine, { machineId })
     if (device === null) throw new ConvexError({ code: 'NOT_FOUND', message: 'Machine not found' })
+
+    // Audit attribution: the `remove` row must name the ACTING caller (who
+    // clicked Revoke), not `device.userId` (the machine owner). Under the
+    // shared vault any user can revoke any machine, so attributing to the
+    // owner falsely logged the action against the wrong person. Mirrors the
+    // actor-vs-owner fix in upsertFromPlaintext / pullForSwitch / softRemove.
+    const actorUserId = await ctx.runQuery(internal.users.actions.getIdByExternalId, {
+      externalId: identity.subject,
+    })
+    if (actorUserId === null) {
+      throw new ConvexError({
+        code: 'USER_NOT_FOUND',
+        message: 'No user row for caller. Sign in once to trigger the Clerk webhook, then retry.',
+      })
+    }
 
     const at = Date.now()
 
@@ -109,9 +125,11 @@ export const revokeDevice = authenticatedAction({
       at,
     })
 
-    // Audit row.
+    // Audit row. `userId` is the acting caller (see actorUserId above);
+    // `machineId` is the TARGET machine being revoked (the relevant entity
+    // for a remove event), not the caller's machine.
     await ctx.runMutation(internal.machineActivity.mutations.record, {
-      userId: device.userId,
+      userId: actorUserId,
       machineId,
       action: 'remove',
       at,
