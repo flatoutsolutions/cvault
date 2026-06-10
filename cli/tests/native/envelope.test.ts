@@ -15,7 +15,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { applyEnvelope, buildEnvelope } from '../../src/native/envelope'
+import { applyEnvelope, buildEnvelope, mergeClaudeCredentials } from '../../src/native/envelope'
 import { deleteActiveCredentials, readActiveCredentials, writeActiveCredentials } from '../../src/native/keychain'
 import { singleAccountEnvelope } from '../fixtures/envelopes/singleAccount'
 
@@ -168,6 +168,42 @@ describe('buildEnvelope', () => {
   })
 })
 
+describe('mergeClaudeCredentials', () => {
+  const NEXT = {
+    claudeAiOauth: {
+      accessToken: 'NEW',
+      refreshToken: 'NEW-RT',
+      expiresAt: 1_900_000_000_000,
+      scopes: ['user:inference'],
+      subscriptionType: 'max' as const,
+    },
+  }
+
+  it('preserves mcpOAuth and other sibling keys while replacing claudeAiOauth', () => {
+    const prior = JSON.stringify({
+      claudeAiOauth: { accessToken: 'OLD' },
+      mcpOAuth: { 'atlassian|abc': { access_token: 't' } },
+      somethingElse: { keep: true },
+    })
+    const merged = JSON.parse(mergeClaudeCredentials(prior, NEXT)) as Record<string, unknown>
+    expect(merged.mcpOAuth).toEqual({ 'atlassian|abc': { access_token: 't' } })
+    expect(merged.somethingElse).toEqual({ keep: true })
+    expect((merged.claudeAiOauth as { accessToken: string }).accessToken).toBe('NEW')
+  })
+
+  it('writes only the envelope credentials when there is no prior blob', () => {
+    const merged = JSON.parse(mergeClaudeCredentials(null, NEXT)) as Record<string, unknown>
+    expect(Object.keys(merged)).toEqual(['claudeAiOauth'])
+    expect((merged.claudeAiOauth as { accessToken: string }).accessToken).toBe('NEW')
+  })
+
+  it('falls back to the envelope credentials (no throw) when the prior blob is corrupt', () => {
+    const merged = JSON.parse(mergeClaudeCredentials('not-json{', NEXT)) as Record<string, unknown>
+    expect(Object.keys(merged)).toEqual(['claudeAiOauth'])
+    expect(merged.mcpOAuth).toBeUndefined()
+  })
+})
+
 describe('applyEnvelope', () => {
   it('writes the keychain blob and the oauthAccount slice', async () => {
     const env = singleAccountEnvelope()
@@ -188,6 +224,34 @@ describe('applyEnvelope', () => {
     const env = singleAccountEnvelope()
     env.accounts = []
     await expect(applyEnvelope(env)).rejects.toThrow(/no accounts|empty|account/i)
+  })
+
+  it('preserves mcpOAuth (MCP server tokens) in the keychain blob across an apply', async () => {
+    // The keychain item Claude Code-credentials holds BOTH the
+    // subscription token (claudeAiOauth) AND every MCP server's OAuth
+    // token (mcpOAuth). A pull/switch envelope only carries claudeAiOauth,
+    // so applyEnvelope must MERGE — replacing only claudeAiOauth and
+    // preserving mcpOAuth — not overwrite the whole item (CVLT-5).
+    const PRIOR_BLOB = JSON.stringify({
+      claudeAiOauth: { accessToken: 'OLD' },
+      mcpOAuth: { 'atlassian|1eb778bd626fb68d': { access_token: 'mcp-tok', refresh_token: 'mcp-rt' } },
+    })
+    vi.mocked(readActiveCredentials).mockReturnValue(PRIOR_BLOB)
+
+    const env = singleAccountEnvelope()
+    await applyEnvelope(env)
+
+    expect(writeActiveCredentials).toHaveBeenCalledOnce()
+    const written = JSON.parse(vi.mocked(writeActiveCredentials).mock.calls[0]?.[0] ?? '') as {
+      claudeAiOauth: { accessToken: string }
+      mcpOAuth?: Record<string, unknown>
+    }
+    // mcpOAuth survives untouched.
+    expect(written.mcpOAuth).toEqual({
+      'atlassian|1eb778bd626fb68d': { access_token: 'mcp-tok', refresh_token: 'mcp-rt' },
+    })
+    // claudeAiOauth is replaced by the envelope's token.
+    expect(written.claudeAiOauth.accessToken).toBe(env.accounts[0]!.credentials.claudeAiOauth.accessToken)
   })
 
   it('preserves sibling keys in ~/.claude.json', async () => {
