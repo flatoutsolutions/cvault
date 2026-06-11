@@ -144,10 +144,9 @@ export function buildEnvelope(opts: BuildEnvelopeOptions): ClaudeSwapEnvelope {
 }
 
 /**
- * Merge an envelope's `credentials` slot into the existing credentials blob,
+ * Merge an envelope's `claudeAiOauth` into the existing credentials blob,
  * preserving any sibling top-level keys (notably `mcpOAuth`, where Claude Code
- * stores every MCP server's OAuth token) and replacing only the keys the
- * envelope carries (`claudeAiOauth`).
+ * stores every MCP server's OAuth token) and replacing ONLY `claudeAiOauth`.
  *
  * The keychain item `Claude Code-credentials` is shared:
  * `{ claudeAiOauth, mcpOAuth, ... }`. A cvault pull/switch envelope only ever
@@ -156,25 +155,29 @@ export function buildEnvelope(opts: BuildEnvelopeOptions): ClaudeSwapEnvelope {
  * the sibling-preserving write `~/.claude.json` already gets via
  * `writeOauthAccount`.
  *
- * If the prior blob is absent (`null`) or unparseable, we fall back to writing
- * just the envelope's credentials — there is nothing safe to preserve.
+ * The replace is intentionally a SHALLOW, single-key write of `claudeAiOauth`
+ * — NOT a spread of `next`. `buildEnvelope` casts the whole keychain blob as
+ * `credentials`, so a round-tripped envelope can carry a stale `mcpOAuth` in
+ * `next`; spreading it would clobber the fresh local `mcpOAuth` and re-open
+ * CVLT-5. Keep this shallow; do not "upgrade" it to a deep merge.
+ *
+ * If the prior blob is absent (`null`), unparseable, or not a plain object
+ * (e.g. an array), we fall back to writing just `claudeAiOauth` — there is
+ * nothing safe to preserve.
  */
-export function mergeClaudeCredentials(
-  priorRaw: string | null,
-  next: ClaudeSwapAccount['credentials']
-): string {
+export function mergeClaudeCredentials(priorRaw: string | null, next: ClaudeSwapAccount['credentials']): string {
   let base: Record<string, unknown> = {}
   if (priorRaw !== null) {
     try {
       const parsed = JSON.parse(priorRaw) as unknown
-      if (parsed !== null && typeof parsed === 'object') {
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
         base = parsed as Record<string, unknown>
       }
     } catch {
-      // Corrupt prior blob — nothing to preserve; write only `next`.
+      // Corrupt prior blob — nothing to preserve; write only `claudeAiOauth`.
     }
   }
-  return JSON.stringify({ ...base, ...next })
+  return JSON.stringify({ ...base, claudeAiOauth: next.claudeAiOauth })
 }
 
 /**

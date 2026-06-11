@@ -202,6 +202,28 @@ describe('mergeClaudeCredentials', () => {
     expect(Object.keys(merged)).toEqual(['claudeAiOauth'])
     expect(merged.mcpOAuth).toBeUndefined()
   })
+
+  it('keeps the LOCAL mcpOAuth even when the incoming credentials carry a (stale) mcpOAuth', () => {
+    // buildEnvelope casts the whole keychain blob as `credentials`, so a
+    // round-tripped envelope can carry mcpOAuth in `next`. The merge must
+    // replace ONLY claudeAiOauth — never clobber the fresh local mcpOAuth
+    // with a stale foreign copy (would re-introduce CVLT-5).
+    const localMcp = { 'atlassian|local': { access_token: 'FRESH' } }
+    const prior = JSON.stringify({ claudeAiOauth: { accessToken: 'OLD' }, mcpOAuth: localMcp })
+    // `next` typed as credentials but carrying an extra (stale) mcpOAuth,
+    // exactly as a cast-built envelope would.
+    const staleNext = { ...NEXT, mcpOAuth: { 'atlassian|stale': { access_token: 'STALE' } } }
+    const merged = JSON.parse(mergeClaudeCredentials(prior, staleNext)) as Record<string, unknown>
+    expect(merged.mcpOAuth).toEqual(localMcp)
+    expect((merged.claudeAiOauth as { accessToken: string }).accessToken).toBe('NEW')
+  })
+
+  it('does not spread an array prior blob into numeric index keys', () => {
+    // typeof [] === 'object' — guard against an array prior blob producing
+    // {"0":..,"1":..} junk in the keychain.
+    const merged = JSON.parse(mergeClaudeCredentials(JSON.stringify(['a', 'b']), NEXT)) as Record<string, unknown>
+    expect(Object.keys(merged)).toEqual(['claudeAiOauth'])
+  })
 })
 
 describe('applyEnvelope', () => {
@@ -236,7 +258,7 @@ describe('applyEnvelope', () => {
       claudeAiOauth: { accessToken: 'OLD' },
       mcpOAuth: { 'atlassian|1eb778bd626fb68d': { access_token: 'mcp-tok', refresh_token: 'mcp-rt' } },
     })
-    vi.mocked(readActiveCredentials).mockReturnValue(PRIOR_BLOB)
+    vi.mocked(readActiveCredentials).mockReturnValueOnce(PRIOR_BLOB)
 
     const env = singleAccountEnvelope()
     await applyEnvelope(env)
@@ -289,6 +311,36 @@ describe('applyEnvelope', () => {
     // new blob, once with PRIOR_BLOB to restore.
     const writeCalls = vi.mocked(writeActiveCredentials).mock.calls
     expect(writeCalls.length).toBe(2)
+    expect(writeCalls[1]?.[0]).toBe(PRIOR_BLOB)
+  })
+
+  it('forward write MERGES mcpOAuth, rollback restores the prior blob VERBATIM', async () => {
+    // The heart of the design is an asymmetry: the forward write merges
+    // (preserves mcpOAuth), but rollback must restore the EXACT prior blob —
+    // which is why the merge lives in the forward write, not in
+    // writeCredentials.
+    const PRIOR_BLOB = JSON.stringify({
+      claudeAiOauth: { accessToken: 'PRIOR' },
+      mcpOAuth: { 'atlassian|x': { access_token: 't' } },
+    })
+    vi.mocked(readActiveCredentials).mockReturnValueOnce(PRIOR_BLOB)
+    // Force step 2 (~/.claude.json) to fail so rollback fires.
+    const env = singleAccountEnvelope()
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(`${configPath}.${process.pid.toString()}.tmp`, { recursive: true })
+
+    await expect(applyEnvelope(env)).rejects.toThrow()
+
+    const writeCalls = vi.mocked(writeActiveCredentials).mock.calls
+    expect(writeCalls.length).toBe(2)
+    // Forward write: merged — mcpOAuth preserved, claudeAiOauth replaced.
+    const forward = JSON.parse(writeCalls[0]?.[0] ?? '') as {
+      claudeAiOauth: { accessToken: string }
+      mcpOAuth?: Record<string, unknown>
+    }
+    expect(forward.mcpOAuth).toEqual({ 'atlassian|x': { access_token: 't' } })
+    expect(forward.claudeAiOauth.accessToken).toBe(env.accounts[0]!.credentials.claudeAiOauth.accessToken)
+    // Rollback write: the prior blob, byte-for-byte (NOT merged).
     expect(writeCalls[1]?.[0]).toBe(PRIOR_BLOB)
   })
 
