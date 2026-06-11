@@ -74,10 +74,8 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
-    expect(after?.usage5h?.pct).toBe(23.5)
-    expect(after?.usage7d?.pct).toBe(47.0)
-    expect(after?.usage5h?.resetsAt).toBe(new Date(futureFiveHour).getTime())
-    expect(after?.usage7d?.resetsAt).toBe(new Date(futureSevenDay).getTime())
+    expect(after?.usage5h).toMatchObject({ pct: 23.5, resetsAt: new Date(futureFiveHour).getTime() })
+    expect(after?.usage7d).toMatchObject({ pct: 47.0, resetsAt: new Date(futureSevenDay).getTime() })
   })
 
   it('silently skips when Anthropic returns 429', async () => {
@@ -93,7 +91,7 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     expect(after?.usage7d).toBeUndefined()
   })
 
-  it('handles a partial response (only five_hour present)', async () => {
+  it('writes an idle marker for a window absent from a successful response', async () => {
     const t = vault()
     const inserted = await seedSubscription(t)
 
@@ -112,17 +110,20 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
-    expect(after?.usage5h?.pct).toBe(5)
-    expect(after?.usage7d).toBeUndefined()
+    expect(after?.usage5h).toMatchObject({ pct: 5 })
+    // 7d absent from a SUCCESSFUL poll → explicit idle marker, not undefined.
+    expect(after?.usage7d).toMatchObject({ idle: true })
+    expect(after?.usage7d).not.toHaveProperty('pct')
   })
 
   // Regression: prod incident where every sub's 5h bar froze at "resets now".
   // When a 5h window crosses its reset, Anthropic stops returning a usable
   // `five_hour` while still returning `seven_day`. The window that is ABSENT
-  // from a *successful* response must be CLEARED, not retained — otherwise the
-  // dead `{pct, resetsAt}` lingers forever (e.g. "99% resets now") while the
-  // 7d window keeps updating on every 5-minute poll.
-  it('clears a previously-set window that is absent from a successful response', async () => {
+  // from a *successful* response must be REPLACED with an idle marker, not
+  // retained — otherwise the dead `{pct, resetsAt}` lingers forever (e.g.
+  // "99% resets now") while the 7d window keeps updating every 5-minute poll.
+  // The idle marker is what lets the dashboard show "Ready" for the 5h window.
+  it('replaces a stale window with an idle marker when it is absent from a successful response', async () => {
     const t = vault()
     const inserted = await seedSubscription(t)
 
@@ -152,9 +153,10 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
-    expect(after?.usage5h).toBeUndefined()
-    expect(after?.usage7d?.pct).toBe(51)
-    expect(after?.usage7d?.resetsAt).toBe(new Date(futureSevenDay).getTime())
+    // Stale active window is gone, replaced by an idle marker → UI shows "Ready".
+    expect(after?.usage5h).toMatchObject({ idle: true })
+    expect(after?.usage5h).not.toHaveProperty('pct')
+    expect(after?.usage7d).toMatchObject({ pct: 51, resetsAt: new Date(futureSevenDay).getTime() })
   })
 
   // Counterpart to the above: a *failed* fetch (429/401/5xx/network) must

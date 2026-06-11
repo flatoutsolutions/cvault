@@ -17,13 +17,21 @@
  * Critical visual variant kicks in at >=90% so the user notices when an
  * account is about to throttle.
  */
+import { Check } from 'lucide-react'
+
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 
-export type UsageWindow = {
-  pct: number
-  resetsAt: number
-  fetchedAt: number
+/**
+ * A usage window is either ACTIVE (a live rate-limit window with a percentage
+ * and reset time) or IDLE (a successful poll found no active window — e.g. a
+ * 5h session window that has reset; a fresh one only starts on the next use).
+ * `undefined` means not-yet-polled / unavailable for the tier.
+ */
+export type UsageWindow = { pct: number; resetsAt: number; fetchedAt: number } | { idle: true; fetchedAt: number }
+
+function isActive(usage: UsageWindow | undefined): usage is { pct: number; resetsAt: number; fetchedAt: number } {
+  return usage !== undefined && 'pct' in usage
 }
 
 export type UsageBarProps = {
@@ -31,6 +39,15 @@ export type UsageBarProps = {
   label: string
   /** Usage data; undefined when not yet polled or unavailable for the tier. */
   usage: UsageWindow | undefined
+  /**
+   * How to render the IDLE state (no active window). `'ready'` shows an
+   * affirmative "Ready" affordance for the 5h window — a reset 5h window means
+   * full quota is available and the next `claude` command starts a fresh
+   * 5-hour window. `'none'` (default) renders idle the same as unknown ("—"),
+   * used for the 7d window where an absent window is ambiguous (a Pro account
+   * has no weekly window at all, so "Ready" would mislead).
+   */
+  idlePresentation?: 'ready' | 'none'
 }
 
 const CRITICAL_PCT = 90
@@ -58,26 +75,41 @@ export function formatCountdown(resetsAt: number, now: number = Date.now()): str
   return `${minutes.toString()}m`
 }
 
-export function UsageBar({ label, usage }: UsageBarProps) {
-  const isCritical = usage !== undefined && usage.pct >= CRITICAL_PCT
-  const state = isCritical ? 'critical' : 'normal'
+export function UsageBar({ label, usage, idlePresentation = 'none' }: UsageBarProps) {
+  const active = isActive(usage)
+  // "Ready" only when we have a CONFIRMED idle window (not merely unpolled)
+  // and the caller opted into the affordance (the 5h window).
+  const ready = !active && usage !== undefined && 'idle' in usage && idlePresentation === 'ready'
+  const isCritical = active && usage.pct >= CRITICAL_PCT
+  const state = isCritical ? 'critical' : ready ? 'ready' : 'normal'
 
   return (
     <div data-slot="usage-bar" data-state={state} className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between text-xs">
         <span className="text-muted-foreground font-medium">{label}</span>
-        <span className={cn('tabular-nums font-medium', isCritical ? 'text-destructive' : 'text-foreground')}>
-          {usage !== undefined ? `${Math.round(usage.pct).toString()}%` : '—'}
-        </span>
+        {active ? (
+          <span className={cn('tabular-nums font-medium', isCritical ? 'text-destructive' : 'text-foreground')}>
+            {Math.round(usage.pct).toString()}%
+          </span>
+        ) : ready ? (
+          <span className="text-foreground inline-flex items-center gap-0.5 font-medium">
+            <Check className="size-3" aria-hidden />
+            Ready
+          </span>
+        ) : (
+          <span className="text-foreground font-medium">—</span>
+        )}
       </div>
       <Progress
-        value={usage !== undefined ? Math.min(100, Math.max(0, usage.pct)) : 0}
+        value={active ? Math.min(100, Math.max(0, usage.pct)) : 0}
         className={cn('h-1.5', isCritical && '[&>div]:bg-destructive')}
         aria-label={`${label} usage`}
       />
-      {usage !== undefined && (
+      {active ? (
         <div className="text-muted-foreground text-xs">resets in {formatCountdown(usage.resetsAt)}</div>
-      )}
+      ) : ready ? (
+        <div className="text-muted-foreground text-xs">fresh window starts on next use</div>
+      ) : null}
     </div>
   )
 }

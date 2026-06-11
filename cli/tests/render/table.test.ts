@@ -94,6 +94,12 @@ describe('renderSubsTable', () => {
     expect(out).toMatch(/\s-\s/)
   })
 
+  it('renders an idle 5h window as "ready"', () => {
+    const out = renderSubsTable([row({ usage5hPct: undefined, usage5hIdle: true })], NOW)
+    const dataLine = out.split('\n').find((l) => l.includes('a@b.com'))
+    expect(dataLine).toContain('ready')
+  })
+
   it('rounds usage percentages to integers', () => {
     const out = renderSubsTable([row({ usage5hPct: 23.7, usage7dPct: 41.4 })], NOW)
     expect(out).toContain('24%')

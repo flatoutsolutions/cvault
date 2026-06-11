@@ -69,4 +69,22 @@ describe('UsageBar', () => {
     render(<UsageBar label="5h" usage={{ pct: 50, resetsAt: past, fetchedAt: Date.now() }} />)
     expect(screen.getByText(/now|0m/i)).toBeTruthy()
   })
+
+  it('shows "Ready" for an idle 5h window when idlePresentation="ready"', () => {
+    const { container } = render(
+      <UsageBar label="5h" usage={{ idle: true, fetchedAt: Date.now() }} idlePresentation="ready" />
+    )
+    expect(screen.getByText('Ready')).toBeTruthy()
+    expect(screen.getByText(/fresh window starts on next use/i)).toBeTruthy()
+    // Distinct data-state so styling stays co-located and tests don't depend on classes.
+    const root = container.querySelector('[data-slot="usage-bar"]')
+    expect(root?.getAttribute('data-state')).toBe('ready')
+  })
+
+  it('renders an idle window as "—" when idlePresentation is "none" (e.g. 7d)', () => {
+    render(<UsageBar label="7d" usage={{ idle: true, fetchedAt: Date.now() }} />)
+    expect(screen.getByText('—')).toBeTruthy()
+    // Must NOT claim "Ready" for 7d — an absent weekly window is ambiguous.
+    expect(screen.queryByText('Ready')).toBeNull()
+  })
 })

@@ -641,13 +641,19 @@ export const fetchUsageForSub = internalAction({
     const fetchedAt = Date.now()
     // Fetch succeeded (result.ok). A window that is ABSENT here genuinely has
     // no active limit right now — e.g. a 5h window that crossed its reset, at
-    // which point Anthropic stops returning it. Send `null` (not `undefined`)
-    // so patchUsage CLEARS the stale window instead of retaining a dead
-    // "resets now" forever. Failed fetches return early above, untouched.
+    // which point Anthropic stops returning it. Write an explicit `idle`
+    // marker (not `undefined`) so it REPLACES any stale window: the dashboard
+    // shows "Ready" for 5h instead of a dead "resets now", and we can tell
+    // "polled, no active window" apart from "never polled" (undefined).
+    // Failed fetches return early above, leaving last-known untouched.
     await ctx.runMutation(internal.subscriptions.mutations.patchUsage, {
       subId,
-      usage5h: result.fiveHour ? { pct: result.fiveHour.pct, resetsAt: result.fiveHour.resetsAtMs, fetchedAt } : null,
-      usage7d: result.sevenDay ? { pct: result.sevenDay.pct, resetsAt: result.sevenDay.resetsAtMs, fetchedAt } : null,
+      usage5h: result.fiveHour
+        ? { pct: result.fiveHour.pct, resetsAt: result.fiveHour.resetsAtMs, fetchedAt }
+        : { idle: true, fetchedAt },
+      usage7d: result.sevenDay
+        ? { pct: result.sevenDay.pct, resetsAt: result.sevenDay.resetsAtMs, fetchedAt }
+        : { idle: true, fetchedAt },
     })
     return null
   },
