@@ -144,6 +144,43 @@ export function buildEnvelope(opts: BuildEnvelopeOptions): ClaudeSwapEnvelope {
 }
 
 /**
+ * Merge an envelope's `claudeAiOauth` into the existing credentials blob,
+ * preserving any sibling top-level keys (notably `mcpOAuth`, where Claude Code
+ * stores every MCP server's OAuth token) and replacing ONLY `claudeAiOauth`.
+ *
+ * The keychain item `Claude Code-credentials` is shared:
+ * `{ claudeAiOauth, mcpOAuth, ... }`. A cvault pull/switch envelope only ever
+ * carries `claudeAiOauth`, so a wholesale overwrite would wipe `mcpOAuth` and
+ * silently log the user out of every OAuth MCP server (CVLT-5). This mirrors
+ * the sibling-preserving write `~/.claude.json` already gets via
+ * `writeOauthAccount`.
+ *
+ * The replace is intentionally a SHALLOW, single-key write of `claudeAiOauth`
+ * — NOT a spread of `next`. `buildEnvelope` casts the whole keychain blob as
+ * `credentials`, so a round-tripped envelope can carry a stale `mcpOAuth` in
+ * `next`; spreading it would clobber the fresh local `mcpOAuth` and re-open
+ * CVLT-5. Keep this shallow; do not "upgrade" it to a deep merge.
+ *
+ * If the prior blob is absent (`null`), unparseable, or not a plain object
+ * (e.g. an array), we fall back to writing just `claudeAiOauth` — there is
+ * nothing safe to preserve.
+ */
+export function mergeClaudeCredentials(priorRaw: string | null, next: ClaudeSwapAccount['credentials']): string {
+  let base: Record<string, unknown> = {}
+  if (priorRaw !== null) {
+    try {
+      const parsed = JSON.parse(priorRaw) as unknown
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>
+      }
+    } catch {
+      // Corrupt prior blob — nothing to preserve; write only `claudeAiOauth`.
+    }
+  }
+  return JSON.stringify({ ...base, claudeAiOauth: next.claudeAiOauth })
+}
+
+/**
  * Read-modify-write of the active credentials + `~/.claude.json` slice.
  * MUST be called under the cvault credentials lock (`withFileLock`).
  *
@@ -182,11 +219,14 @@ export function applyEnvelopeUnlocked(env: ClaudeSwapEnvelope): void {
   const priorCfg = readGlobalConfig()
   const priorOauthAccount = priorCfg?.oauthAccount
 
-  const newBlob = JSON.stringify(account.credentials)
-
-  // Step 1 — credentials. Stringify the `credentials` slot exactly as
-  // the Keychain blob (Claude Code reads the whole
-  // `{ claudeAiOauth: ... }`).
+  // Step 1 — credentials. MERGE `claudeAiOauth` into the existing blob so
+  // sibling keys (`mcpOAuth` — MCP server OAuth tokens) survive; only the
+  // keys the envelope carries are replaced. A wholesale overwrite here
+  // wipes `mcpOAuth` and logs the user out of every OAuth MCP server
+  // (CVLT-5). NOTE: the rollback paths below deliberately pass `priorCreds`
+  // straight to `writeCredentials` (an exact restore), so the merge lives
+  // here in the forward write, not inside `writeCredentials`.
+  const newBlob = mergeClaudeCredentials(priorCreds, account.credentials)
   writeCredentials(newBlob)
 
   // Step 2 — `~/.claude.json`'s `oauthAccount` slice. Use
