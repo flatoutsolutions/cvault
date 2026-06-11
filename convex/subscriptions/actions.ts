@@ -639,14 +639,15 @@ export const fetchUsageForSub = internalAction({
     }
 
     const fetchedAt = Date.now()
+    // Fetch succeeded (result.ok). A window that is ABSENT here genuinely has
+    // no active limit right now — e.g. a 5h window that crossed its reset, at
+    // which point Anthropic stops returning it. Send `null` (not `undefined`)
+    // so patchUsage CLEARS the stale window instead of retaining a dead
+    // "resets now" forever. Failed fetches return early above, untouched.
     await ctx.runMutation(internal.subscriptions.mutations.patchUsage, {
       subId,
-      usage5h: result.fiveHour
-        ? { pct: result.fiveHour.pct, resetsAt: result.fiveHour.resetsAtMs, fetchedAt }
-        : undefined,
-      usage7d: result.sevenDay
-        ? { pct: result.sevenDay.pct, resetsAt: result.sevenDay.resetsAtMs, fetchedAt }
-        : undefined,
+      usage5h: result.fiveHour ? { pct: result.fiveHour.pct, resetsAt: result.fiveHour.resetsAtMs, fetchedAt } : null,
+      usage7d: result.sevenDay ? { pct: result.sevenDay.pct, resetsAt: result.sevenDay.resetsAtMs, fetchedAt } : null,
     })
     return null
   },

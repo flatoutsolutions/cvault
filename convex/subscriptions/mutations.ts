@@ -553,20 +553,34 @@ export const commitRefreshedTokens = internalMutation({
  * Internal mutation used by the usage cron action to patch usage cache.
  * Public callers cannot reach this.
  */
+const usageWindowValidator = v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })
+
+type UsageWindow = { pct: number; resetsAt: number; fetchedAt: number }
+
 export const patchUsage = internalMutation({
   args: {
     subId: v.id('subscriptions'),
-    usage5h: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
-    usage7d: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
+    // Three-state per window (design: docs/research/anthropic-usage.md):
+    //  - omitted (`undefined`) → leave the stored window untouched. Used by
+    //    the action on a FAILED fetch so we keep the last-known value.
+    //  - `null` → the window was absent from a SUCCESSFUL poll (e.g. a 5h
+    //    window that just crossed its reset; Anthropic stops returning it).
+    //    Clear the stale value so the dashboard stops showing a dead
+    //    "resets now" forever — this was the prod usage-freeze incident.
+    //  - object → overwrite with the freshly-fetched window.
+    usage5h: v.optional(v.union(usageWindowValidator, v.null())),
+    usage7d: v.optional(v.union(usageWindowValidator, v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const sub = await ctx.db.get('subscriptions', args.subId)
     if (!sub) return null
 
-    const patch: { usage5h?: typeof args.usage5h; usage7d?: typeof args.usage7d } = {}
-    if (args.usage5h !== undefined) patch.usage5h = args.usage5h
-    if (args.usage7d !== undefined) patch.usage7d = args.usage7d
+    // Setting a field to `undefined` in a Convex patch deletes it, so `null`
+    // args are normalized to `undefined` to clear the stored window.
+    const patch: { usage5h?: UsageWindow | undefined; usage7d?: UsageWindow | undefined } = {}
+    if (args.usage5h !== undefined) patch.usage5h = args.usage5h ?? undefined
+    if (args.usage7d !== undefined) patch.usage7d = args.usage7d ?? undefined
     if (Object.keys(patch).length === 0) return null
 
     await ctx.db.patch('subscriptions', args.subId, patch)
