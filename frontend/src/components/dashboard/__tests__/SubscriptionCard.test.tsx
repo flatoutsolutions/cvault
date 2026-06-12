@@ -150,6 +150,44 @@ describe('SubscriptionCard', () => {
     expect(text.toLowerCase()).toMatch(/rotated|recapture|re-?capture/)
   })
 
+  it('does NOT claim "Ready" for the 5h window when the sub is relogin-required (token dead)', () => {
+    // Pins the card wiring `tokenAlive={!reloginRequired}` → UsageBar. A dead
+    // token isn't usable, so an idle 5h window must NOT render "Ready" — the
+    // ⚠ badge/explainer carry the why. Without the wiring this would say "Ready".
+    render(
+      <SubscriptionCard
+        sub={makeSub({ refreshExpiresAt: Date.now() - 1000, usage5h: { idle: true, fetchedAt: Date.now() } })}
+        onForceRefresh={vi.fn()}
+        onRename={vi.fn()}
+        onRemove={vi.fn()}
+        forceRefreshing={false}
+        removing={false}
+        users={[]}
+      />
+    )
+    expect(screen.queryByText('Ready')).toBeNull()
+    expect(screen.getByText(/relogin required/i)).toBeTruthy()
+  })
+
+  it('shows a fresh idle 5h window as "Ready" when the token is alive', () => {
+    // Counterpart to the above: alive token + fresh idle window → the affordance.
+    render(
+      <SubscriptionCard
+        sub={makeSub({
+          refreshExpiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+          usage5h: { idle: true, fetchedAt: Date.now() },
+        })}
+        onForceRefresh={vi.fn()}
+        onRename={vi.fn()}
+        onRemove={vi.fn()}
+        forceRefreshing={false}
+        removing={false}
+        users={[]}
+      />
+    )
+    expect(screen.getByText('Ready')).toBeTruthy()
+  })
+
   it('does NOT render the relogin explainer when refreshExpiresAt is unset', () => {
     render(
       <SubscriptionCard

@@ -17,10 +17,19 @@
  *
  * Critical visual variant kicks in at >=90% so the user notices when an
  * account is about to throttle.
+ *
+ * Staleness (CVLT-7): a window older than `STALE_AFTER_MS` (3 missed polls) is
+ * dimmed with a "last checked" hint, because a failed poll preserves last-known
+ * and writes nothing — without this the value would silently rot. "Ready" is a
+ * strong claim, so it shows ONLY when the idle window is fresh AND the token is
+ * alive (`tokenAlive`); a stale or relogin-required sub degrades instead of
+ * over-claiming. `now` is injected so the countdown + staleness tick on a
+ * long-open tab (see `useNow`).
  */
 import { Check } from 'lucide-react'
 
 import { Progress } from '@/components/ui/progress'
+import { relativeTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 /**
@@ -49,9 +58,25 @@ export type UsageBarProps = {
    * has no weekly window at all, so "Ready" would mislead).
    */
   idlePresentation?: 'ready' | 'none'
+  /**
+   * Current epoch-ms. REQUIRED (not defaulted) so a call site can't silently
+   * freeze the countdown/staleness by omitting it — under React Compiler a
+   * `Date.now()` default would be memoized and never re-evaluate. The card
+   * passes `useNow()`; tests pass a fixed value.
+   */
+  now: number
+  /**
+   * Whether the sub's token is still usable. When `false` (relogin-required)
+   * the 5h window never claims "Ready" — a dead-token sub isn't usable
+   * regardless of its last polled window; the card's ⚠ badge explains why.
+   * Defaults to `true`.
+   */
+  tokenAlive?: boolean
 }
 
 const CRITICAL_PCT = 90
+/** Usage older than this (3 missed 5-minute polls) is treated as stale. */
+const STALE_AFTER_MS = 15 * 60 * 1000
 
 /**
  * Format the time remaining until `resetsAt` as a short, human string.
@@ -76,20 +101,32 @@ export function formatCountdown(resetsAt: number, now: number = Date.now()): str
   return `${minutes.toString()}m`
 }
 
-export function UsageBar({ label, usage, idlePresentation = 'none' }: UsageBarProps) {
+export function UsageBar({ label, usage, idlePresentation = 'none', now, tokenAlive = true }: UsageBarProps) {
   const active = isActive(usage)
-  // "Ready" only when we have a CONFIRMED idle window (not merely unpolled)
-  // and the caller opted into the affordance (the 5h window).
-  const ready = !active && usage !== undefined && 'idle' in usage && idlePresentation === 'ready'
+  const isIdle = usage !== undefined && 'idle' in usage
+  const stale = usage !== undefined && now - usage.fetchedAt > STALE_AFTER_MS
+  // "Ready" requires a CONFIRMED idle window, the affordance opt-in (5h), FRESH
+  // data, and a live token. Otherwise we degrade rather than over-claim.
+  const ready = isIdle && idlePresentation === 'ready' && !stale && tokenAlive
+  // Idle window we still trust the *state* of but whose data is old: show a
+  // muted "Ready" + "last checked" instead of the confident affordance. A
+  // dead-token sub drops to "—" (the ready/idleStale guards both fail).
+  const idleStale = isIdle && idlePresentation === 'ready' && tokenAlive && stale
   const isCritical = active && usage.pct >= CRITICAL_PCT
-  const state = isCritical ? 'critical' : ready ? 'ready' : 'normal'
+  const state = isCritical ? 'critical' : ready ? 'ready' : stale ? 'stale' : 'normal'
+  const checkedAgo = usage !== undefined ? relativeTime(usage.fetchedAt, now) : ''
 
   return (
     <div data-slot="usage-bar" data-state={state} className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between text-xs">
         <span className="text-muted-foreground font-medium">{label}</span>
         {active ? (
-          <span className={cn('tabular-nums font-medium', isCritical ? 'text-destructive' : 'text-foreground')}>
+          <span
+            className={cn(
+              'tabular-nums font-medium',
+              isCritical ? 'text-destructive' : stale ? 'text-muted-foreground' : 'text-foreground'
+            )}
+          >
             {Math.round(usage.pct).toString()}%
           </span>
         ) : ready ? (
@@ -97,19 +134,26 @@ export function UsageBar({ label, usage, idlePresentation = 'none' }: UsageBarPr
             <Check className="size-3" aria-hidden />
             Ready
           </span>
+        ) : idleStale ? (
+          <span className="text-muted-foreground font-medium">Ready</span>
         ) : (
           <span className="text-foreground font-medium">—</span>
         )}
       </div>
       <Progress
         value={active ? Math.min(100, Math.max(0, usage.pct)) : 0}
-        className={cn('h-1.5', isCritical && '[&>div]:bg-destructive')}
+        className={cn('h-1.5', isCritical && '[&>div]:bg-destructive', stale && 'opacity-50')}
         aria-label={`${label} usage`}
       />
       {active ? (
-        <div className="text-muted-foreground text-xs">resets in {formatCountdown(usage.resetsAt)}</div>
+        <div className="text-muted-foreground text-xs">
+          resets in {formatCountdown(usage.resetsAt, now)}
+          {stale ? ` · checked ${checkedAgo}` : ''}
+        </div>
       ) : ready ? (
         <div className="text-muted-foreground text-xs">fresh window starts on next use</div>
+      ) : idleStale ? (
+        <div className="text-muted-foreground text-xs">last checked {checkedAgo}</div>
       ) : null}
     </div>
   )
