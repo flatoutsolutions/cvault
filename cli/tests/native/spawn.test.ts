@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { isMissingBinaryError } from '../../src/native/spawn'
 
 describe('isMissingBinaryError', () => {
-  it('matches Bun\'s real missing-binary error (ENOENT on err.code only)', () => {
+  it("matches Bun's real missing-binary error (ENOENT on err.code only)", () => {
     const err = Object.assign(new Error('Executable not found in $PATH: "brew"'), { code: 'ENOENT' })
     expect(isMissingBinaryError(err)).toBe(true)
   })
