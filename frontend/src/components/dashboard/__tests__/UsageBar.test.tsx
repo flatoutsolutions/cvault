@@ -87,4 +87,53 @@ describe('UsageBar', () => {
     // Must NOT claim "Ready" for 7d — an absent weekly window is ambiguous.
     expect(screen.queryByText('Ready')).toBeNull()
   })
+
+  it('degrades an idle 5h window to stale when the data is old', () => {
+    const now = Date.now()
+    const fetchedAt = now - 20 * 60 * 1000 // 20m old, past the 15m threshold
+    const { container } = render(
+      <UsageBar label="5h" usage={{ idle: true, fetchedAt }} idlePresentation="ready" now={now} />
+    )
+    const root = container.querySelector('[data-slot="usage-bar"]')
+    // No longer the confident affordance — flagged stale with a last-checked hint.
+    expect(root?.getAttribute('data-state')).toBe('stale')
+    expect(screen.getByText(/last checked/i)).toBeTruthy()
+    expect(screen.queryByText(/fresh window starts on next use/i)).toBeNull()
+  })
+
+  it('does not claim "Ready" for a relogin-required (dead-token) sub', () => {
+    const now = Date.now()
+    render(
+      <UsageBar
+        label="5h"
+        usage={{ idle: true, fetchedAt: now }}
+        idlePresentation="ready"
+        now={now}
+        tokenAlive={false}
+      />
+    )
+    // A dead token is not usable regardless of the last polled window.
+    expect(screen.queryByText('Ready')).toBeNull()
+    expect(screen.getByText('—')).toBeTruthy()
+  })
+
+  it('marks an active window stale but still shows the percentage', () => {
+    const now = Date.now()
+    const usage = { pct: 40, resetsAt: now + 60 * 60 * 1000, fetchedAt: now - 20 * 60 * 1000 }
+    const { container } = render(<UsageBar label="5h" usage={usage} now={now} />)
+    const root = container.querySelector('[data-slot="usage-bar"]')
+    expect(root?.getAttribute('data-state')).toBe('stale')
+    expect(screen.getByText('40%')).toBeTruthy()
+    expect(screen.getByText(/checked/i)).toBeTruthy()
+  })
+
+  it('uses the injected now for the countdown so it ticks without a reload', () => {
+    const now = Date.now()
+    const usage = { pct: 50, resetsAt: now + 2 * 60 * 60 * 1000, fetchedAt: now }
+    const { rerender } = render(<UsageBar label="5h" usage={usage} now={now} />)
+    expect(screen.getByText(/2h 0m/)).toBeTruthy()
+    // One hour later, same data → the countdown shrinks (no new Convex push needed).
+    rerender(<UsageBar label="5h" usage={usage} now={now + 60 * 60 * 1000} />)
+    expect(screen.getByText(/1h 0m/)).toBeTruthy()
+  })
 })

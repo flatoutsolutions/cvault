@@ -29,6 +29,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatRelativeAgo } from '@/lib/time'
+import { useNow } from '@/lib/useNow'
 
 import type { api } from '../../../../convex/_generated/api'
 import { AvatarStack } from './AvatarStack'
@@ -74,6 +75,9 @@ export function SubscriptionCard({
   void _removing
   const [renameOpen, setRenameOpen] = useState(false)
   const [labelDraft, setLabelDraft] = useState(sub.label ?? '')
+  // Ticks once a minute so the usage countdown + staleness ("checked Xm ago")
+  // stay current on a tab left open, and `reloginRequired` re-evaluates.
+  const now = useNow()
 
   const handleRenameSubmit = () => {
     onRename({ email: sub.email, label: labelDraft.trim() })
@@ -87,7 +91,7 @@ export function SubscriptionCard({
   // shared hook because the comparison is one line and a hook would
   // be more ceremony than it's worth — keeping it inline also makes
   // the test contract obvious.
-  const reloginRequired = sub.refreshExpiresAt !== undefined && sub.refreshExpiresAt <= Date.now()
+  const reloginRequired = sub.refreshExpiresAt !== undefined && sub.refreshExpiresAt <= now
 
   return (
     <Card data-slot="subscription-card" className="flex flex-col">
@@ -112,8 +116,8 @@ export function SubscriptionCard({
 
       <CardContent className="flex flex-1 flex-col gap-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <UsageBar label="5h" usage={sub.usage5h} idlePresentation="ready" />
-          <UsageBar label="7d" usage={sub.usage7d} />
+          <UsageBar label="5h" usage={sub.usage5h} idlePresentation="ready" now={now} tokenAlive={!reloginRequired} />
+          <UsageBar label="7d" usage={sub.usage7d} now={now} />
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
