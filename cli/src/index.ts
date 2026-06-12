@@ -35,6 +35,7 @@ import { rotateKeyCommand } from './commands/rotateKey'
 import { statusCommand } from './commands/status'
 import { switchCommand } from './commands/switch'
 import { syncCommand } from './commands/sync'
+import { upgradeCommand } from './commands/upgrade'
 import { formatCliError } from './render/cliError'
 
 const main = defineCommand({
@@ -57,6 +58,7 @@ const main = defineCommand({
     'rotate-key': rotateKeyCommand,
     export: exportCommand,
     import: importCommand,
+    upgrade: upgradeCommand,
   },
 })
 
