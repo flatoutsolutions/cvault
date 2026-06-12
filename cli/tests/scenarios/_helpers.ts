@@ -69,8 +69,9 @@ export interface FakeSubscription {
   subscriptionType: string
   rateLimitTier: string
   lastRefreshedAt: number
-  usage5h?: { pct: number; resetsAt: number; fetchedAt: number } | undefined
-  usage7d?: { pct: number; resetsAt: number; fetchedAt: number } | undefined
+  // Mirror the wire union: active window, idle marker, or absent.
+  usage5h?: { pct: number; resetsAt: number; fetchedAt: number } | { idle: true; fetchedAt: number } | undefined
+  usage7d?: { pct: number; resetsAt: number; fetchedAt: number } | { idle: true; fetchedAt: number } | undefined
   removedAt?: number | undefined
   /** Plaintext OAuth blob — fake-only; never persists into Convex. */
   plaintextBlob: string

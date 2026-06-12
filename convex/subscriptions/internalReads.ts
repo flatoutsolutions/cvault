@@ -9,6 +9,7 @@
 import { v } from 'convex/values'
 
 import { internalQuery } from '../_generated/server'
+import { usageWindowValidator } from './schema'
 
 const subscriptionRawValidator = v.object({
   _id: v.id('subscriptions'),
@@ -27,8 +28,8 @@ const subscriptionRawValidator = v.object({
   lastRefreshedAt: v.number(),
   refreshLeaseHolder: v.optional(v.string()),
   refreshLeaseUntil: v.optional(v.number()),
-  usage5h: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
-  usage7d: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
+  usage5h: v.optional(usageWindowValidator),
+  usage7d: v.optional(usageWindowValidator),
   removedAt: v.optional(v.number()),
 })
 

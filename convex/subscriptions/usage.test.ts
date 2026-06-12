@@ -74,10 +74,8 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
-    expect(after?.usage5h?.pct).toBe(23.5)
-    expect(after?.usage7d?.pct).toBe(47.0)
-    expect(after?.usage5h?.resetsAt).toBe(new Date(futureFiveHour).getTime())
-    expect(after?.usage7d?.resetsAt).toBe(new Date(futureSevenDay).getTime())
+    expect(after?.usage5h).toMatchObject({ pct: 23.5, resetsAt: new Date(futureFiveHour).getTime() })
+    expect(after?.usage7d).toMatchObject({ pct: 47.0, resetsAt: new Date(futureSevenDay).getTime() })
   })
 
   it('silently skips when Anthropic returns 429', async () => {
@@ -93,7 +91,7 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     expect(after?.usage7d).toBeUndefined()
   })
 
-  it('handles a partial response (only five_hour present)', async () => {
+  it('writes an idle marker for a window absent from a successful response', async () => {
     const t = vault()
     const inserted = await seedSubscription(t)
 
@@ -112,7 +110,111 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
 
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
-    expect(after?.usage5h?.pct).toBe(5)
-    expect(after?.usage7d).toBeUndefined()
+    expect(after?.usage5h).toMatchObject({ pct: 5 })
+    // 7d absent from a SUCCESSFUL poll → explicit idle marker, not undefined.
+    expect(after?.usage7d).toMatchObject({ idle: true })
+    expect(after?.usage7d).not.toHaveProperty('pct')
+  })
+
+  // Regression: prod incident where every sub's 5h bar froze at "resets now".
+  // When a 5h window crosses its reset, Anthropic stops returning a usable
+  // `five_hour` while still returning `seven_day`. The window that is ABSENT
+  // from a *successful* response must be REPLACED with an idle marker, not
+  // retained — otherwise the dead `{pct, resetsAt}` lingers forever (e.g.
+  // "99% resets now") while the 7d window keeps updating every 5-minute poll.
+  // The idle marker is what lets the dashboard show "Ready" for the 5h window.
+  it('replaces a stale window with an idle marker when it is absent from a successful response', async () => {
+    const t = vault()
+    const inserted = await seedSubscription(t)
+
+    // Simulate the last successful poll having stored a now-expired 5h window
+    // and a healthy 7d window.
+    const stale5h = { pct: 99, resetsAt: Date.now() - 60 * 1000, fetchedAt: Date.now() - 60 * 1000 }
+    await t.run(async (ctx) => {
+      await ctx.db.patch('subscriptions', inserted.subId, {
+        usage5h: stale5h,
+        usage7d: { pct: 50, resetsAt: Date.now() + 24 * 60 * 60 * 1000, fetchedAt: Date.now() - 60 * 1000 },
+      })
+    })
+
+    const futureSevenDay = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString()
+    __setAnthropicFetch(
+      vi.fn(() =>
+        Promise.resolve(
+          // Successful poll, but the 5h window has reset and is no longer present.
+          new Response(JSON.stringify({ seven_day: { utilization: 51, resets_at: futureSevenDay } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+      )
+    )
+
+    await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
+
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    // Stale active window is gone, replaced by an idle marker → UI shows "Ready".
+    expect(after?.usage5h).toMatchObject({ idle: true })
+    expect(after?.usage5h).not.toHaveProperty('pct')
+    expect(after?.usage7d).toMatchObject({ pct: 51, resetsAt: new Date(futureSevenDay).getTime() })
+  })
+
+  // Counterpart to the above: a *failed* fetch (429/401/5xx/network) must
+  // preserve the last-known windows — we never invent or erase on failure.
+  it('preserves last-known windows when the fetch fails (429)', async () => {
+    const t = vault()
+    const inserted = await seedSubscription(t)
+
+    const known5h = { pct: 42, resetsAt: Date.now() + 60 * 60 * 1000, fetchedAt: Date.now() - 60 * 1000 }
+    const known7d = { pct: 50, resetsAt: Date.now() + 24 * 60 * 60 * 1000, fetchedAt: Date.now() - 60 * 1000 }
+    await t.run(async (ctx) => {
+      await ctx.db.patch('subscriptions', inserted.subId, { usage5h: known5h, usage7d: known7d })
+    })
+
+    __setAnthropicFetch(vi.fn(() => Promise.resolve(new Response('Rate Limited', { status: 429 }))))
+
+    await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
+
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    expect(after?.usage5h).toEqual(known5h)
+    expect(after?.usage7d).toEqual(known7d)
+  })
+
+  // A window PRESENT but unparseable (payload drift, e.g. `utilization: null`)
+  // must NOT be treated as "no active window" — that would erase a real window
+  // and falsely show "Ready" while the account may be at 99%. Preserve
+  // last-known; only a genuinely ABSENT window writes the idle marker.
+  it('preserves last-known when a window is present but unparseable', async () => {
+    const t = vault()
+    const inserted = await seedSubscription(t)
+
+    const known5h = { pct: 99, resetsAt: Date.now() + 60 * 1000, fetchedAt: Date.now() - 60 * 1000 }
+    await t.run(async (ctx) => {
+      await ctx.db.patch('subscriptions', inserted.subId, { usage5h: known5h })
+    })
+
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    __setAnthropicFetch(
+      vi.fn(() =>
+        Promise.resolve(
+          // 5h present but unparseable (utilization null); 7d valid.
+          new Response(
+            JSON.stringify({
+              five_hour: { utilization: null, resets_at: future },
+              seven_day: { utilization: 33, resets_at: future },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      )
+    )
+
+    await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
+
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    // Unparseable 5h → last-known preserved (NOT replaced with an idle marker).
+    expect(after?.usage5h).toEqual(known5h)
+    // Valid 7d in the same response still updates.
+    expect(after?.usage7d).toMatchObject({ pct: 33 })
   })
 })

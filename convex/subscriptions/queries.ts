@@ -19,6 +19,7 @@ import { ConvexError, v } from 'convex/values'
 import { type Doc } from '../_generated/dataModel'
 import { authenticatedQuery } from '../utils/auth'
 import { UNKNOWN_SESSION_SENTINEL } from '../utils/identity'
+import { usageWindowValidator } from './schema'
 
 const subscriptionMetaValidator = v.object({
   _id: v.id('subscriptions'),
@@ -34,20 +35,8 @@ const subscriptionMetaValidator = v.object({
   lastRefreshedAt: v.number(),
   refreshLeaseHolder: v.optional(v.string()),
   refreshLeaseUntil: v.optional(v.number()),
-  usage5h: v.optional(
-    v.object({
-      pct: v.number(),
-      resetsAt: v.number(),
-      fetchedAt: v.number(),
-    })
-  ),
-  usage7d: v.optional(
-    v.object({
-      pct: v.number(),
-      resetsAt: v.number(),
-      fetchedAt: v.number(),
-    })
-  ),
+  usage5h: v.optional(usageWindowValidator),
+  usage7d: v.optional(usageWindowValidator),
   removedAt: v.optional(v.number()),
 })
 

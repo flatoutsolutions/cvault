@@ -72,7 +72,7 @@ describe('subscriptions.crons.pollUsage', () => {
 
     expect(fetchStub).toHaveBeenCalledTimes(1)
     const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
-    expect(after?.usage5h?.pct).toBe(12)
+    expect(after?.usage5h).toMatchObject({ pct: 12 })
   })
 
   it('skips removed subs', async () => {

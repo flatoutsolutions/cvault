@@ -51,17 +51,24 @@ export async function runList(): Promise<void> {
   // matches the ordinal `cvault switch <N>` resolves on the server
   // side. Critically, this is NOT `s.slot` — in the shared vault every
   // user's first sub has `slot=1`, which would render duplicate `1`s.
-  const rows: SubRow[] = subs.map((s, index) => ({
-    rank: index + 1,
-    email: s.email,
-    label: s.label,
-    expiresAt: s.expiresAt,
-    refreshExpiresAt: s.refreshExpiresAt,
-    lastRefreshedAt: s.lastRefreshedAt,
-    usage5hPct: s.usage5h?.pct,
-    usage7dPct: s.usage7d?.pct,
-    isActive: activeEmailLower !== undefined && s.email.toLowerCase() === activeEmailLower,
-  }))
+  const rows: SubRow[] = subs.map((s, index) => {
+    // usage5h/usage7d are a union: active `{ pct, ... }`, idle `{ idle: true }`,
+    // or undefined (never polled). Narrow on the `pct` field.
+    const u5 = s.usage5h
+    const u7 = s.usage7d
+    return {
+      rank: index + 1,
+      email: s.email,
+      label: s.label,
+      expiresAt: s.expiresAt,
+      refreshExpiresAt: s.refreshExpiresAt,
+      lastRefreshedAt: s.lastRefreshedAt,
+      usage5hPct: u5 !== undefined && 'pct' in u5 ? u5.pct : undefined,
+      usage5hIdle: u5 !== undefined && 'idle' in u5,
+      usage7dPct: u7 !== undefined && 'pct' in u7 ? u7.pct : undefined,
+      isActive: activeEmailLower !== undefined && s.email.toLowerCase() === activeEmailLower,
+    }
+  })
 
   console.log(renderSubsTable(rows))
 

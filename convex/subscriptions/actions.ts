@@ -639,14 +639,30 @@ export const fetchUsageForSub = internalAction({
     }
 
     const fetchedAt = Date.now()
+    // Fetch succeeded (result.ok). Map each window's parse outcome:
+    //   - a live bucket   → active usage `{ pct, resetsAt, fetchedAt }`
+    //   - 'absent'        → idle marker: the window genuinely has no active
+    //                       limit (e.g. a 5h window that crossed its reset),
+    //                       so REPLACE any stale value → dashboard shows "Ready".
+    //   - 'invalid'       → the key was present but unparseable (payload drift).
+    //                       Return `undefined` so patchUsage PRESERVES last-known
+    //                       — never claim "Ready" / erase a real window on a
+    //                       parse anomaly. Log it so the drift is visible.
+    // Failed fetches returned early above, leaving last-known untouched.
+    const toUsage = (bucket: typeof result.fiveHour, label: string) => {
+      if (bucket === 'invalid') {
+        console.error(
+          `[cvault] fetchUsageForSub: ${label} usage bucket present but unparseable for subId ${subId}; preserving last-known`
+        )
+        return undefined
+      }
+      if (bucket === 'absent') return { idle: true as const, fetchedAt }
+      return { pct: bucket.pct, resetsAt: bucket.resetsAtMs, fetchedAt }
+    }
     await ctx.runMutation(internal.subscriptions.mutations.patchUsage, {
       subId,
-      usage5h: result.fiveHour
-        ? { pct: result.fiveHour.pct, resetsAt: result.fiveHour.resetsAtMs, fetchedAt }
-        : undefined,
-      usage7d: result.sevenDay
-        ? { pct: result.sevenDay.pct, resetsAt: result.sevenDay.resetsAtMs, fetchedAt }
-        : undefined,
+      usage5h: toUsage(result.fiveHour, '5h'),
+      usage7d: toUsage(result.sevenDay, '7d'),
     })
     return null
   },

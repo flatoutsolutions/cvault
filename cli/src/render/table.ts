@@ -29,8 +29,13 @@ export interface SubRow {
   lastRefreshedAt: number
   /** Refresh-token expiry in ms epoch. If <= now, surface "relogin" badge. */
   refreshExpiresAt?: number | undefined
-  /** 5-hour usage percentage (0-100). */
+  /** 5-hour usage percentage (0-100). Undefined when idle or not yet polled. */
   usage5hPct?: number | undefined
+  /**
+   * True when a successful poll found no active 5h window (it has reset; a
+   * fresh one starts on next use). Rendered as `ready` instead of a percent.
+   */
+  usage5hIdle?: boolean | undefined
   /** 7-day usage percentage (0-100). */
   usage7dPct?: number | undefined
   /** True if this sub is the currently-active local Keychain entry. */
@@ -98,11 +103,15 @@ export function renderSubsTable(rows: SubRow[], now: number = Date.now()): strin
     const reloginRequired = r.refreshExpiresAt !== undefined && r.refreshExpiresAt <= now
     const statusCell = reloginRequired ? '⚠ relogin' : 'ok'
     const storedCell = r.isActive ? 'local+cloud' : 'cloud'
+    // 5h renders `ready` when the window has reset (idle) — a fresh window
+    // starts on next use. 7d stays a bare percent/`-`: an absent 7d window is
+    // ambiguous (a Pro account has no weekly window), so we don't claim ready.
+    const usage5hCell = r.usage5hIdle === true ? 'ready' : pct(r.usage5hPct)
     return [
       rankCell,
       r.email,
       r.label ?? '',
-      pct(r.usage5hPct),
+      usage5hCell,
       pct(r.usage7dPct),
       formatRelativeMs(r.expiresAt, now),
       formatRelativeMs(r.lastRefreshedAt, now),

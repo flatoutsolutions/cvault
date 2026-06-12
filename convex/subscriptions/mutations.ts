@@ -17,6 +17,7 @@ import { type MutationCtx, internalMutation } from '../_generated/server'
 import { authenticatedMutation, getIdentity } from '../utils/auth'
 import { resolveCallerSession } from '../utils/identity'
 import { getCurrentUserOrThrowFromIdentity } from '../utils/users'
+import { usageWindowValidator } from './schema'
 
 /**
  * Strict actor lookup for shared-vault audit attribution. Returns the
@@ -556,8 +557,16 @@ export const commitRefreshedTokens = internalMutation({
 export const patchUsage = internalMutation({
   args: {
     subId: v.id('subscriptions'),
-    usage5h: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
-    usage7d: v.optional(v.object({ pct: v.number(), resetsAt: v.number(), fetchedAt: v.number() })),
+    // Per window (see schema.ts `usageWindowValidator`):
+    //  - omitted (`undefined`) → leave the stored window untouched. Used by
+    //    the action on a FAILED fetch so we keep the last-known value.
+    //  - active `{ pct, resetsAt, fetchedAt }` → a live rate-limit window.
+    //  - idle `{ idle: true, fetchedAt }` → a SUCCESSFUL poll found no active
+    //    window (e.g. a 5h window that crossed its reset). Replaces the stale
+    //    value so the dashboard stops showing a dead "resets now" and can
+    //    surface "Ready" instead — this was the prod usage-freeze incident.
+    usage5h: v.optional(usageWindowValidator),
+    usage7d: v.optional(usageWindowValidator),
   },
   returns: v.null(),
   handler: async (ctx, args) => {

@@ -112,7 +112,7 @@ export function SubscriptionCard({
 
       <CardContent className="flex flex-1 flex-col gap-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <UsageBar label="5h" usage={sub.usage5h} />
+          <UsageBar label="5h" usage={sub.usage5h} idlePresentation="ready" />
           <UsageBar label="7d" usage={sub.usage7d} />
         </div>
 

@@ -109,6 +109,9 @@ export const subscriptionsSchema = defineTable({
   lastRefreshedAt: v.number(),
   refreshLeaseHolder: v.optional(v.string()),
   refreshLeaseUntil: v.optional(v.number()),
+  // Superseded (CVLT-6): each window is now an active/idle union — see
+  // convex/subscriptions/schema.ts `usageWindowValidator`. The active member
+  // is the shape below; an idle window is `{ idle: true, fetchedAt }`.
   usage5h: v.optional(
     v.object({
       pct: v.number(),

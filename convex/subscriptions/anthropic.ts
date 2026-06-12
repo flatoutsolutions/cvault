@@ -137,10 +137,24 @@ export interface UsageBucket {
   resetsAtMs: number
 }
 
+/**
+ * Per-window parse outcome. We must distinguish three cases the caller treats
+ * differently (see actions.ts):
+ *   - a `UsageBucket`  → a live, parseable window (write it as active usage)
+ *   - `'absent'`       → the key was missing entirely (no active window — e.g.
+ *                        a 5h window that has reset; write the idle marker)
+ *   - `'invalid'`      → the key was PRESENT but unparseable (utilization not a
+ *                        number, or resets_at not a date). Do NOT treat this as
+ *                        "no active window": preserve last-known. Collapsing it
+ *                        into `'absent'` would let a payload drift overwrite a
+ *                        real 99% window with an affirmative "Ready" (CVLT-6).
+ */
+export type BucketResult = UsageBucket | 'absent' | 'invalid'
+
 export interface UsageSuccess {
   ok: true
-  fiveHour: UsageBucket | undefined
-  sevenDay: UsageBucket | undefined
+  fiveHour: BucketResult
+  sevenDay: BucketResult
 }
 
 export interface UsageHttpError {
@@ -168,11 +182,11 @@ interface UsageRaw {
   seven_day?: UsageBucketRaw
 }
 
-function parseBucket(raw: UsageBucketRaw | undefined): UsageBucket | undefined {
-  if (!raw) return undefined
-  if (typeof raw.utilization !== 'number') return undefined
+function parseBucket(raw: UsageBucketRaw | undefined): BucketResult {
+  if (raw === undefined) return 'absent'
+  if (typeof raw.utilization !== 'number') return 'invalid'
   const resetsAt = typeof raw.resets_at === 'string' ? Date.parse(raw.resets_at) : NaN
-  if (Number.isNaN(resetsAt)) return undefined
+  if (Number.isNaN(resetsAt)) return 'invalid'
   return { pct: raw.utilization, resetsAtMs: resetsAt }
 }
 
@@ -201,7 +215,18 @@ export async function fetchUsage(accessToken: string): Promise<UsageResult> {
     return { ok: false, kind: 'http', status: resp.status, rawBody }
   }
 
-  const json = (await resp.json()) as UsageRaw
+  let json: UsageRaw
+  try {
+    json = (await resp.json()) as UsageRaw
+  } catch (err: unknown) {
+    // A 200 with a non-JSON body. Treat as a transient failure (preserve
+    // last-known) rather than letting the rejection bubble out of the action.
+    return {
+      ok: false,
+      kind: 'network',
+      message: `usage response was not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
   return {
     ok: true,
     fiveHour: parseBucket(json.five_hour),

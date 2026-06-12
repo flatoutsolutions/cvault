@@ -35,8 +35,9 @@ interface ConvexMeta {
   subscriptionType: string
   rateLimitTier: string
   lastRefreshedAt: number
-  usage5h?: { pct: number; resetsAt: number; fetchedAt: number } | undefined
-  usage7d?: { pct: number; resetsAt: number; fetchedAt: number } | undefined
+  // Mirror the wire union: active window, idle marker, or absent.
+  usage5h?: { pct: number; resetsAt: number; fetchedAt: number } | { idle: true; fetchedAt: number } | undefined
+  usage7d?: { pct: number; resetsAt: number; fetchedAt: number } | { idle: true; fetchedAt: number } | undefined
   removedAt?: number | undefined
 }
 
@@ -126,6 +127,35 @@ describe('runList', () => {
 
     await runList()
     expect(captured.join('\n')).toMatch(/\s-\s/)
+  })
+
+  it('renders an idle 5h window from the server as "ready"', async () => {
+    // Exercises the union mapping in list.ts (`'pct' in u` / `'idle' in u`),
+    // the consumer most like the original freeze bug. A bare renderSubsTable
+    // test bypasses this mapping; this asserts it end-to-end.
+    const client = {
+      query: vi.fn().mockResolvedValueOnce([meta({ email: 'idle@x.com', usage5h: { idle: true, fetchedAt: 0 } })]),
+    }
+    vi.mocked(makeVaultClient).mockResolvedValueOnce({
+      ...client,
+      withMachineLabel: noopWithMachineLabel,
+      withMeta: noopWithMeta,
+    } as never)
+    vi.mocked(getActiveAccount).mockReturnValueOnce(null)
+
+    const captured: string[] = []
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((s: string) => {
+      captured.push(s)
+    })
+
+    await runList()
+    logSpy.mockRestore()
+
+    const line = captured
+      .join('\n')
+      .split('\n')
+      .find((l) => l.includes('idle@x.com'))
+    expect(line).toContain('ready')
   })
 
   it('does not crash if reading the local active account fails', async () => {

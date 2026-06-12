@@ -7,6 +7,32 @@
 import { defineTable } from 'convex/server'
 import { v } from 'convex/values'
 
+/**
+ * A usage window is a discriminated union of two states:
+ *
+ *  - **active** `{ pct, resetsAt, fetchedAt }` — Anthropic reported a live
+ *    rate-limit window. This is also the legacy shape, so existing rows
+ *    validate unchanged (no migration needed).
+ *  - **idle** `{ idle: true, fetchedAt }` — a successful poll found NO active
+ *    window (e.g. a 5h session window that has reset; the account is idle and
+ *    a fresh window only starts on the next `claude` command). The dashboard
+ *    renders the 5h idle state as "Ready".
+ *
+ * `undefined` (the field absent entirely) still means "never successfully
+ * polled" — distinct from a confirmed idle window. The poll writes `active`
+ * or `idle` on every success; it never writes `undefined`.
+ */
+export const activeUsageWindowValidator = v.object({
+  pct: v.number(),
+  resetsAt: v.number(),
+  fetchedAt: v.number(),
+})
+export const idleUsageWindowValidator = v.object({
+  idle: v.literal(true),
+  fetchedAt: v.number(),
+})
+export const usageWindowValidator = v.union(activeUsageWindowValidator, idleUsageWindowValidator)
+
 export const subscriptionsSchema = defineTable({
   userId: v.id('users'),
   email: v.string(),
@@ -27,20 +53,8 @@ export const subscriptionsSchema = defineTable({
   lastRefreshedAt: v.number(),
   refreshLeaseHolder: v.optional(v.string()),
   refreshLeaseUntil: v.optional(v.number()),
-  usage5h: v.optional(
-    v.object({
-      pct: v.number(),
-      resetsAt: v.number(),
-      fetchedAt: v.number(),
-    })
-  ),
-  usage7d: v.optional(
-    v.object({
-      pct: v.number(),
-      resetsAt: v.number(),
-      fetchedAt: v.number(),
-    })
-  ),
+  usage5h: v.optional(usageWindowValidator),
+  usage7d: v.optional(usageWindowValidator),
   removedAt: v.optional(v.number()),
 })
   .index('byUserAndSlot', ['userId', 'slot'])

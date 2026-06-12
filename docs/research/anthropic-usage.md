@@ -282,6 +282,8 @@ claude-swap retries **at most once**, only on **401**, and only after a successf
 3. **5xx / network** → no inline retry. Let the next 5-minute tick handle it. Log to `refreshLog` as `failure`.
 4. **2xx with no `five_hour` and no `seven_day`** → treat as ok-but-empty. Don't overwrite existing usage with `undefined`; leave the previous values in place.
 
+   > **Superseded (CVLT-6).** "Leave previous values in place" now applies only to a window that is **present but unparseable** (e.g. `utilization: null`). A window **genuinely absent** on a 2xx is replaced with an explicit idle marker `{ idle: true, fetchedAt }` so the dashboard can show "Ready" instead of a frozen "resets now" — see `convex/subscriptions/schema.ts` (`usageWindowValidator`) and `actions.ts:fetchUsageForSub`.
+
 ---
 
 ## Rate Limits
