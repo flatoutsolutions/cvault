@@ -16,11 +16,20 @@ import { useEffect, useState } from 'react'
 export function useNow(intervalMs = 60_000): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const id = setInterval(() => {
+    const tick = () => {
       setNow(Date.now())
-    }, intervalMs)
+    }
+    const id = setInterval(tick, intervalMs)
+    // Background tabs throttle timers, so a tab resumed after a long sleep can
+    // be up to `intervalMs` stale on the next paint. Re-stamp immediately on
+    // refocus so the dashboard is correct the moment the user looks at it.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [intervalMs])
   return now

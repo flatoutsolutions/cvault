@@ -22,7 +22,9 @@ import { UsageBar } from '../UsageBar'
 describe('UsageBar', () => {
   it('renders the window label and integer percentage', () => {
     const oneHourFromNow = Date.now() + 60 * 60 * 1000
-    render(<UsageBar label="5h" usage={{ pct: 42.7, resetsAt: oneHourFromNow, fetchedAt: Date.now() }} />)
+    render(
+      <UsageBar label="5h" usage={{ pct: 42.7, resetsAt: oneHourFromNow, fetchedAt: Date.now() }} now={Date.now()} />
+    )
     // Label is shown verbatim
     expect(screen.getByText('5h')).toBeTruthy()
     // Percentage is rounded to nearest integer (43 not 42.7)
@@ -30,7 +32,7 @@ describe('UsageBar', () => {
   })
 
   it('renders an "unknown" placeholder when usage is undefined', () => {
-    render(<UsageBar label="7d" usage={undefined} />)
+    render(<UsageBar label="7d" usage={undefined} now={Date.now()} />)
     // The label still appears
     expect(screen.getByText('7d')).toBeTruthy()
     // And a placeholder for the missing percentage
@@ -39,7 +41,9 @@ describe('UsageBar', () => {
 
   it('marks the bar as critical when pct >= 90', () => {
     const future = Date.now() + 60_000
-    const { container } = render(<UsageBar label="5h" usage={{ pct: 95, resetsAt: future, fetchedAt: Date.now() }} />)
+    const { container } = render(
+      <UsageBar label="5h" usage={{ pct: 95, resetsAt: future, fetchedAt: Date.now() }} now={Date.now()} />
+    )
     // Critical state is signalled via data-state so styling stays
     // co-located in the component but tests don't depend on Tailwind classes.
     const root = container.querySelector('[data-slot="usage-bar"]')
@@ -49,7 +53,9 @@ describe('UsageBar', () => {
 
   it('uses a normal data-state when pct < 90', () => {
     const future = Date.now() + 60_000
-    const { container } = render(<UsageBar label="5h" usage={{ pct: 30, resetsAt: future, fetchedAt: Date.now() }} />)
+    const { container } = render(
+      <UsageBar label="5h" usage={{ pct: 30, resetsAt: future, fetchedAt: Date.now() }} now={Date.now()} />
+    )
     const root = container.querySelector('[data-slot="usage-bar"]')
     expect(root?.getAttribute('data-state')).toBe('normal')
   })
@@ -57,7 +63,7 @@ describe('UsageBar', () => {
   it('renders a human countdown to resetsAt', () => {
     // 3 hours and 15 minutes in the future
     const resetsAt = Date.now() + 3 * 60 * 60 * 1000 + 15 * 60 * 1000
-    render(<UsageBar label="5h" usage={{ pct: 50, resetsAt, fetchedAt: Date.now() }} />)
+    render(<UsageBar label="5h" usage={{ pct: 50, resetsAt, fetchedAt: Date.now() }} now={Date.now()} />)
     // Countdown format: "Xh Xm" for less than a day, "Xd Xh" for more.
     // Allow a fuzzy match (3h 14m vs 3h 15m) since rendering takes a tick.
     const countdownEl = screen.getByText(/3h 1[45]m/)
@@ -66,13 +72,13 @@ describe('UsageBar', () => {
 
   it('shows "now" when resetsAt is in the past', () => {
     const past = Date.now() - 60_000
-    render(<UsageBar label="5h" usage={{ pct: 50, resetsAt: past, fetchedAt: Date.now() }} />)
+    render(<UsageBar label="5h" usage={{ pct: 50, resetsAt: past, fetchedAt: Date.now() }} now={Date.now()} />)
     expect(screen.getByText(/now|0m/i)).toBeTruthy()
   })
 
   it('shows "Ready" for an idle 5h window when idlePresentation="ready"', () => {
     const { container } = render(
-      <UsageBar label="5h" usage={{ idle: true, fetchedAt: Date.now() }} idlePresentation="ready" />
+      <UsageBar label="5h" usage={{ idle: true, fetchedAt: Date.now() }} idlePresentation="ready" now={Date.now()} />
     )
     expect(screen.getByText('Ready')).toBeTruthy()
     expect(screen.getByText(/fresh window starts on next use/i)).toBeTruthy()
@@ -82,10 +88,36 @@ describe('UsageBar', () => {
   })
 
   it('renders an idle window as "—" when idlePresentation is "none" (e.g. 7d)', () => {
-    render(<UsageBar label="7d" usage={{ idle: true, fetchedAt: Date.now() }} />)
+    render(<UsageBar label="7d" usage={{ idle: true, fetchedAt: Date.now() }} now={Date.now()} />)
     expect(screen.getByText('—')).toBeTruthy()
     // Must NOT claim "Ready" for 7d — an absent weekly window is ambiguous.
     expect(screen.queryByText('Ready')).toBeNull()
+  })
+
+  it('treats data just under the 15m threshold as fresh and just over as stale', () => {
+    const now = Date.now()
+    const fresh = render(
+      <UsageBar
+        label="5h"
+        usage={{ idle: true, fetchedAt: now - (15 * 60 * 1000 - 1000) }}
+        idlePresentation="ready"
+        now={now}
+      />
+    )
+    // 14m59s old → still the confident affordance.
+    expect(fresh.container.querySelector('[data-slot="usage-bar"]')?.getAttribute('data-state')).toBe('ready')
+    fresh.unmount()
+
+    const stale = render(
+      <UsageBar
+        label="5h"
+        usage={{ idle: true, fetchedAt: now - (15 * 60 * 1000 + 1000) }}
+        idlePresentation="ready"
+        now={now}
+      />
+    )
+    // 15m01s old → degraded to stale.
+    expect(stale.container.querySelector('[data-slot="usage-bar"]')?.getAttribute('data-state')).toBe('stale')
   })
 
   it('degrades an idle 5h window to stale when the data is old', () => {

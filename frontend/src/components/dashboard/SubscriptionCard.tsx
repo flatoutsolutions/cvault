@@ -111,7 +111,7 @@ export function SubscriptionCard({
             <Badge variant="secondary">{sub.subscriptionType}</Badge>
           </div>
         </div>
-        <ReloginBadge refreshExpiresAt={sub.refreshExpiresAt} />
+        <ReloginBadge refreshExpiresAt={sub.refreshExpiresAt} now={now} />
       </CardHeader>
 
       <CardContent className="flex flex-1 flex-col gap-4">
@@ -121,9 +121,9 @@ export function SubscriptionCard({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <ExpiryCountdown expiresAt={sub.expiresAt} />
+          <ExpiryCountdown expiresAt={sub.expiresAt} now={now} />
           <span className="text-muted-foreground">
-            last refreshed <span className="tabular-nums">{formatRelativeAgo(sub.lastRefreshedAt)}</span>
+            last refreshed <span className="tabular-nums">{formatRelativeAgo(sub.lastRefreshedAt, now)}</span>
           </span>
         </div>
 

@@ -15,6 +15,12 @@ import { formatCountdown } from './UsageBar'
 export type ExpiryCountdownProps = {
   /** Access-token expiry in ms epoch. */
   expiresAt: number
+  /**
+   * Current epoch-ms. The card passes its ticking `useNow()` value so the
+   * countdown ages on a long-open tab instead of freezing between Convex
+   * pushes. Defaults to `Date.now()` for standalone use.
+   */
+  now?: number
 }
 
 const WARNING_WINDOW_MS = 5 * 60 * 1000
@@ -28,8 +34,7 @@ function deriveState(expiresAt: number, now: number): State {
   return 'ok'
 }
 
-export function ExpiryCountdown({ expiresAt }: ExpiryCountdownProps) {
-  const now = Date.now()
+export function ExpiryCountdown({ expiresAt, now = Date.now() }: ExpiryCountdownProps) {
   const state = deriveState(expiresAt, now)
 
   return (

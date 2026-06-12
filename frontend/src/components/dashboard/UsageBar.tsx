@@ -59,11 +59,12 @@ export type UsageBarProps = {
    */
   idlePresentation?: 'ready' | 'none'
   /**
-   * Current epoch-ms. Injected so the reset countdown and staleness check tick
-   * on a long-open tab (the card passes `useNow()`); tests pass a fixed value.
-   * Defaults to `Date.now()` for standalone use.
+   * Current epoch-ms. REQUIRED (not defaulted) so a call site can't silently
+   * freeze the countdown/staleness by omitting it — under React Compiler a
+   * `Date.now()` default would be memoized and never re-evaluate. The card
+   * passes `useNow()`; tests pass a fixed value.
    */
-  now?: number
+  now: number
   /**
    * Whether the sub's token is still usable. When `false` (relogin-required)
    * the 5h window never claims "Ready" — a dead-token sub isn't usable
@@ -100,13 +101,7 @@ export function formatCountdown(resetsAt: number, now: number = Date.now()): str
   return `${minutes.toString()}m`
 }
 
-export function UsageBar({
-  label,
-  usage,
-  idlePresentation = 'none',
-  now = Date.now(),
-  tokenAlive = true,
-}: UsageBarProps) {
+export function UsageBar({ label, usage, idlePresentation = 'none', now, tokenAlive = true }: UsageBarProps) {
   const active = isActive(usage)
   const isIdle = usage !== undefined && 'idle' in usage
   const stale = usage !== undefined && now - usage.fetchedAt > STALE_AFTER_MS

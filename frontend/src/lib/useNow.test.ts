@@ -27,4 +27,16 @@ describe('useNow', () => {
     expect(clearSpy).toHaveBeenCalled()
     clearSpy.mockRestore()
   })
+
+  it('re-stamps immediately when the tab becomes visible again', () => {
+    const { result } = renderHook(() => useNow(60_000))
+    const first = result.current
+    // Advance the clock WITHOUT firing the interval (shorter than the period),
+    // then simulate a refocus — the value should jump without waiting 60s.
+    act(() => {
+      vi.advanceTimersByTime(5_000)
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(result.current).toBeGreaterThan(first)
+  })
 })
