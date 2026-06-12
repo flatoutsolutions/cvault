@@ -8,10 +8,12 @@ vi.mock('../../src/native/brew')
 afterEach(() => vi.clearAllMocks())
 
 describe('runUpgrade', () => {
-  it('delegates to upgradeCvault', async () => {
+  it('delegates to upgradeCvault and prints a success line', async () => {
     vi.mocked(upgradeCvault).mockResolvedValue()
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     await runUpgrade()
     expect(upgradeCvault).toHaveBeenCalledTimes(1)
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/up to date/i))
   })
 
   it('propagates failures from upgradeCvault', async () => {

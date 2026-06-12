@@ -16,35 +16,25 @@
  * sees the authoritative "upgrading…" / "already up to date" output.
  */
 import { BrewMissingError } from './errors'
+import { isMissingBinaryError } from './spawn'
 
 const BREW_BIN = 'brew'
 
 /**
  * The fully tap-qualified formula name. A bare `cvault` could collide with
  * a same-named formula in another tap; the qualified form is unambiguous
- * and matches the `brew install` command shipped in the README / release
- * notes (and `TAP_REPO` in .github/workflows/release-cli.yml).
+ * and matches the `brew install flatoutsolutions/cvault/cvault` command
+ * shipped in the README and release notes (release-cli.yml).
  */
 export const CVAULT_FORMULA = 'flatoutsolutions/cvault/cvault'
 
 /**
- * Detect "binary not found" errors raised by `Bun.spawn`. Bun surfaces
- * these as a generic Error whose message contains 'ENOENT' (or, on some
- * platforms, 'No such file'). Mirrors `native/claudeCli.ts` so a missing
- * `brew` yields the same install-hint experience as a missing `claude`.
+ * Spawn `brew <args>` with inherited stdio and return its exit code. A
+ * missing `brew` binary is mapped to `BrewMissingError`; every other spawn
+ * failure is rethrown verbatim. Callers decide what a non-zero exit means
+ * (fatal vs. recoverable), so this does NOT throw on non-zero.
  */
-function isMissingBinaryError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false
-  const msg = err.message
-  return msg.includes('ENOENT') || msg.includes('No such file')
-}
-
-/**
- * Spawn `brew <args>` with inherited stdio and throw on a non-zero exit.
- * A missing `brew` binary is mapped to `BrewMissingError`; every other
- * spawn failure is rethrown verbatim.
- */
-async function runBrew(args: string[]): Promise<void> {
+async function runBrew(args: string[]): Promise<number> {
   let proc
   try {
     proc = Bun.spawn({
@@ -59,16 +49,23 @@ async function runBrew(args: string[]): Promise<void> {
     }
     throw err
   }
-  const exitCode = await proc.exited
-  if (exitCode !== 0) {
-    throw new Error(`\`brew ${args.join(' ')}\` exited ${String(exitCode)}`)
-  }
+  return proc.exited
 }
 
 export async function upgradeCvault(): Promise<void> {
   // `brew update` first — this is the step that fixes the "already
-  // installed" stale-tap symptom. If it fails we stop here rather than
-  // running `brew upgrade` against a tap we know wasn't refreshed.
-  await runBrew(['update'])
-  await runBrew(['upgrade', CVAULT_FORMULA])
+  // installed" stale-tap symptom. A non-zero exit here is NOT fatal: brew
+  // update commonly reports errors for an unrelated tap (a network blip,
+  // another tap failing to fetch) while still refreshing ours, and aborting
+  // would defeat the command's whole purpose. Warn and press on; a genuinely
+  // broken state will surface again at the upgrade step below.
+  const updateExit = await runBrew(['update'])
+  if (updateExit !== 0) {
+    console.error(`warning: \`brew update\` exited ${String(updateExit)} — continuing with upgrade anyway.`)
+  }
+
+  const upgradeExit = await runBrew(['upgrade', CVAULT_FORMULA])
+  if (upgradeExit !== 0) {
+    throw new Error(`\`brew upgrade ${CVAULT_FORMULA}\` exited ${String(upgradeExit)}`)
+  }
 }

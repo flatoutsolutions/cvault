@@ -64,13 +64,18 @@ describe('upgradeCvault', () => {
     expect(CVAULT_FORMULA).toBe('flatoutsolutions/cvault/cvault')
   })
 
-  it('does NOT run `brew upgrade` when `brew update` fails', async () => {
+  it('warns but STILL runs `brew upgrade` when `brew update` exits non-zero', async () => {
+    // `brew update` legitimately exits non-zero on partial/transient
+    // failures (an unrelated tap fails to fetch) while still refreshing
+    // our tap — aborting would defeat the command's purpose.
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {})
     const calls = mockSpawn([1, 0])
     const { upgradeCvault } = await import('../../src/native/brew')
 
-    await expect(upgradeCvault()).rejects.toThrow(/brew update.*exited 1|exited 1/i)
-    expect(calls).toHaveLength(1)
-    expect(calls[0]?.cmd).toEqual(['brew', 'update'])
+    await expect(upgradeCvault()).resolves.toBeUndefined()
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.cmd).toEqual(['brew', 'upgrade', 'flatoutsolutions/cvault/cvault'])
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/brew update.*exited 1/i))
   })
 
   it('throws when `brew upgrade` exits non-zero', async () => {
@@ -79,7 +84,17 @@ describe('upgradeCvault', () => {
     await expect(upgradeCvault()).rejects.toThrow(/brew upgrade.*exited 1|exited 1/i)
   })
 
-  it('throws BrewMissingError on ENOENT', async () => {
+  it('throws BrewMissingError on a real-Bun missing-binary error (ENOENT on err.code, not message)', async () => {
+    // Bun 1.3.x throws `Executable not found in $PATH: "brew"` with
+    // `code: 'ENOENT'` — the message contains NEITHER 'ENOENT' nor 'No such
+    // file', so detection MUST key off err.code or the install hint is dead.
+    const enoent = Object.assign(new Error('Executable not found in $PATH: "brew"'), { code: 'ENOENT' })
+    mockSpawn([enoent])
+    const { upgradeCvault } = await import('../../src/native/brew')
+    await expect(upgradeCvault()).rejects.toThrow(/Homebrew.*not installed|install.*Homebrew|brew\.sh/i)
+  })
+
+  it('throws BrewMissingError when the message contains ENOENT (other runtimes)', async () => {
     mockSpawn([new Error('spawn ENOENT: brew')])
     const { upgradeCvault } = await import('../../src/native/brew')
     await expect(upgradeCvault()).rejects.toThrow(/Homebrew.*not installed|install.*Homebrew|brew\.sh/i)
