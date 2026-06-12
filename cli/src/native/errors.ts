@@ -37,6 +37,16 @@ export class ClaudeCliMissingError extends Error {
   }
 }
 
+export class BrewMissingError extends Error {
+  override readonly name = 'BrewMissingError'
+  constructor() {
+    super(
+      `Homebrew (\`brew\`) is not installed or not on PATH, so cvault cannot self-upgrade.\n` +
+        `Install it from https://brew.sh, then re-run \`cvault upgrade\`.`
+    )
+  }
+}
+
 export class PlatformUnsupportedError extends Error {
   override readonly name = 'PlatformUnsupportedError'
   constructor(platform: string) {

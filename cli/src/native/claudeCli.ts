@@ -15,20 +15,9 @@
  * (Ctrl-C aborts the spawn).
  */
 import { ClaudeCliMissingError } from './errors'
+import { isMissingBinaryError } from './spawn'
 
 const CLAUDE_BIN = 'claude'
-
-/**
- * Detect "binary not found" errors raised by `Bun.spawn`. Bun surfaces
- * these as a generic Error whose message contains 'ENOENT' on
- * macOS/Linux. Mirrors the legacy `isMissingBinaryError` so the user gets
- * the same install-hint experience.
- */
-function isMissingBinaryError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false
-  const msg = err.message
-  return msg.includes('ENOENT') || msg.includes('No such file')
-}
 
 export async function addAccountInteractive(): Promise<void> {
   let proc
