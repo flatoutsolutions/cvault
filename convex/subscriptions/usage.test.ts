@@ -179,4 +179,42 @@ describe('subscriptions.actions.fetchUsageForSub', () => {
     expect(after?.usage5h).toEqual(known5h)
     expect(after?.usage7d).toEqual(known7d)
   })
+
+  // A window PRESENT but unparseable (payload drift, e.g. `utilization: null`)
+  // must NOT be treated as "no active window" — that would erase a real window
+  // and falsely show "Ready" while the account may be at 99%. Preserve
+  // last-known; only a genuinely ABSENT window writes the idle marker.
+  it('preserves last-known when a window is present but unparseable', async () => {
+    const t = vault()
+    const inserted = await seedSubscription(t)
+
+    const known5h = { pct: 99, resetsAt: Date.now() + 60 * 1000, fetchedAt: Date.now() - 60 * 1000 }
+    await t.run(async (ctx) => {
+      await ctx.db.patch('subscriptions', inserted.subId, { usage5h: known5h })
+    })
+
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    __setAnthropicFetch(
+      vi.fn(() =>
+        Promise.resolve(
+          // 5h present but unparseable (utilization null); 7d valid.
+          new Response(
+            JSON.stringify({
+              five_hour: { utilization: null, resets_at: future },
+              seven_day: { utilization: 33, resets_at: future },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      )
+    )
+
+    await t.action(internal.subscriptions.actions.fetchUsageForSub, { subId: inserted.subId })
+
+    const after = await t.run(async (ctx) => await ctx.db.get('subscriptions', inserted.subId))
+    // Unparseable 5h → last-known preserved (NOT replaced with an idle marker).
+    expect(after?.usage5h).toEqual(known5h)
+    // Valid 7d in the same response still updates.
+    expect(after?.usage7d).toMatchObject({ pct: 33 })
+  })
 })

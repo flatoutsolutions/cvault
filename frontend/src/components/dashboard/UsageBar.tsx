@@ -3,16 +3,17 @@
  * progress bar with a countdown to reset.
  *
  * Spec: docs/superpowers/specs/2026-05-02-cvault-design.md §8 (sub list cards
- * w/ usage bars).
+ * w/ usage bars). Note: §4's active-only usage shape is superseded — a window
+ * is now the active/idle union below (CVLT-6).
  *
- * Backed by `subscriptions.usage5h` / `usage7d` rows shaped per spec §4:
- *   { pct: number; resetsAt: number; fetchedAt: number }
- *
- * `usage` may be undefined when:
- *   - The poll cron hasn't run yet for a freshly-added sub
- *   - The account is Pro and Anthropic doesn't return a 7-day window
- *   - The previous fetch hit 401/429/5xx (we keep the last-known value
- *     in place but never invent one)
+ * `usage` is `subscriptions.usage5h` / `usage7d`, a union of:
+ *   - active `{ pct, resetsAt, fetchedAt }` — a live rate-limit window.
+ *   - idle   `{ idle: true, fetchedAt }`    — a successful poll found no active
+ *     window (e.g. a 5h window that reset). With `idlePresentation="ready"`
+ *     this renders "Ready"; otherwise it renders like unknown ("—").
+ *   - `undefined` — never successfully polled yet (the cron hasn't run for a
+ *     freshly-added sub). A failed poll (401/429/5xx) does NOT land here: it
+ *     preserves the last-known value rather than clearing it.
  *
  * Critical visual variant kicks in at >=90% so the user notices when an
  * account is about to throttle.
